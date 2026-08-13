@@ -19,7 +19,11 @@ type Config struct {
 	BackgroundTasks BackgroundTasksConfig `yaml:"background_tasks"`
 	Dashboard       DashboardConfig       `yaml:"dashboard"`
 	Discord         DiscordConfig         `yaml:"discord"`
+	Messenger       MessengerConfig       `yaml:"messenger"`
+	WhatsApp        WhatsAppConfig        `yaml:"whatsapp"`
+	Bridge          BridgeConfig          `yaml:"bridge"`
 	GIFs            GIFConfig             `yaml:"gifs"`
+	ImageGen        ImageGenConfig        `yaml:"image_gen"`
 	Heartbeat       HeartbeatConfig       `yaml:"heartbeat"`
 	DreamMode       DreamModeConfig       `yaml:"dream_mode"`
 	EventWebhook    EventWebhookConfig    `yaml:"event_webhook"`
@@ -140,6 +144,27 @@ type DiscordConfig struct {
 	IncomingAttachmentsDir      string   `yaml:"incoming_attachments_dir"`
 }
 
+type MessengerConfig struct {
+	Enabled          bool     `yaml:"enabled"`
+	CookiesPath      string   `yaml:"cookies_path"`
+	AllowedThreadIDs []string `yaml:"allowed_thread_ids"`
+}
+
+type WhatsAppConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	StoreDir     string `yaml:"store_dir"`
+	DatabaseURL  string `yaml:"database_url"`
+	Proxy        string `yaml:"proxy"`
+}
+
+type BridgeConfig struct {
+	Enabled           bool   `yaml:"enabled"`
+	ListenAddr        string `yaml:"listen_addr"`
+	NotificationsPath string `yaml:"notifications_path"`
+	Secret            string `yaml:"secret"`
+	SecretEnv         string `yaml:"secret_env"`
+}
+
 type GIFConfig struct {
 	Enabled       bool   `yaml:"enabled"`
 	Provider      string `yaml:"provider"`
@@ -147,6 +172,12 @@ type GIFConfig struct {
 	APIKeyEnv     string `yaml:"api_key_env"`
 	SearchLimit   int    `yaml:"search_limit"`
 	ContentFilter string `yaml:"content_filter"`
+}
+
+type ImageGenConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Model     string `yaml:"model"`
+	OutputDir string `yaml:"output_dir"`
 }
 
 type HeartbeatConfig struct {
@@ -347,12 +378,26 @@ func defaultConfig() Config {
 			ReplyToMessage:              true,
 			DownloadIncomingAttachments: true,
 		},
+		Messenger: MessengerConfig{
+			AllowedThreadIDs: []string{},
+		},
+		WhatsApp: WhatsAppConfig{},
+		Bridge: BridgeConfig{
+			ListenAddr:        "127.0.0.1:8791",
+			NotificationsPath: "/api/automation/notifications",
+			SecretEnv:         "ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET",
+		},
 		GIFs: GIFConfig{
 			Enabled:       false,
 			Provider:      "giphy",
 			APIKeyEnv:     "GIPHY_API_KEY",
 			SearchLimit:   8,
 			ContentFilter: "pg-13",
+		},
+		ImageGen: ImageGenConfig{
+			Enabled:   false,
+			Model:     "cloudflare/@cf/black-forest-labs/flux-1-schnell",
+			OutputDir: ".element-orion/generated",
 		},
 		Heartbeat: HeartbeatConfig{
 			Every:             "30m",
@@ -491,6 +536,42 @@ func (c *Config) resolvePaths() error {
 	}
 	c.Discord.IncomingAttachmentsDir = resolvedAttachmentsDir
 
+	c.Messenger.CookiesPath = strings.TrimSpace(c.Messenger.CookiesPath)
+	if c.Messenger.CookiesPath != "" {
+		resolvedCookiesPath, err := absFromBase(configDir, c.Messenger.CookiesPath)
+		if err != nil {
+			return fmt.Errorf("resolve messenger.cookies_path: %w", err)
+		}
+		c.Messenger.CookiesPath = resolvedCookiesPath
+	}
+	c.Messenger.AllowedThreadIDs = uniqueTrimmedStrings(c.Messenger.AllowedThreadIDs)
+
+	c.WhatsApp.StoreDir = strings.TrimSpace(c.WhatsApp.StoreDir)
+	if c.WhatsApp.StoreDir == "" {
+		c.WhatsApp.StoreDir = filepath.Join(c.App.SessionDir, "whatsapp")
+	}
+	resolvedStoreDir, err := absFromBase(configDir, c.WhatsApp.StoreDir)
+	if err != nil {
+		return fmt.Errorf("resolve whatsapp.store_dir: %w", err)
+	}
+	c.WhatsApp.StoreDir = resolvedStoreDir
+	c.WhatsApp.DatabaseURL = strings.TrimSpace(c.WhatsApp.DatabaseURL)
+	c.WhatsApp.Proxy = strings.TrimSpace(c.WhatsApp.Proxy)
+
+	c.Bridge.ListenAddr = strings.TrimSpace(c.Bridge.ListenAddr)
+	c.Bridge.NotificationsPath = strings.TrimSpace(c.Bridge.NotificationsPath)
+	c.Bridge.Secret = strings.TrimSpace(c.Bridge.Secret)
+	c.Bridge.SecretEnv = strings.TrimSpace(c.Bridge.SecretEnv)
+	if c.Bridge.ListenAddr == "" {
+		c.Bridge.ListenAddr = "127.0.0.1:8791"
+	}
+	if c.Bridge.NotificationsPath == "" {
+		c.Bridge.NotificationsPath = "/api/automation/notifications"
+	}
+	if c.Bridge.SecretEnv == "" {
+		c.Bridge.SecretEnv = "ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET"
+	}
+
 	trimmedGuilds := make([]string, 0, len(c.Discord.AllowedGuildIDs))
 	seenGuilds := make(map[string]struct{}, len(c.Discord.AllowedGuildIDs))
 	for _, guildID := range c.Discord.AllowedGuildIDs {
@@ -550,6 +631,17 @@ func (c *Config) resolvePaths() error {
 		c.GIFs.SearchLimit = 8
 	}
 	c.GIFs.ContentFilter = strings.TrimSpace(strings.ToLower(c.GIFs.ContentFilter))
+	if c.GIFs.ContentFilter == "" {
+		c.GIFs.ContentFilter = "pg-13"
+	}
+	c.ImageGen.Model = strings.TrimSpace(c.ImageGen.Model)
+	if c.ImageGen.Model == "" {
+		c.ImageGen.Model = "cloudflare/@cf/black-forest-labs/flux-1-schnell"
+	}
+	c.ImageGen.OutputDir = strings.TrimSpace(c.ImageGen.OutputDir)
+	if c.ImageGen.OutputDir == "" {
+		c.ImageGen.OutputDir = ".element-orion/generated"
+	}
 	switch c.GIFs.ContentFilter {
 	case "off":
 		c.GIFs.ContentFilter = "r"
@@ -558,9 +650,6 @@ func (c *Config) resolvePaths() error {
 	case "medium":
 		c.GIFs.ContentFilter = "pg"
 	case "high":
-		c.GIFs.ContentFilter = "pg-13"
-	}
-	if c.GIFs.ContentFilter == "" {
 		c.GIFs.ContentFilter = "pg-13"
 	}
 
@@ -905,6 +994,21 @@ func (c Config) validate() error {
 		}
 	}
 
+	if c.Messenger.Enabled {
+		if strings.TrimSpace(c.Messenger.CookiesPath) == "" {
+			return fmt.Errorf("messenger.cookies_path must be set when messenger.enabled is true")
+		}
+	}
+
+	if c.Bridge.Enabled {
+		if strings.TrimSpace(c.Bridge.ListenAddr) == "" {
+			return fmt.Errorf("bridge.listen_addr must be set when bridge.enabled is true")
+		}
+		if !strings.HasPrefix(c.Bridge.NotificationsPath, "/") {
+			return fmt.Errorf("bridge.notifications_path must start with '/'")
+		}
+	}
+
 	if c.Dashboard.Enabled {
 		if strings.TrimSpace(c.Dashboard.ListenAddr) == "" {
 			return fmt.Errorf("dashboard.listen_addr must be set when dashboard.enabled is true")
@@ -994,6 +1098,38 @@ func (c Config) ResolveEventWebhookSecret() (string, error) {
 	}
 
 	return strings.TrimSpace(os.Getenv(envName)), nil
+}
+
+func (c Config) ResolveBridgeNotificationsSecret() (string, error) {
+	if strings.TrimSpace(c.Bridge.Secret) != "" {
+		return c.Bridge.Secret, nil
+	}
+
+	envName := strings.TrimSpace(c.Bridge.SecretEnv)
+	if envName == "" {
+		return "", nil
+	}
+
+	return strings.TrimSpace(os.Getenv(envName)), nil
+}
+
+func (c Config) WhatsAppDatabaseURL() string {
+	if strings.TrimSpace(c.WhatsApp.DatabaseURL) != "" {
+		return strings.TrimSpace(c.WhatsApp.DatabaseURL)
+	}
+	return strings.TrimSpace(os.Getenv("DATABASE_URL"))
+}
+
+func (c Config) MessengerThreadAllowed(threadID string) bool {
+	if len(c.Messenger.AllowedThreadIDs) == 0 {
+		return true
+	}
+	for _, id := range c.Messenger.AllowedThreadIDs {
+		if id == threadID {
+			return true
+		}
+	}
+	return false
 }
 
 func (c Config) ResolveGIFAPIKey() (string, error) {

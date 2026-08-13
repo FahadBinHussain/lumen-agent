@@ -12,6 +12,7 @@ import (
 
 	"element-orion/internal/agent"
 	"element-orion/internal/auditlog"
+	"element-orion/internal/bridge"
 	"element-orion/internal/config"
 	"element-orion/internal/dashboard"
 	"element-orion/internal/discordbot"
@@ -120,11 +121,19 @@ func runServe(args []string) error {
 		return fmt.Errorf("initialize Discord service: %w", err)
 	}
 
+	var bridgeService *bridge.Service
+	if cfg.Bridge.Enabled {
+		bridgeService, err = bridge.New(cfg, runner)
+		if err != nil {
+			return fmt.Errorf("initialize bridge service: %w", err)
+		}
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	workers := 1
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 4)
 
 	log.Printf(
 		"startup: config=%s dashboard.enabled=%t dashboard.listen_addr=%q dashboard.path=%q",
@@ -137,6 +146,13 @@ func runServe(args []string) error {
 	go func() {
 		errCh <- service.Run(ctx)
 	}()
+
+	if bridgeService != nil {
+		workers++
+		go func() {
+			errCh <- bridgeService.Run(ctx)
+		}()
+	}
 
 	if httpaux.CanShareListener(cfg) {
 		workers++
@@ -198,5 +214,5 @@ func printUsage() {
 }
 
 func usageText() string {
-	return "Element Orion\n\nUsage:\n  element-orion [serve] [-config path] [-workspace-dir path]\n  element-orion system-event -text \"Check urgent follow-ups\" [-mode now|next-heartbeat] [-config path]\n  element-orion help\n\nEnvironment:\n  ELEMENT_ORION_WORKSPACE_DIR   Override the workspace directory at runtime\n\nCommands:\n  serve         Run the Discord bot service (default)\n  system-event  Queue a heartbeat system event for the running service\n  help          Show this help text\n"
+	return "Element Orion\n\nUsage:\n  element-orion [serve] [-config path] [-workspace-dir path]\n  element-orion system-event -text \"Check urgent follow-ups\" [-mode now|next-heartbeat] [-config path]\n  element-orion help\n\nEnvironment:\n  ELEMENT_ORION_WORKSPACE_DIR   Override the workspace directory at runtime\n\nCommands:\n  serve         Run the agent service (Discord + optional Messenger/WhatsApp bridge)\n  system-event  Queue a heartbeat system event for the running service\n  help          Show this help text\n"
 }

@@ -122,11 +122,40 @@ discord:
   download_incoming_attachments: true
   incoming_attachments_dir: ./.element-orion/incoming-attachments
 
+# Messenger channel (port of murmur's messagix bridge).
+# Cookies file: export from the logged-in account (see murmur-cookie-refresher.mjs).
+messenger:
+  enabled: false
+  cookies_path: ./config/messenger-cookies.json
+  allowed_thread_ids: []
+
+# WhatsApp channel via embedded whatsmeow (session persisted to Neon).
+whatsapp:
+  enabled: false
+  store_dir: ./.element-orion/whatsapp
+  database_url: ""
+  proxy: ""
+
+# Bridge service: HTTP endpoints for automation notifications (Vercel pollers)
+# and cookie refresh. Runs when bridge.enabled is true.
+bridge:
+  enabled: false
+  listen_addr: 127.0.0.1:8791
+  notifications_path: /api/automation/notifications
+  secret: ""
+  secret_env: ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET
+
 gifs:
   enabled: false
   provider: giphy
   api_key: ""
   api_key_env: GIPHY_API_KEY
+
+# Image generation tool (calls <llm.base_url>/images/generations with llm.api_key).
+image_gen:
+  enabled: false
+  model: cloudflare/@cf/black-forest-labs/flux-1-schnell
+  output_dir: ./.element-orion/generated
   search_limit: 6
   content_filter: pg-13
 

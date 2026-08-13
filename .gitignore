@@ -28,3 +28,10 @@ workspace/TASKS.md
 workspace/tasks.md
 workspace/CODEBASE.md
 workspace/*
+
+config/lumen.yaml
+config/messenger-cookies.json
+.element-orion/
+*.exe
+*.exe~
+

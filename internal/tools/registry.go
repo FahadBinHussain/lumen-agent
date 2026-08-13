@@ -68,6 +68,7 @@ func NewRegistry(cfg config.Config) (*Registry, error) {
 	registry.registerHeartbeatWakeTools()
 	registry.registerSandboxTools()
 	registry.registerGIFTool()
+	registry.registerImageGenTool()
 	registry.registerWebInfoTools()
 	registry.registerRSSTools()
 	registry.registerReminderTool()
