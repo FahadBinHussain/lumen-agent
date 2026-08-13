@@ -85,8 +85,10 @@ trims per request.
 - whatsmeow: first run has no device — QR is logged (`events.QR`) for phone scan;
   after linking, the device store file (`whatsmeow.db` under `whatsapp.store_dir`)
   is backed up to Neon so re-pairs survive machine moves.
-- Old EO instance on this machine (PID 10772, since 2026-08-11) runs the pre-merge
-  binary; restart it with the new `element-orion.exe` after enabling bridge config.
+- Old EO instance on this machine (PID 10772, since 2026-08-11) ran the
+  pre-merge binary; replaced 2026-08-12 by the merged build (serve with
+  config/lumen.yaml, bridge on 127.0.0.1:8791). messenger + whatsapp still
+  disabled until user provisions the channels.
 
 ## Upstream tracking
 
