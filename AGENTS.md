@@ -191,6 +191,50 @@ trims per request.
   config/lumen.yaml, bridge on 127.0.0.1:8791). messenger + whatsapp still
   disabled until user provisions the channels.
 
+## Cutover readiness vs murmur (2026-08-14 audit)
+
+Audit of murmur's live surface vs this fork (full comparison in session
+notes): ~90% covered. Remaining gaps and how they're handled:
+
+- **Send-side thread allowlist (CLOSED 2026-08-14)**: every outgoing Messenger
+  send is now gated on `messenger.allowed_thread_ids` — agent replies and the
+  notifications endpoint via `Service.send()`, and BNP worker sends via
+  `Service.SendMessage`/`EditMessage` (which now return a distinct error
+  instead of the empty-ID string, so a blocked thread never fakes the
+  cookie-health failure signature). `MessengerThreadAllowed()` (config.go):
+  empty list = allow all. production.yaml carries the current live murmur
+  threads (30738305889116993, 953525124128433, 2637078310061988). Blocks are
+  log-only + HTTP 200 `{"status":"sent"}` (murmur contract — pollers keep
+  working); watch Render logs for "blocked (not in messenger.allowed_thread_ids)".
+- **Cookie-health auto-refresh (watchdog, READY but not scheduled)**: local
+  script `C:\Users\Admin\Downloads\automata\facebook.com\cookie-health.ps1` —
+  port of murmur.ps1 Check-CookieHealth/Invoke-CookieRefresh/
+  Reset-FailedBnpOutbox: polls dailyBNP Neon (`BNP_DATABASE_URL`, wss via
+  bnp-db.mjs) for `send returned empty message ID` failures in a window, runs
+  the browserless refresher against the lumen bridge, then resets failed rows
+  to pending. Runs only after messenger goes live (needs the BNP worker +
+  vault email); schedule via `schtasks /sc minute /mo 10`. Health-gates on
+  `MURMUR_HF_SPACE_URL` (default http://127.0.0.1:8791).
+- **Dedupe continuity (WIRED 2026-08-14)**: `notify.database_url_env` now
+  points at `NOTIFY_DATABASE_URL` = murmur's Neon DSN (steam_seen/game_seen)
+  so pollers don't re-send the backlog; set on Render as an env var. lumen's
+  own `DATABASE_URL` (persistence + whatsapp sessions) stays the lumen Neon
+  project. Value backed up at
+  `%APPDATA%\mainframe\state\murmur-neon-database-url.txt`.
+- **WhatsApp session carry-over**: NOT portable — murmur's wacli store is a
+  different format than lumen's whatsmeow.db. Expect a fresh QR pairing at
+  cutover (lumen logs `events.QR`); new sessions persist to lumen Neon.
+- **Messenger account**: user plans a different FB account than murmur's —
+  `messenger.enabled` stays false; the bridge auth story: when
+  `bridge.secret`/`ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET` gets set at
+  cutover, set it to the SAME value as the HF profile token the refresher +
+  Vercel pollers already send as Bearer, so nothing needs to change on their
+  side (lumen accepts `X-HF-Authorization` or `Authorization: Bearer`).
+- **Chat history**: murmur's Neon `messages` table is not consumed — lumen
+  keeps per-thread history in memory (100 msgs) + Neon snapshot of agent
+  memory. `/ai model`/per-thread model selection intentionally dropped (single
+  `llm.model` catalog).
+
 ## DM speaker labels (2026-08-14 fork patch)
 
 Upstream labels the speaker only in shared guild channels (`formatSharedChannelPrompt`)

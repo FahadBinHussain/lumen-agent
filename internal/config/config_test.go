@@ -710,3 +710,20 @@ func TestPersistenceExcludeDefaultsAddedOnResolve(t *testing.T) {
 		}
 	}
 }
+
+func TestMessengerThreadAllowedEmptyListAllowsAll(t *testing.T) {
+	cfg := Config{Messenger: MessengerConfig{AllowedThreadIDs: []string{}}}
+	if !cfg.MessengerThreadAllowed("anything") {
+		t.Fatal("empty allowlist must allow all threads")
+	}
+}
+
+func TestMessengerThreadAllowedListedAndUnlisted(t *testing.T) {
+	cfg := Config{Messenger: MessengerConfig{AllowedThreadIDs: []string{"30738305889116993", "2637078310061988"}}}
+	if !cfg.MessengerThreadAllowed("30738305889116993") {
+		t.Fatal("listed thread must be allowed")
+	}
+	if cfg.MessengerThreadAllowed("953525124128433") {
+		t.Fatal("unlisted thread must be blocked")
+	}
+}

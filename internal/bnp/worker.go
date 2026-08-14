@@ -16,7 +16,7 @@ import (
 // worker needs to deliver items. Defined here so the worker does not import
 // internal/bridge (which imports this package to start the worker).
 type MessengerSender interface {
-	SendMessage(ctx context.Context, threadID int64, text string) string
+	SendMessage(ctx context.Context, threadID int64, text string) (string, error)
 	EditMessage(ctx context.Context, threadID int64, messageID string, text string) error
 }
 
@@ -164,7 +164,11 @@ func (w *Worker) sendItem(ctx context.Context, item Item) {
 		return
 	}
 
-	msgID := w.client.SendMessage(ctx, threadID, item.Message)
+	msgID, err := w.client.SendMessage(ctx, threadID, item.Message)
+	if err != nil {
+		w.ackItem(ctx, item.ID, "failed", "", "", err.Error())
+		return
+	}
 	if msgID == "" {
 		w.ackItem(ctx, item.ID, "failed", "", "", "send returned empty message ID")
 		return

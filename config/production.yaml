@@ -164,7 +164,14 @@ discord:
 messenger:
   enabled: false
   cookies_path: ./config/messenger-cookies.json
-  allowed_thread_ids: []
+  # send-side allowlist (murmur port): every outgoing Messenger send —
+  # notifications endpoint, BNP worker, agent replies — is blocked when the
+  # thread is not listed here (empty = allow all). mirrors murmur's
+  # MURMUR_ALLOWED_THREAD_IDS; currently the live murmur threads.
+  allowed_thread_ids:
+    - 30738305889116993
+    - 953525124128433
+    - 2637078310061988
 
 whatsapp:
   enabled: false
@@ -234,7 +241,9 @@ bridge:
 
 notify:
   webhook_token_env: ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET
-  database_url_env: DATABASE_URL
+  # murmur's Neon (steam_seen/game_seen) for dedupe continuity at cutover;
+  # separate from DATABASE_URL (lumen's own persistence/whatsapp DB).
+  database_url_env: NOTIFY_DATABASE_URL
   steam_updates:
     enabled: false
     interval: 1m
