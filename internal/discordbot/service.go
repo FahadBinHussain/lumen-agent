@@ -888,11 +888,7 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 		if silentReason != "" {
 			s.audit.Write("silent_reply", state.ID, map[string]any{"silent_reason": silentReason})
 		}
-		if prompt.Kind == promptKindUser {
-			if sendErr := s.sendReply(prompt, "Done."); sendErr != nil {
-				s.audit.Write("error", state.ID, map[string]any{"op": "send_fallback_reply", "error": sendErr.Error()})
-			}
-		}
+		// fork: upstream posted a hardcoded "Done." fallback here; send nothing instead (2026-08-14).
 		return
 	}
 
@@ -940,6 +936,8 @@ func (s *Service) userPromptFromMessage(message *discordgo.MessageCreate) inboun
 	content := replaceAttachmentURLs(rawContent, attachments)
 	if s.isSharedConversation(message.GuildID, message.ChannelID) {
 		content = formatSharedChannelPrompt(message, s.application, attachments)
+	} else if strings.TrimSpace(message.GuildID) == "" {
+		content = formatDirectMessagePrompt(message, content, attachments)
 	} else if strings.TrimSpace(content) == "" && len(attachments) > 0 {
 		content = describeDirectAttachments(attachments)
 	} else if len(attachments) > 0 {
@@ -995,6 +993,27 @@ func promptUserID(prompt inboundPrompt, state *sessionState) string {
 		return ""
 	}
 	return strings.TrimSpace(state.Key.UserID)
+}
+
+func formatDirectMessagePrompt(message *discordgo.MessageCreate, content string, attachments []downloadedAttachment) string {
+	var builder strings.Builder
+	builder.WriteString("Direct message\nspeaker: ")
+	builder.WriteString(sharedChannelAuthorName(message))
+	if message.Author != nil && strings.TrimSpace(message.Author.ID) != "" {
+		builder.WriteString("\nuser_id: ")
+		builder.WriteString(strings.TrimSpace(message.Author.ID))
+	}
+	if len(attachments) > 0 {
+		builder.WriteString("\nattachments: ")
+		builder.WriteString(fmt.Sprintf("%d", len(attachments)))
+		for _, attachment := range attachments {
+			builder.WriteString("\n- ")
+			builder.WriteString(sharedAttachmentLabel(attachment))
+		}
+	}
+	builder.WriteString("\ncontent:\n")
+	builder.WriteString(content)
+	return builder.String()
 }
 
 func formatSharedChannelPrompt(message *discordgo.MessageCreate, botUserID string, attachments []downloadedAttachment) string {

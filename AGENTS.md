@@ -63,9 +63,27 @@ trims per request.
     `.element-orion/generated`). replaces murmur's `/ai image` subcommand —
     usable by the agent on all platforms, not just messenger. enables via
     `image_gen.enabled: true` + `generate_image` in `tools.enabled`.
-  - dailyBNP outbox pull worker (murmur `internal/bnp`) is NOT ported: lumen's
-    bridge push endpoint `POST /api/automation/notifications` (with
-    `bridge.secret` auth) replaces the claim/ack pull flow.
+  - dailyBNP outbox pull worker: `internal/bnp` is a faithful port of murmur's
+    claim/ack worker (poll `BNP_MESSENGER_OUTBOX_URL` GET ?limit=N → send or
+    edit via messagix → POST ack back). env contract identical to murmur
+    (`BNP_MESSENGER_OUTBOX_URL/TOKEN/THREAD_ID`, `BNP_MESSENGER_POLL_SECONDS`,
+    `BNP_MESSENGER_CLAIM_LIMIT`, `BNP_MESSENGER_REQUEST_TIMEOUT_SECONDS`).
+    wired in `bridge.Service.Run`, starts only when `messenger.enabled` is true
+    AND the env vars are set (worker logs "disabled" otherwise). sender
+    interface (`MessengerSender`) defined in `internal/bnp` to avoid an import
+    cycle; `Service.SendMessage`/`EditMessage` implement it. the push endpoint
+    `POST /api/automation/notifications` (with `bridge.secret` auth) remains
+    the alternative for sources that can push.
+  - notifier kill-switches (added 2026-08-14): `bridge.notifications_enabled`
+    and `bridge.bnp_enabled` (both default true in code; set FALSE in
+    config/lumen.yaml). notifications_enabled=false unmounts ONLY the
+    `/api/automation/notifications` handler — `/api/cookies/upload` is NOT
+    gated (it's ops-critical for the browserless cookie refresher and stays
+    mounted whenever messenger.enabled is true). bnp_enabled=false skips the
+    BNP worker goroutine. both are currently FALSE so lumen stays quiet while
+    murmur's live notifiers (steam-updates/free-games cron jobs, neon usage,
+    BNP worker) keep running — re-enable per-notifier only when lumen
+    actually takes over that flow.
   - model-catalog listing (/ai models etc.) intentionally dropped — the fork
     uses the single `llm.model` config.
 - Pre-existing test failures on this machine (NOT caused by the merge, verified):
@@ -89,6 +107,17 @@ trims per request.
   pre-merge binary; replaced 2026-08-12 by the merged build (serve with
   config/lumen.yaml, bridge on 127.0.0.1:8791). messenger + whatsapp still
   disabled until user provisions the channels.
+
+## DM speaker labels (2026-08-14 fork patch)
+
+Upstream labels the speaker only in shared guild channels (`formatSharedChannelPrompt`)
+and gates DMs by `allowed_dm_user_ids` — the model never sees who is DMing, so with
+DMs open to everyone (empty allowlist) it would treat strangers as the USER.md owner.
+User wants DMs open for everyone AND the model told who's talking: not doable from
+config, so patched `internal/discordbot/service.go` with `formatDirectMessagePrompt`
+(wraps DM messages as `Direct message / speaker / user_id / content`, same label
+style as shared channels). Only upstream file touched outside the original merge
+files — keep an eye on it when rebasing upstream. Rebuilt exe 2026-08-14.
 
 ## Upstream tracking
 
