@@ -194,6 +194,17 @@ restored on boot). The old blunt 100-message cap is gone (2026-08-14).
   config/lumen.yaml, bridge on 127.0.0.1:8791). messenger + whatsapp still
   disabled until user provisions the channels.
 
+## Test threads (2026-08-14)
+
+Hardcoded test targets — use these for cutover test sends only:
+
+- Messenger thread `2637078310061988` (already in `messenger.allowed_thread_ids`)
+- Discord channel `1537650032441032765` (AlgoJect — where @murmur hello tests happen)
+- WhatsApp contact +880 1711-472629 → JID `8801711472629@s.whatsapp.net` (now gated
+  by the new `whatsapp.allowed_jids`, mirror of `messenger.allowed_thread_ids`:
+  empty list = allow all; blocked sends log `blocked (not in whatsapp.allowed_jids)`
+  and are dropped).
+
 ## Cutover readiness vs murmur (2026-08-14 audit)
 
 Audit of murmur's live surface vs this fork (full comparison in session
@@ -205,10 +216,12 @@ notes): ~90% covered. Remaining gaps and how they're handled:
   `Service.SendMessage`/`EditMessage` (which now return a distinct error
   instead of the empty-ID string, so a blocked thread never fakes the
   cookie-health failure signature). `MessengerThreadAllowed()` (config.go):
-  empty list = allow all. production.yaml carries the current live murmur
-  threads (30738305889116993, 953525124128433, 2637078310061988). Blocks are
-  log-only + HTTP 200 `{"status":"sent"}` (murmur contract — pollers keep
-  working); watch Render logs for "blocked (not in messenger.allowed_thread_ids)".
+  empty list = allow all. WhatsApp got the symmetric `whatsapp.allowed_jids`
+  gate (same 2026-08-14), seeded with the test contact only. production.yaml
+  carries the current live murmur threads (30738305889116993, 953525124128433,
+  2637078310061988). Blocks are log-only + HTTP 200 `{"status":"sent"}`
+  (murmur contract — pollers keep working); watch Render logs for "blocked
+  (not in messenger.allowed_thread_ids)".
 - **Cookie-health auto-refresh (watchdog, READY but not scheduled)**: local
   script `C:\Users\Admin\Downloads\automata\facebook.com\cookie-health.ps1` —
   port of murmur.ps1 Check-CookieHealth/Invoke-CookieRefresh/
