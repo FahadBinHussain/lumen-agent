@@ -228,11 +228,16 @@ notes): ~90% covered. Remaining gaps and how they're handled:
   different format than lumen's whatsmeow.db. Expect a fresh QR pairing at
   cutover (lumen logs `events.QR`); new sessions persist to lumen Neon.
 - **Messenger account**: user plans a different FB account than murmur's —
-  `messenger.enabled` stays false; the bridge auth story: when
-  `bridge.secret`/`ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET` gets set at
-  cutover, set it to the SAME value as the HF profile token the refresher +
-  Vercel pollers already send as Bearer, so nothing needs to change on their
-  side (lumen accepts `X-HF-Authorization` or `Authorization: Bearer`).
+  `messenger.enabled` stays false. **bridge.secret SET (2026-08-14)**:
+  `ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET` on Render = the fahadbinhussain001
+  HF profile token (the one the refresher sends as Bearer, verified by sha256).
+  The Vercel poller project (murmur, prj_EWeinTGTbfW5iC2bciQ65ZuA4WyZ, owner
+  fahadbix@gmail.com) had an old `HF_TOKEN` that matches nothing in mainframe
+  — realigned it to the same value via env PATCH (murmur's endpoints never
+  checked auth, so this is safe). NOTE: Vercel env GET redacts values
+  (`"value": "<redacted>"`, `decrypted:false`) — you cannot hash-verify env
+  values via API; trust PATCH `updatedAt` instead. lumen accepts
+  `X-HF-Authorization` or `Authorization: Bearer`.
 - **Chat history**: symmetric with Discord as of 2026-08-14 — bridge sessions
   use the same token-aware compaction as Discord (`agent.CompactHistoryForStorage`,
   no fixed cap) and persist to `<session_dir>/bridge-sessions.json`, backed up to
