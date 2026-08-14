@@ -120,6 +120,14 @@ func TestBridgeNotificationsAuth(t *testing.T) {
 	if rec.status != http.StatusOK {
 		t.Fatalf("expected 200 with secret, got %d: %s", rec.status, rec.body.String())
 	}
+
+	req, _ = http.NewRequest(http.MethodPost, "http://127.0.0.1/api/automation/notifications", bytes.NewReader(body))
+	req.Header.Set("X-HF-Authorization", "Bearer hunter2")
+	rec = newRecorder()
+	s.handleAutomationNotification(rec, req)
+	if rec.status != http.StatusOK {
+		t.Fatalf("expected 200 with bearer-prefixed secret (poller contract), got %d: %s", rec.status, rec.body.String())
+	}
 }
 
 func TestBridgeHistoryRoundTrip(t *testing.T) {

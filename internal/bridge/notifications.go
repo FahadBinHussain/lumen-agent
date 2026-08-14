@@ -176,9 +176,9 @@ func (s *Service) authenticated(r *http.Request) bool {
 	provided := strings.TrimSpace(r.Header.Get("X-HF-Authorization"))
 	if provided == "" {
 		provided = strings.TrimSpace(r.Header.Get("Authorization"))
-		if strings.HasPrefix(strings.ToLower(provided), "bearer ") {
-			provided = strings.TrimSpace(provided[7:])
-		}
+	}
+	if strings.HasPrefix(strings.ToLower(provided), "bearer ") {
+		provided = strings.TrimSpace(provided[7:])
 	}
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(secret)) == 1
 }
