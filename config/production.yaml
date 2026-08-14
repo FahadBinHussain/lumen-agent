@@ -17,7 +17,32 @@ llm:
   base_url: https://alchoholpad-litellm.hf.space/v1
   api_key: ""
   api_key_env: LITELLM_API_KEY
-  model: admin_mistral_ai_fahadbinhussain001/mistral-large-latest
+  model: mistral-large
+  models:
+    - name: mistral-large
+      model: admin_mistral_ai_fahadbinhussain001/mistral-large-latest
+      enabled: true
+    - name: mistral-small
+      model: admin_mistral_ai_fahadbinhussain001/mistral-small-latest
+      enabled: true
+    - name: deepseek-v3.2
+      model: cloud_sambanova_ai_fahadbinhussain001/DeepSeek-V3.2
+      enabled: true
+    - name: deepseek-v3.1
+      model: cloud_sambanova_ai_fahadbinhussain001/DeepSeek-V3.1
+      enabled: true
+    - name: llama-3.3-samba
+      model: cloud_sambanova_ai_fahadbinhussain001/Meta-Llama-3.3-70B-Instruct
+      enabled: true
+    - name: llama-3.3-groq
+      model: console_groq_com_fahadbinhussain001/llama-3.3-70b-versatile
+      enabled: true
+    - name: command-r
+      model: dashboard_cohere_com_fahadbinhussain001/command-r-08-2024
+      enabled: true
+    - name: gemini-3.5-flash
+      model: gemini-3.5-flash
+      enabled: true
   vision_enabled: false
   reasoning_effort: off
   max_thinking_token: off

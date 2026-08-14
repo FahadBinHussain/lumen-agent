@@ -120,7 +120,7 @@ func (r *Runner) Run(ctx context.Context, history []llm.Message, userPrompt stri
 		Timestamp: r.messageTimestamp(initialUserTime),
 	})
 
-	model := r.cfg.LLM.Model
+	model := r.cfg.ResolveLLMModel()
 	if strings.TrimSpace(conversation.ModelOverride) != "" {
 		model = strings.TrimSpace(conversation.ModelOverride)
 	}
