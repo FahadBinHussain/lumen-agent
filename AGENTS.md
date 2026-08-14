@@ -115,8 +115,11 @@ stripped from the prompt). WhatsApp replies only on `/ai` prefix. The `/ai` pref
 is stripped; the rest becomes the prompt for the agent runner. No murmur `/ai`
 subcommands (models/image) — the fork uses the single `llm.model` config.
 
-History: per `platform:thread` in memory, capped at 100 messages; the agent runner
-trims per request.
+History: per `platform:thread` in memory, persisted to
+`<session_dir>/bridge-sessions.json` (symmetry with Discord: same
+`agent.CompactHistoryForStorage` compaction on every turn, same file-in-session-dir
+pattern, same Neon snapshot backup via internal/persist + `SetPersistenceToucher`,
+restored on boot). The old blunt 100-message cap is gone (2026-08-14).
 
 ## Platform gotchas
 
@@ -230,10 +233,12 @@ notes): ~90% covered. Remaining gaps and how they're handled:
   cutover, set it to the SAME value as the HF profile token the refresher +
   Vercel pollers already send as Bearer, so nothing needs to change on their
   side (lumen accepts `X-HF-Authorization` or `Authorization: Bearer`).
-- **Chat history**: murmur's Neon `messages` table is not consumed — lumen
-  keeps per-thread history in memory (100 msgs) + Neon snapshot of agent
-  memory. `/ai model`/per-thread model selection intentionally dropped (single
-  `llm.model` catalog).
+- **Chat history**: symmetric with Discord as of 2026-08-14 — bridge sessions
+  use the same token-aware compaction as Discord (`agent.CompactHistoryForStorage`,
+  no fixed cap) and persist to `<session_dir>/bridge-sessions.json`, backed up to
+  Neon by internal/persist and restored on boot. murmur's Neon `messages` table
+  is still not consumed (archival only). `/ai model`/per-thread model selection
+  intentionally dropped (single `llm.model` catalog).
 
 ## DM speaker labels (2026-08-14 fork patch)
 
