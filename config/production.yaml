@@ -162,7 +162,7 @@ discord:
   incoming_attachments_dir: ./.element-orion/incoming-attachments
 
 messenger:
-  enabled: false
+  enabled: true
   # cookies live INSIDE the session dir so internal/persist snapshots them to
   # Neon and restores them on every fresh boot (Render FS is ephemeral —
   # anything outside the session dir dies with the container). upload via
