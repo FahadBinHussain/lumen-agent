@@ -1,5 +1,21 @@
 # Element Orion fork (FahadBinHussain/lumen-agent) — agent notes
 
+## Admin model catalog (2026-08-14)
+
+- Users cannot select models. `llm.model` = the active model (by catalog name
+  or full id); `llm.models` = admin catalog of `{name, model, enabled}` entries.
+  Admins toggle `enabled` and change `llm.model` to switch defaults — no code
+  change, no deleting entries. Runtime resolves via `Config.ResolveLLMModel()`
+  (config.go), used by agent.Run, prompt metadata, heartbeat, dream mode.
+- Validation: with a catalog present, `llm.model` must match an ENABLED entry
+  (by name or model id); every entry needs name+model; at least one enabled;
+  duplicate names rejected. Without a catalog, `llm.model` works as before
+  (single bare id).
+- production.yaml catalog mirrors the gateway's /v1/models list
+  (alchoholpad-litellm.hf.space): mistral-large (active default), mistral-small,
+  deepseek-v3.2, deepseek-v3.1, llama-3.3-samba, llama-3.3-groq, command-r,
+  gemini-3.5-flash. When adding a model to the gateway, add a catalog entry here.
+
 ## Deploy: Render web service (2026-08-14)
 
 - Service: `lumen` (srv-d9vd3oh42hec738odeg0), workspace "Bayazid's workspace"
