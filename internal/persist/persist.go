@@ -73,15 +73,19 @@ func (s *Store) migrate(ctx context.Context) error {
 }
 
 // Restore fills the local dir from the snapshot table, but only when the dir
-// is missing or empty (i.e. a fresh container). Existing local state always
-// wins, and excluded paths are never written.
+// is missing or contains no real files (i.e. a fresh container). Subdirectories
+// created at boot (memory/, logs/) do not count as existing state, so restore
+// still runs. Existing local files always win, and excluded paths are never
+// written.
 func (s *Store) Restore(ctx context.Context) error {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		return fmt.Errorf("persist restore read dir: %w", err)
 	}
-	if len(entries) > 0 {
-		return nil
+	for _, e := range entries {
+		if !e.IsDir() {
+			return nil
+		}
 	}
 	rows, err := s.pool.Query(ctx, `SELECT path, data FROM lumen_snapshots ORDER BY path`)
 	if err != nil {
