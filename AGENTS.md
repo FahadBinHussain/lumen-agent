@@ -26,6 +26,32 @@
   top-level local base_url/`llama-cpp` key. When adding a model to the gateway,
   add a catalog entry here.
 
+## Persistence: Neon snapshot backup (2026-08-14)
+
+- Render free containers have an EPHEMERAL filesystem — anything written under
+  `./.element-orion` (memory shards, session files, heartbeat state, tool
+  stores) dies on every deploy/spin-down/recycle. `internal/persist` fixes
+  that: it snapshots the session dir into a Neon Postgres table
+  (`lumen_snapshots`, per-file rows with sha256) and restores it on a fresh
+  box.
+- Behavior: local dir stays authoritative while running. On boot, Restore
+  ONLY fills a missing/empty dir (never clobbers existing state). Sync upserts
+  changed files and deletes stale rows; a coalesced Touch() fires right after
+  session/memory writes (via `Service.SetPersistenceToucher`) so a sudden
+  container loss costs at most one turn, plus a periodic catch-all (default
+  1m) and a best-effort shutdown sync (only when SIGTERM actually arrives —
+  don't rely on it).
+- Excludes (config + defaulted): sandboxes, whatsapp, incoming-attachments,
+  logs. whatsapp.db is already backed up separately via internal/neon.
+- Config section `persistence:` (enabled, database_url, database_url_env
+  default DATABASE_URL, interval, exclude). Enabled in production.yaml; DSN
+  comes from the DATABASE_URL Render env var. Validation fails startup when
+  enabled without a resolvable URL — by design, so a missing env var is loud.
+- Neon project: `lumen` / aged-fire-12399795, org "Ratul"
+  (org-plain-glade-16980612), OWNS ACCOUNT error.503.mail@gmail.com (mainframe
+  neon profile), aws-us-west-2, pg 17. Connection URI via
+  neon-account.ps1 / mainframe api-key. Never commit the DSN.
+
 ## Deploy: Render web service (2026-08-14)
 
 - Service: `lumen` (srv-d9vd3oh42hec738odeg0), workspace "Bayazid's workspace"

@@ -23,6 +23,7 @@ type Config struct {
 	WhatsApp        WhatsAppConfig        `yaml:"whatsapp"`
 	Bridge          BridgeConfig          `yaml:"bridge"`
 	Notify          NotifyConfig          `yaml:"notify"`
+	Persistence     PersistenceConfig     `yaml:"persistence"`
 	GIFs            GIFConfig             `yaml:"gifs"`
 	ImageGen        ImageGenConfig        `yaml:"image_gen"`
 	Heartbeat       HeartbeatConfig       `yaml:"heartbeat"`
@@ -217,6 +218,53 @@ type NotifyNeonUsage struct {
 	APIKeyEnv    []string `yaml:"api_key_env"`
 	StatePath    string   `yaml:"state_path"`
 }
+
+// PersistenceConfig snapshots the session dir to an external Postgres
+// (Neon) table so state survives Render's ephemeral container filesystem.
+// The local dir stays authoritative; the DB is a restore-on-fresh-box +
+// periodic/touch backup layer.
+type PersistenceConfig struct {
+	Enabled        bool     `yaml:"enabled"`
+	DatabaseURL    string   `yaml:"database_url"`
+	DatabaseURLEnv string   `yaml:"database_url_env"`
+	Interval       string   `yaml:"interval"`
+	Exclude        []string `yaml:"exclude"`
+}
+
+// ResolvePersistenceDatabaseURL returns the configured DSN: an explicit
+// database_url wins, otherwise the env var named by database_url_env
+// (defaulting to DATABASE_URL).
+func (c PersistenceConfig) ResolvePersistenceDatabaseURL() (string, error) {
+	if strings.TrimSpace(c.DatabaseURL) != "" {
+		return strings.TrimSpace(c.DatabaseURL), nil
+	}
+	envName := strings.TrimSpace(c.DatabaseURLEnv)
+	if envName == "" {
+		envName = "DATABASE_URL"
+	}
+	value := strings.TrimSpace(os.Getenv(envName))
+	if value == "" {
+		return "", fmt.Errorf("persistence: environment variable %q is empty; set persistence.database_url or export the variable", envName)
+	}
+	return value, nil
+}
+
+// PersistenceInterval returns the parsed sync interval, defaulting to 1m.
+func (c PersistenceConfig) PersistenceInterval() time.Duration {
+	if strings.TrimSpace(c.Interval) == "" {
+		return time.Minute
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(c.Interval))
+	if err != nil || d <= 0 {
+		return time.Minute
+	}
+	return d
+}
+
+// DefaultPersistenceExclude are relative paths under the session dir that are
+// never snapshotted: sandboxes are huge, whatsapp.db is already backed up via
+// internal/neon, attachments are transient media, logs grow unbounded.
+var DefaultPersistenceExclude = []string{"sandboxes", "whatsapp", "incoming-attachments", "logs"}
 
 type GIFConfig struct {
 	Enabled       bool   `yaml:"enabled"`
@@ -747,6 +795,23 @@ func (c *Config) resolvePaths() error {
 	c.Heartbeat.Target.ChannelID = strings.TrimSpace(c.Heartbeat.Target.ChannelID)
 	c.Heartbeat.Target.UserID = strings.TrimSpace(c.Heartbeat.Target.UserID)
 
+	c.Persistence.DatabaseURL = strings.TrimSpace(c.Persistence.DatabaseURL)
+	c.Persistence.DatabaseURLEnv = strings.TrimSpace(c.Persistence.DatabaseURLEnv)
+	if c.Persistence.DatabaseURLEnv == "" {
+		c.Persistence.DatabaseURLEnv = "DATABASE_URL"
+	}
+	c.Persistence.Interval = strings.TrimSpace(c.Persistence.Interval)
+	c.Persistence.Exclude = uniqueTrimmedStrings(c.Persistence.Exclude)
+	excludeSet := make(map[string]struct{}, len(c.Persistence.Exclude))
+	for _, ex := range c.Persistence.Exclude {
+		excludeSet[ex] = struct{}{}
+	}
+	for _, def := range DefaultPersistenceExclude {
+		if _, ok := excludeSet[def]; !ok {
+			c.Persistence.Exclude = append(c.Persistence.Exclude, def)
+		}
+	}
+
 	c.EventWebhook.ListenAddr = strings.TrimSpace(c.EventWebhook.ListenAddr)
 	c.EventWebhook.Path = strings.TrimSpace(c.EventWebhook.Path)
 	c.EventWebhook.Secret = strings.TrimSpace(c.EventWebhook.Secret)
@@ -1102,6 +1167,17 @@ func (c Config) validate() error {
 		}
 		if !strings.HasPrefix(c.Bridge.NotificationsPath, "/") {
 			return fmt.Errorf("bridge.notifications_path must start with '/'")
+		}
+	}
+
+	if c.Persistence.Enabled {
+		if _, err := c.Persistence.ResolvePersistenceDatabaseURL(); err != nil {
+			return err
+		}
+		if strings.TrimSpace(c.Persistence.Interval) != "" {
+			if _, err := time.ParseDuration(strings.TrimSpace(c.Persistence.Interval)); err != nil {
+				return fmt.Errorf("parse persistence.interval: %w", err)
+			}
 		}
 	}
 

@@ -87,6 +87,12 @@ type Service struct {
 	// For batching background task notifications
 	backgroundNotificationBatches map[string]*backgroundNotificationBatch
 	batchMu                    sync.Mutex
+
+	// persistenceToucher, when set, is called after state-changing disk
+	// writes (session persist, memory shard append) so external snapshot
+	// persistence (internal/persist) can sync right away instead of waiting
+	// for its periodic ticker.
+	persistenceToucher func()
 }
 
 type runtimeStats struct {
@@ -216,6 +222,19 @@ func New(cfg config.Config, runner *agent.Runner, audit *auditlog.Logger, sandbo
 	session.AddHandler(service.handleMessageCreate)
 
 	return service, nil
+}
+
+// SetPersistenceToucher installs a callback fired after state-changing disk
+// writes so external snapshot persistence can sync immediately (no-op when
+// nil).
+func (s *Service) SetPersistenceToucher(toucher func()) {
+	s.persistenceToucher = toucher
+}
+
+func (s *Service) touchPersistence() {
+	if s != nil && s.persistenceToucher != nil {
+		s.persistenceToucher()
+	}
 }
 
 func (s *Service) Run(ctx context.Context) error {
@@ -851,6 +870,7 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 			if persistErr := state.persist(); persistErr != nil {
 				s.audit.Write("error", state.ID, map[string]any{"op": "persist_failed_session", "error": persistErr.Error()})
 			}
+			s.touchPersistence()
 		}
 		if prompt.Kind == promptKindHeartbeat || prompt.Kind == promptKindDream {
 			return
@@ -874,6 +894,7 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 		if persistErr := state.persist(); persistErr != nil {
 			s.audit.Write("error", state.ID, map[string]any{"op": "persist_session", "error": persistErr.Error()})
 		}
+		s.touchPersistence()
 	}
 
 	if prompt.Kind == promptKindHeartbeat {
@@ -912,6 +933,7 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 			s.audit.Write("error", state.ID, map[string]any{"op": "append_memory_shard", "error": err.Error()})
 		}
 	}
+	s.touchPersistence()
 
 	if sendErr := s.sendReply(prompt, reply); sendErr != nil {
 		s.audit.Write("error", state.ID, map[string]any{"op": "send_reply", "error": sendErr.Error()})
