@@ -1,5 +1,23 @@
 # Element Orion fork (FahadBinHussain/lumen-agent) — agent notes
 
+## Deploy: Render web service (2026-08-14)
+
+- Service: `lumen` (srv-d9vd3oh42hec738odeg0), workspace "Bayazid's workspace"
+  (tea-cu1mom1u0jms738ka280, shared by bayazid10@gmail.com + bayazid190@gmail.com),
+  free plan, oregon. URL https://lumen-aqyl.onrender.com, health /api/health.
+- Dockerfile multi-stage build (golang:1.25 → debian:bookworm-slim + ffmpeg),
+  binds 7860, `serve -config /app/config/production.yaml`. Auto-deploy on main.
+- `config/production.yaml` is now TRACKED in git (was gitignored) and is
+  secret-free: `discord.bot_token_env: DISCORD_BOT_TOKEN` (added 2026-08-14,
+  bot_token fallback if the env var is unset). Render env vars:
+  DISCORD_BOT_TOKEN (the real token), LITELLM_API_KEY (alchoholpad@gmail.com HF
+  token for https://alchoholpad-litellm.hf.space). GitHub push protection
+  (secret scan) blocks any commit containing the token — never commit it.
+- First create via `render services create` did NOT auto-trigger a deploy
+  (status stayed empty); fix: `POST /v1/services/<id>/deploys` via curl.
+- Local Windows runs still use config/lumen.yaml (gitignored).
+
+
 ## Merged platforms (2026-08-12): murmur Messenger + WhatsApp ports
 
 This fork now runs all three platforms from one binary: the upstream Element Orion
