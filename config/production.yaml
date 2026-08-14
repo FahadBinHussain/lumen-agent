@@ -162,7 +162,7 @@ discord:
   incoming_attachments_dir: ./.element-orion/incoming-attachments
 
 messenger:
-  enabled: false
+  enabled: true
   cookies_path: ./config/messenger-cookies.json
   # send-side allowlist (murmur port): every outgoing Messenger send —
   # notifications endpoint, BNP worker, agent replies — is blocked when the
