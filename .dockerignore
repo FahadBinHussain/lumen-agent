@@ -1,5 +1,7 @@
 .git/
 .element-orion/
+config/.element-orion/
+config/messenger-cookies.json
 bin/
 dist/
 *.exe
