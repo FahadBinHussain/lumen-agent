@@ -295,6 +295,10 @@ func (s *Service) send(platform string, threadID string, jid string, text string
 			log.Printf("bridge: messenger not enabled, cannot send to %s", threadID)
 			return
 		}
+		if !s.cfg.MessengerThreadAllowed(threadID) {
+			log.Printf("bridge: send to messenger thread %s blocked (not in messenger.allowed_thread_ids)", threadID)
+			return
+		}
 		id, err := strconv.ParseInt(threadID, 10, 64)
 		if err != nil {
 			log.Printf("bridge: invalid messenger thread id %q", threadID)
@@ -325,12 +329,14 @@ func (s *Service) notify(platform string, threadID string, text string) {
 
 // SendMessage implements bnp.MessengerSender: delivers an outbox item to the
 // configured Messenger thread. Returns the message ID, or "" on failure.
-func (s *Service) SendMessage(ctx context.Context, threadID int64, text string) string {
+func (s *Service) SendMessage(ctx context.Context, threadID int64, text string) (string, error) {
 	if s.messenger == nil {
-		log.Printf("bnp: messenger not enabled, cannot send to %d", threadID)
-		return ""
+		return "", fmt.Errorf("messenger not enabled")
 	}
-	return s.messenger.SendText(ctx, threadID, text)
+	if !s.cfg.MessengerThreadAllowed(strconv.FormatInt(threadID, 10)) {
+		return "", fmt.Errorf("thread %d not in messenger.allowed_thread_ids", threadID)
+	}
+	return s.messenger.SendText(ctx, threadID, text), nil
 }
 
 // EditMessage implements bnp.MessengerSender: replaces an existing Messenger
@@ -339,6 +345,9 @@ func (s *Service) EditMessage(ctx context.Context, threadID int64, messageID str
 	if s.messenger == nil {
 		log.Printf("bnp: messenger not enabled, cannot edit message %s", messageID)
 		return fmt.Errorf("messenger not enabled")
+	}
+	if !s.cfg.MessengerThreadAllowed(strconv.FormatInt(threadID, 10)) {
+		return fmt.Errorf("thread %d not in messenger.allowed_thread_ids", threadID)
 	}
 	return s.messenger.EditMessage(ctx, messageID, text)
 }
