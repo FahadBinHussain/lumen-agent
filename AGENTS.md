@@ -43,6 +43,19 @@
   don't rely on it).
 - Excludes (config + defaulted): sandboxes, whatsapp, incoming-attachments,
   logs. whatsapp.db is already backed up separately via internal/neon.
+- **GOTCHA (fixed 2026-08-14, commit 2f8ac45):** `Restore()` originally used
+  `len(os.ReadDir(...)) > 0` as its "dir already has state" check — but
+  `main.go` creates `<session_dir>/memory` and auditlog creates `logs/`
+  BEFORE restore runs, so the dir was never empty and restore silently
+  skipped on EVERY boot (no "restored N file(s)" log ever appeared). Symptom:
+  messenger deployments crashed with `load cookies: open ... no such file`,
+  and each failed boot's shutdown SyncNow deleted Neon rows as stale. The
+  dockerignore theory (config/.element-orion junk shipping in the image) was
+  WRONG — Render builds from a clean git clone, gitignored files never ship.
+  Fix: restore now only skips when the dir contains real FILES (subdirs like
+  memory/ logs/ don't count). Diagnosis tool: `render.cmd logs -r
+  srv-d9vd3oh42hec738odeg0 --start ... --end ...` with RENDER_API_KEY env —
+  the public API has NO log endpoint, but the CLI does.
 - Config section `persistence:` (enabled, database_url, database_url_env
   default DATABASE_URL, interval, exclude). Enabled in production.yaml; DSN
   comes from the DATABASE_URL Render env var. Validation fails startup when
