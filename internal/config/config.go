@@ -67,6 +67,7 @@ type LLMConfig struct {
 	APIKey                  string            `yaml:"api_key"`
 	APIKeyEnv               string            `yaml:"api_key_env"`
 	Model                   string            `yaml:"model"`
+	Models                  []LLMModelEntry   `yaml:"models"`
 	VisionEnabled           bool              `yaml:"vision_enabled"`
 	ReasoningEffort         string            `yaml:"reasoning_effort"`
 	MaxThinkingToken        string            `yaml:"max_thinking_token"`
@@ -81,6 +82,12 @@ type LLMConfig struct {
 	Headers                 map[string]string `yaml:"headers"`
 	KimiNoThink             bool              `yaml:"kimi-no-think"`
 	GLMNoThink              bool              `yaml:"glm-no-think"`
+}
+
+type LLMModelEntry struct {
+	Name    string `yaml:"name"`
+	Model   string `yaml:"model"`
+	Enabled bool   `yaml:"enabled"`
 }
 
 type SkillsConfig struct {
@@ -642,6 +649,11 @@ func (c *Config) resolvePaths() error {
 		c.LLM.APIType = "openai"
 	}
 	c.LLM.APIKey = strings.TrimSpace(c.LLM.APIKey)
+	c.LLM.Model = strings.TrimSpace(c.LLM.Model)
+	for i := range c.LLM.Models {
+		c.LLM.Models[i].Name = strings.TrimSpace(c.LLM.Models[i].Name)
+		c.LLM.Models[i].Model = strings.TrimSpace(c.LLM.Models[i].Model)
+	}
 	c.LLM.Headers = normalizeStringMap(c.LLM.Headers)
 	if c.LLM.ContextWindowTokens <= 0 {
 		c.LLM.ContextWindowTokens = 24000
@@ -840,6 +852,31 @@ func (c Config) validate() error {
 
 	if strings.TrimSpace(c.LLM.Model) == "" {
 		return fmt.Errorf("llm.model must be set")
+	}
+	if len(c.LLM.Models) > 0 {
+		seenNames := map[string]bool{}
+		anyEnabled := false
+		for _, m := range c.LLM.Models {
+			if strings.TrimSpace(m.Name) == "" {
+				return fmt.Errorf("llm.models: every entry needs a name")
+			}
+			if strings.TrimSpace(m.Model) == "" {
+				return fmt.Errorf("llm.models: entry %q needs a model", m.Name)
+			}
+			if seenNames[m.Name] {
+				return fmt.Errorf("llm.models: duplicate name %q", m.Name)
+			}
+			seenNames[m.Name] = true
+			if m.Enabled {
+				anyEnabled = true
+			}
+		}
+		if !anyEnabled {
+			return fmt.Errorf("llm.models: at least one entry must be enabled")
+		}
+		if _, ok := c.LLM.ActiveModelEntry(); !ok {
+			return fmt.Errorf("llm.model %q must match an enabled llm.models entry (by name or model id)", c.LLM.Model)
+		}
 	}
 	if c.LLM.ReasoningEffort != "" && !slices.Contains([]string{"off", "none", "minimal", "low", "medium", "high", "xhigh"}, c.LLM.ReasoningEffort) {
 		return fmt.Errorf("llm.reasoning_effort must be one of off, none, minimal, low, medium, high, or xhigh")
@@ -1371,6 +1408,37 @@ func (c Config) HeartbeatModel() string {
 	if strings.TrimSpace(c.Heartbeat.Model) != "" {
 		return c.Heartbeat.Model
 	}
+	return c.ResolveLLMModel()
+}
+
+// ActiveModelEntry returns the enabled llm.models entry that llm.model refers
+// to (by name or by model id). Only meaningful when the models catalog is
+// configured; returns ok=false when llm.model doesn't match an enabled entry.
+func (l LLMConfig) ActiveModelEntry() (LLMModelEntry, bool) {
+	if len(l.Models) == 0 {
+		return LLMModelEntry{Name: l.Model, Model: l.Model, Enabled: true}, true
+	}
+	target := strings.TrimSpace(l.Model)
+	for _, m := range l.Models {
+		if !m.Enabled {
+			continue
+		}
+		if m.Name == target || m.Model == target {
+			return m, true
+		}
+	}
+	return LLMModelEntry{}, false
+}
+
+// ResolveLLMModel returns the active model id: the single configured
+// llm.model when no catalog is present, or the catalog entry's full model id
+// (falling back to llm.model itself if it's not in the catalog, which
+// validation normally prevents). Users cannot select models; admins pick via
+// llm.model and toggle entries in llm.models.
+func (c Config) ResolveLLMModel() string {
+	if entry, ok := c.LLM.ActiveModelEntry(); ok && entry.Model != "" {
+		return entry.Model
+	}
 	return c.LLM.Model
 }
 
@@ -1431,7 +1499,7 @@ func (c Config) DreamModeModel() string {
 	if strings.TrimSpace(c.DreamMode.Model) != "" {
 		return c.DreamMode.Model
 	}
-	return c.LLM.Model
+	return c.ResolveLLMModel()
 }
 
 func (c Config) DreamModeLocation() (*time.Location, error) {

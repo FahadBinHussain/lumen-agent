@@ -326,7 +326,7 @@ func (r *Runner) systemPrompt(conversation ConversationContext) string {
 func (r *Runner) runtimeMetadataLines(conversation ConversationContext) []string {
 	model := strings.TrimSpace(conversation.ModelOverride)
 	if model == "" {
-		model = strings.TrimSpace(r.cfg.LLM.Model)
+		model = strings.TrimSpace(r.cfg.ResolveLLMModel())
 	}
 	if model == "" {
 		model = "unknown"
