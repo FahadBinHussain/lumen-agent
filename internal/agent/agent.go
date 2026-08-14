@@ -124,6 +124,10 @@ func (r *Runner) Run(ctx context.Context, history []llm.Message, userPrompt stri
 	if strings.TrimSpace(conversation.ModelOverride) != "" {
 		model = strings.TrimSpace(conversation.ModelOverride)
 	}
+	reqBaseURL, reqAPIKey, err := r.cfg.LLM.ActiveModelProvider()
+	if err != nil {
+		return nil, err
+	}
 
 	for {
 		emit(Event{Kind: EventStatus, Message: "Contacting model", Time: time.Now()})
@@ -137,6 +141,8 @@ func (r *Runner) Run(ctx context.Context, history []llm.Message, userPrompt stri
 			MaxTokens:        r.cfg.LLM.MaxTokens,
 			ReasoningEffort:  r.cfg.LLM.ReasoningEffort,
 			MaxThinkingToken: r.cfg.LLM.MaxThinkingToken,
+			BaseURL:          reqBaseURL,
+			APIKey:           reqAPIKey,
 		}
 		response, err := r.chatWithRetry(ctx, request, emit)
 		if err != nil {

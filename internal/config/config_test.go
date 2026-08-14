@@ -573,3 +573,46 @@ func TestDiscordChannelAllowedAcceptsActiveOrAllowlistedChannel(t *testing.T) {
 		t.Fatal("expected unlisted outbound channel to be blocked")
 	}
 }
+
+func TestActiveModelProviderUsesEntryOverrides(t *testing.T) {
+	t.Setenv("LLM_ENTRY_KEY_TEST", "entry-secret")
+
+	cfg := defaultConfig()
+	cfg.LLM.BaseURL = "http://top-level/v1"
+	cfg.LLM.APIKey = "top-key"
+	cfg.LLM.Model = "entry-a"
+	cfg.LLM.Models = []LLMModelEntry{
+		{Name: "entry-a", Model: "provider/a-model", Enabled: true, BaseURL: "https://gateway.example/v1", APIKeyEnv: "LLM_ENTRY_KEY_TEST"},
+		{Name: "entry-b", Model: "provider/b-model", Enabled: false, BaseURL: "https://other.example/v1", APIKey: "b-key"},
+	}
+
+	baseURL, apiKey, err := cfg.LLM.ActiveModelProvider()
+	if err != nil {
+		t.Fatalf("ActiveModelProvider returned error: %v", err)
+	}
+	if baseURL != "https://gateway.example/v1" {
+		t.Fatalf("expected entry base_url, got %q", baseURL)
+	}
+	if apiKey != "entry-secret" {
+		t.Fatalf("expected entry env-resolved API key, got %q", apiKey)
+	}
+}
+
+func TestActiveModelProviderFallsBackToTopLevel(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.LLM.BaseURL = "http://top-level/v1"
+	cfg.LLM.APIKey = "top-key"
+	cfg.LLM.Model = "bare-model"
+	cfg.LLM.Models = nil
+
+	baseURL, apiKey, err := cfg.LLM.ActiveModelProvider()
+	if err != nil {
+		t.Fatalf("ActiveModelProvider returned error: %v", err)
+	}
+	if baseURL != "http://top-level/v1" {
+		t.Fatalf("expected top-level base_url, got %q", baseURL)
+	}
+	if apiKey != "top-key" {
+		t.Fatalf("expected top-level API key, got %q", apiKey)
+	}
+}

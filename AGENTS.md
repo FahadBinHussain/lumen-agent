@@ -3,10 +3,17 @@
 ## Admin model catalog (2026-08-14)
 
 - Users cannot select models. `llm.model` = the active model (by catalog name
-  or full id); `llm.models` = admin catalog of `{name, model, enabled}` entries.
-  Admins toggle `enabled` and change `llm.model` to switch defaults — no code
-  change, no deleting entries. Runtime resolves via `Config.ResolveLLMModel()`
+  or full id); `llm.models` = admin catalog of `{name, model, enabled,
+  base_url?, api_key?, api_key_env?}` entries. Admins toggle `enabled` and
+  change `llm.model` to switch defaults — no code change, no deleting entries.
+  Runtime resolves via `Config.ResolveLLMModel()` + `LLMConfig.ActiveModelProvider()`
   (config.go), used by agent.Run, prompt metadata, heartbeat, dream mode.
+- Per-entry provider overrides: each catalog entry may carry its own
+  `base_url` and `api_key`/`api_key_env`; the active entry's settings win,
+  otherwise the top-level `llm.base_url`/`llm.api_key`/`llm.api_key_env` apply.
+  Entries are independent providers — this is how the gateway (mistral,
+  sambanova deepseek, groq, cohere, gemini via alchoholpad-litellm.hf.space)
+  coexists with the local deepseek-v4-flash server in one catalog.
 - Validation: with a catalog present, `llm.model` must match an ENABLED entry
   (by name or model id); every entry needs name+model; at least one enabled;
   duplicate names rejected. Without a catalog, `llm.model` works as before
@@ -14,7 +21,10 @@
 - production.yaml catalog mirrors the gateway's /v1/models list
   (alchoholpad-litellm.hf.space): mistral-large (active default), mistral-small,
   deepseek-v3.2, deepseek-v3.1, llama-3.3-samba, llama-3.3-groq, command-r,
-  gemini-3.5-flash. When adding a model to the gateway, add a catalog entry here.
+  gemini-3.5-flash — each with `base_url: https://alchoholpad-litellm.hf.space/v1`
+  + `api_key_env: LITELLM_API_KEY`. The local deepseek-v4-flash entry uses the
+  top-level local base_url/`llama-cpp` key. When adding a model to the gateway,
+  add a catalog entry here.
 
 ## Deploy: Render web service (2026-08-14)
 
