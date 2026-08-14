@@ -85,9 +85,12 @@ type LLMConfig struct {
 }
 
 type LLMModelEntry struct {
-	Name    string `yaml:"name"`
-	Model   string `yaml:"model"`
-	Enabled bool   `yaml:"enabled"`
+	Name      string `yaml:"name"`
+	Model     string `yaml:"model"`
+	Enabled   bool   `yaml:"enabled"`
+	BaseURL   string `yaml:"base_url,omitempty"`
+	APIKey    string `yaml:"api_key,omitempty"`
+	APIKeyEnv string `yaml:"api_key_env,omitempty"`
 }
 
 type SkillsConfig struct {
@@ -653,6 +656,9 @@ func (c *Config) resolvePaths() error {
 	for i := range c.LLM.Models {
 		c.LLM.Models[i].Name = strings.TrimSpace(c.LLM.Models[i].Name)
 		c.LLM.Models[i].Model = strings.TrimSpace(c.LLM.Models[i].Model)
+		c.LLM.Models[i].BaseURL = strings.TrimSpace(c.LLM.Models[i].BaseURL)
+		c.LLM.Models[i].APIKey = strings.TrimSpace(c.LLM.Models[i].APIKey)
+		c.LLM.Models[i].APIKeyEnv = strings.TrimSpace(c.LLM.Models[i].APIKeyEnv)
 	}
 	c.LLM.Headers = normalizeStringMap(c.LLM.Headers)
 	if c.LLM.ContextWindowTokens <= 0 {
@@ -1419,7 +1425,8 @@ func (l LLMConfig) ActiveModelEntry() (LLMModelEntry, bool) {
 		return LLMModelEntry{Name: l.Model, Model: l.Model, Enabled: true}, true
 	}
 	target := strings.TrimSpace(l.Model)
-	for _, m := range l.Models {
+	for i := range l.Models {
+		m := l.Models[i]
 		if !m.Enabled {
 			continue
 		}
@@ -1428,6 +1435,38 @@ func (l LLMConfig) ActiveModelEntry() (LLMModelEntry, bool) {
 		}
 	}
 	return LLMModelEntry{}, false
+}
+
+// ActiveModelProvider returns the base URL + resolved API key for the active
+// catalog entry, falling back to the top-level llm settings when the entry
+// doesn't override them.
+func (l LLMConfig) ActiveModelProvider() (baseURL string, apiKey string, err error) {
+	entry, ok := l.ActiveModelEntry()
+	if !ok {
+		return l.BaseURL, l.APIKey, nil
+	}
+	baseURL = entry.BaseURL
+	if strings.TrimSpace(baseURL) == "" {
+		baseURL = l.BaseURL
+	}
+	apiKey = entry.APIKey
+	envName := strings.TrimSpace(entry.APIKeyEnv)
+	if envName == "" {
+		envName = strings.TrimSpace(l.APIKeyEnv)
+	}
+	if apiKey != "" {
+		return baseURL, apiKey, nil
+	}
+	if envName != "" && strings.TrimSpace(os.Getenv(envName)) != "" {
+		return baseURL, strings.TrimSpace(os.Getenv(envName)), nil
+	}
+	if strings.TrimSpace(l.APIKey) != "" {
+		return baseURL, l.APIKey, nil
+	}
+	if l.APIKeyEnv == "" {
+		return baseURL, "", nil
+	}
+	return "", "", fmt.Errorf("environment variable %q is empty; set llm.api_key or export the variable", envName)
 }
 
 // ResolveLLMModel returns the active model id: the single configured

@@ -42,6 +42,8 @@ type Request struct {
 	MaxTokens        int
 	ReasoningEffort  string
 	MaxThinkingToken string
+	BaseURL          string
+	APIKey           string
 }
 
 type ContentPartType string
@@ -145,20 +147,40 @@ func newHTTPJSONClient(baseURL string, path string, apiKey string, headers map[s
 }
 
 func (c *httpJSONClient) postJSON(ctx context.Context, payload any) ([]byte, error) {
+	return c.postJSONTo(ctx, payload, "", "")
+}
+
+func (c *httpJSONClient) postJSONTo(ctx context.Context, payload any, overrideBaseURL string, overrideAPIKey string) ([]byte, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("encode request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+	endpoint := c.endpoint
+	apiKey := c.apiKey
+	if overrideBaseURL != "" {
+		baseURL := strings.TrimRight(overrideBaseURL, "/")
+		if idx := strings.LastIndex(c.endpoint, "/chat/completions"); idx >= 0 {
+			endpoint = baseURL + c.endpoint[idx:]
+		} else if idx := strings.LastIndex(c.endpoint, "/responses"); idx >= 0 {
+			endpoint = baseURL + c.endpoint[idx:]
+		} else {
+			endpoint = baseURL + "/chat/completions"
+		}
+	}
+	if overrideAPIKey != "" {
+		apiKey = overrideAPIKey
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
-	if c.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
 	for key, value := range c.headers {
@@ -286,7 +308,7 @@ func (c *chatCompletionsClient) Chat(ctx context.Context, req Request) (Message,
 		payload[key] = value
 	}
 
-	data, err := c.postJSON(ctx, payload)
+	data, err := c.postJSONTo(ctx, payload, req.BaseURL, req.APIKey)
 	if err != nil {
 		return Message{}, err
 	}
@@ -316,7 +338,7 @@ type responsesClient struct {
 
 func (c *responsesClient) Chat(ctx context.Context, req Request) (Message, error) {
 	payload := c.buildPayload(req)
-	return c.sendPayload(ctx, payload)
+	return c.sendPayload(ctx, payload, req)
 }
 
 func (c *responsesClient) buildPayload(req Request) map[string]any {
@@ -342,8 +364,8 @@ func (c *responsesClient) buildPayload(req Request) map[string]any {
 	return payload
 }
 
-func (c *responsesClient) sendPayload(ctx context.Context, payload map[string]any) (Message, error) {
-	data, err := c.postJSON(ctx, payload)
+func (c *responsesClient) sendPayload(ctx context.Context, payload map[string]any, req Request) (Message, error) {
+	data, err := c.postJSONTo(ctx, payload, req.BaseURL, req.APIKey)
 	if err != nil {
 		if shouldRetryResponsesAsStream(err) {
 			return c.chatStream(ctx, payload)
