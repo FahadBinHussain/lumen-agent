@@ -727,3 +727,20 @@ func TestMessengerThreadAllowedListedAndUnlisted(t *testing.T) {
 		t.Fatal("unlisted thread must be blocked")
 	}
 }
+
+func TestWhatsAppJIDAllowedEmptyListAllowsAll(t *testing.T) {
+	cfg := Config{WhatsApp: WhatsAppConfig{AllowedJIDs: []string{}}}
+	if !cfg.WhatsAppJIDAllowed("8801711472629@s.whatsapp.net") {
+		t.Fatal("empty allowlist must allow all jids")
+	}
+}
+
+func TestWhatsAppJIDAllowedListedAndUnlisted(t *testing.T) {
+	cfg := Config{WhatsApp: WhatsAppConfig{AllowedJIDs: []string{"8801711472629@s.whatsapp.net"}}}
+	if !cfg.WhatsAppJIDAllowed("8801711472629@s.whatsapp.net") {
+		t.Fatal("listed jid must be allowed")
+	}
+	if cfg.WhatsAppJIDAllowed("8801999999999@s.whatsapp.net") {
+		t.Fatal("unlisted jid must be blocked")
+	}
+}

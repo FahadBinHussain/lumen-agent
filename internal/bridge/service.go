@@ -368,6 +368,10 @@ func (s *Service) send(platform string, threadID string, jid string, text string
 			log.Printf("bridge: whatsapp not enabled, cannot send to %s", jid)
 			return
 		}
+		if !s.cfg.WhatsAppJIDAllowed(jid) {
+			log.Printf("bridge: send to whatsapp jid %s blocked (not in whatsapp.allowed_jids)", jid)
+			return
+		}
 		if err := s.whatsapp.SendText(context.Background(), jid, text); err != nil {
 			log.Printf("bridge: whatsapp send failed: %v", err)
 		}

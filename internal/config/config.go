@@ -164,10 +164,11 @@ type MessengerConfig struct {
 }
 
 type WhatsAppConfig struct {
-	Enabled      bool   `yaml:"enabled"`
-	StoreDir     string `yaml:"store_dir"`
-	DatabaseURL  string `yaml:"database_url"`
-	Proxy        string `yaml:"proxy"`
+	Enabled      bool     `yaml:"enabled"`
+	StoreDir     string   `yaml:"store_dir"`
+	DatabaseURL  string   `yaml:"database_url"`
+	Proxy        string   `yaml:"proxy"`
+	AllowedJIDs  []string `yaml:"allowed_jids"`
 }
 
 type BridgeConfig struct {
@@ -655,6 +656,7 @@ func (c *Config) resolvePaths() error {
 		c.Messenger.CookiesPath = resolvedCookiesPath
 	}
 	c.Messenger.AllowedThreadIDs = uniqueTrimmedStrings(c.Messenger.AllowedThreadIDs)
+	c.WhatsApp.AllowedJIDs = uniqueTrimmedStrings(c.WhatsApp.AllowedJIDs)
 
 	c.WhatsApp.StoreDir = strings.TrimSpace(c.WhatsApp.StoreDir)
 	if c.WhatsApp.StoreDir == "" {
@@ -1298,6 +1300,18 @@ func (c Config) MessengerThreadAllowed(threadID string) bool {
 	}
 	for _, id := range c.Messenger.AllowedThreadIDs {
 		if id == threadID {
+			return true
+		}
+	}
+	return false
+}
+
+func (c Config) WhatsAppJIDAllowed(jid string) bool {
+	if len(c.WhatsApp.AllowedJIDs) == 0 {
+		return true
+	}
+	for _, allowed := range c.WhatsApp.AllowedJIDs {
+		if allowed == jid {
 			return true
 		}
 	}
