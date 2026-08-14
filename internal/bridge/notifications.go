@@ -28,18 +28,16 @@ type notificationRequest struct {
 func (s *Service) serveHTTP(ctx context.Context) error {
 	mux := http.NewServeMux()
 
-	notificationsPath := s.cfg.Bridge.NotificationsPath
-	if notificationsPath == "" {
-		notificationsPath = "/api/automation/notifications"
+	if s.cfg.Bridge.NotificationsEnabled {
+		mux.HandleFunc(s.cfg.Bridge.NotificationsPath, s.handleAutomationNotification)
 	}
-	mux.HandleFunc(notificationsPath, s.handleAutomationNotification)
+	if s.messenger != nil {
+		mux.HandleFunc("/api/cookies/upload", s.handleCookieUpload)
+	}
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
-	if s.messenger != nil {
-		mux.HandleFunc("/api/cookies/upload", s.handleCookieUpload)
-	}
 
 	server := &http.Server{
 		Addr:              s.cfg.Bridge.ListenAddr,
@@ -57,7 +55,11 @@ func (s *Service) serveHTTP(ctx context.Context) error {
 		errCh <- nil
 	}()
 
-	log.Printf("bridge: notifications server on %s%s", s.cfg.Bridge.ListenAddr, notificationsPath)
+	if s.cfg.Bridge.NotificationsEnabled {
+		log.Printf("bridge: notifications server on %s%s", s.cfg.Bridge.ListenAddr, s.cfg.Bridge.NotificationsPath)
+	} else {
+		log.Printf("bridge: notifications endpoint disabled (bridge.notifications_enabled=false)")
+	}
 
 	select {
 	case <-ctx.Done():

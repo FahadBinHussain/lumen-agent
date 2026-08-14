@@ -158,11 +158,13 @@ type WhatsAppConfig struct {
 }
 
 type BridgeConfig struct {
-	Enabled           bool   `yaml:"enabled"`
-	ListenAddr        string `yaml:"listen_addr"`
-	NotificationsPath string `yaml:"notifications_path"`
-	Secret            string `yaml:"secret"`
-	SecretEnv         string `yaml:"secret_env"`
+	Enabled              bool   `yaml:"enabled"`
+	ListenAddr           string `yaml:"listen_addr"`
+	NotificationsPath    string `yaml:"notifications_path"`
+	NotificationsEnabled bool   `yaml:"notifications_enabled"`
+	BNPEnabled           bool   `yaml:"bnp_enabled"`
+	Secret               string `yaml:"secret"`
+	SecretEnv            string `yaml:"secret_env"`
 }
 
 type GIFConfig struct {
@@ -383,9 +385,11 @@ func defaultConfig() Config {
 		},
 		WhatsApp: WhatsAppConfig{},
 		Bridge: BridgeConfig{
-			ListenAddr:        "127.0.0.1:8791",
-			NotificationsPath: "/api/automation/notifications",
-			SecretEnv:         "ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET",
+			ListenAddr:           "127.0.0.1:8791",
+			NotificationsPath:    "/api/automation/notifications",
+			NotificationsEnabled: true,
+			BNPEnabled:           true,
+			SecretEnv:            "ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET",
 		},
 		GIFs: GIFConfig{
 			Enabled:       false,

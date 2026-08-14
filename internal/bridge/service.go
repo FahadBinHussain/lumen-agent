@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"element-orion/internal/agent"
+	"element-orion/internal/bnp"
 	"element-orion/internal/config"
 	"element-orion/internal/llm"
 	"element-orion/internal/messenger"
@@ -131,6 +133,19 @@ func (s *Service) Run(ctx context.Context) error {
 					s.saveWhatsAppSession(ctx)
 				}
 			}
+		}()
+	}
+
+	if s.messenger != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if !s.cfg.Bridge.BNPEnabled {
+				log.Printf("bnp: worker disabled by config (bridge.bnp_enabled=false)")
+				return
+			}
+			bnpWorker := bnp.NewWorker(s, nil)
+			bnpWorker.Run(ctx)
 		}()
 	}
 
@@ -306,6 +321,26 @@ func (s *Service) notify(platform string, threadID string, text string) {
 		jid = threadID
 	}
 	s.send(platform, threadID, jid, text)
+}
+
+// SendMessage implements bnp.MessengerSender: delivers an outbox item to the
+// configured Messenger thread. Returns the message ID, or "" on failure.
+func (s *Service) SendMessage(ctx context.Context, threadID int64, text string) string {
+	if s.messenger == nil {
+		log.Printf("bnp: messenger not enabled, cannot send to %d", threadID)
+		return ""
+	}
+	return s.messenger.SendText(ctx, threadID, text)
+}
+
+// EditMessage implements bnp.MessengerSender: replaces an existing Messenger
+// message (edit_pending outbox items).
+func (s *Service) EditMessage(ctx context.Context, threadID int64, messageID string, text string) error {
+	if s.messenger == nil {
+		log.Printf("bnp: messenger not enabled, cannot edit message %s", messageID)
+		return fmt.Errorf("messenger not enabled")
+	}
+	return s.messenger.EditMessage(ctx, messageID, text)
 }
 
 func cloneMessages(messages []llm.Message) []llm.Message {
