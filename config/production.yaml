@@ -162,8 +162,12 @@ discord:
   incoming_attachments_dir: ./.element-orion/incoming-attachments
 
 messenger:
-  enabled: true
-  cookies_path: ./config/messenger-cookies.json
+  enabled: false
+  # cookies live INSIDE the session dir so internal/persist snapshots them to
+  # Neon and restores them on every fresh boot (Render FS is ephemeral —
+  # anything outside the session dir dies with the container). upload via
+  # POST /api/cookies/upload (X-HF-Authorization: Bearer <bridge.secret>).
+  cookies_path: ./.element-orion/messenger-cookies.json
   # send-side allowlist (murmur port): every outgoing Messenger send —
   # notifications endpoint, BNP worker, agent replies — is blocked when the
   # thread is not listed here (empty = allow all). mirrors murmur's
