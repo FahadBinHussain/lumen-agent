@@ -1,0 +1,15 @@
+.git/
+.element-orion/
+bin/
+dist/
+*.exe
+*.exe~
+*.test
+config/lumen.yaml
+config/element-orion.yaml
+config/lumenmac.yaml
+config/*.local.yaml
+README.md
+AGENTS.md
+TESTING.md
+docs/

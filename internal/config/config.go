@@ -22,6 +22,7 @@ type Config struct {
 	Messenger       MessengerConfig       `yaml:"messenger"`
 	WhatsApp        WhatsAppConfig        `yaml:"whatsapp"`
 	Bridge          BridgeConfig          `yaml:"bridge"`
+	Notify          NotifyConfig          `yaml:"notify"`
 	GIFs            GIFConfig             `yaml:"gifs"`
 	ImageGen        ImageGenConfig        `yaml:"image_gen"`
 	Heartbeat       HeartbeatConfig       `yaml:"heartbeat"`
@@ -132,6 +133,7 @@ type DashboardConfig struct {
 type DiscordConfig struct {
 	TokenMode                   string   `yaml:"token_mode"`
 	BotToken                    string   `yaml:"bot_token"`
+	BotTokenEnv                 string   `yaml:"bot_token_env"`
 	UserToken                   string   `yaml:"user_token"`
 	AllowDirectMessages         bool     `yaml:"allow_direct_messages"`
 	AllowGroupDirectMessages    bool     `yaml:"allow_group_direct_messages"`
@@ -165,6 +167,45 @@ type BridgeConfig struct {
 	BNPEnabled           bool   `yaml:"bnp_enabled"`
 	Secret               string `yaml:"secret"`
 	SecretEnv            string `yaml:"secret_env"`
+}
+
+// NotifyConfig mirrors the murmur Vercel pollers' env surface. Copy-only for
+// now: all pollers default to disabled; flip enabled flags at cutover.
+type NotifyConfig struct {
+	Enabled       bool             `yaml:"enabled"`
+	WebhookURL    string           `yaml:"webhook_url"`
+	WebhookToken  string           `yaml:"webhook_token"`
+	WebhookTokenEnv string         `yaml:"webhook_token_env"`
+	DatabaseURL   string           `yaml:"database_url"`
+	DatabaseURLEnv string          `yaml:"database_url_env"`
+	SteamUpdates  NotifySteamCfg   `yaml:"steam_updates"`
+	FreeGames     NotifyFreeGames  `yaml:"free_games"`
+	NeonUsage     NotifyNeonUsage  `yaml:"neon_usage"`
+}
+
+type NotifySteamCfg struct {
+	Enabled    bool   `yaml:"enabled"`
+	Interval   string `yaml:"interval"`
+	AppIDs     string `yaml:"app_ids"`
+	ThreadIDs  string `yaml:"thread_ids"`
+	MaxAgeDays int    `yaml:"max_age_days"`
+	WebhookURL string `yaml:"webhook_url"`
+}
+
+type NotifyFreeGames struct {
+	Enabled    bool   `yaml:"enabled"`
+	Interval   string `yaml:"interval"`
+	ThreadIDs  string `yaml:"thread_ids"`
+	WebhookURL string `yaml:"webhook_url"`
+}
+
+type NotifyNeonUsage struct {
+	Enabled      bool     `yaml:"enabled"`
+	Interval     string   `yaml:"interval"`
+	WarningHours float64  `yaml:"warning_hours"`
+	ThreadID     string   `yaml:"thread_id"`
+	APIKeyEnv    []string `yaml:"api_key_env"`
+	StatePath    string   `yaml:"state_path"`
 }
 
 type GIFConfig struct {
@@ -391,6 +432,13 @@ func defaultConfig() Config {
 			BNPEnabled:           true,
 			SecretEnv:            "ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET",
 		},
+		Notify: NotifyConfig{
+			WebhookTokenEnv:  "ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET",
+			DatabaseURLEnv:   "DATABASE_URL",
+			SteamUpdates:     NotifySteamCfg{Enabled: false, Interval: "1m", MaxAgeDays: 30},
+			FreeGames:        NotifyFreeGames{Enabled: false, Interval: "1m"},
+			NeonUsage:        NotifyNeonUsage{Enabled: false, Interval: "1h", WarningHours: 90},
+		},
 		GIFs: GIFConfig{
 			Enabled:       false,
 			Provider:      "giphy",
@@ -610,6 +658,7 @@ func (c *Config) resolvePaths() error {
 		c.LLM.RetryMaxBackoff = "8s"
 	}
 	c.Discord.BotToken = strings.TrimSpace(c.Discord.BotToken)
+	c.Discord.BotTokenEnv = strings.TrimSpace(c.Discord.BotTokenEnv)
 	c.Discord.UserToken = strings.TrimSpace(c.Discord.UserToken)
 	c.Discord.TokenMode = strings.TrimSpace(strings.ToLower(c.Discord.TokenMode))
 	if c.Discord.TokenMode == "" {
@@ -844,7 +893,7 @@ func (c Config) validate() error {
 
 	switch c.Discord.TokenMode {
 	case "bot":
-		if c.Discord.BotToken == "" {
+		if c.Discord.BotToken == "" && c.Discord.BotTokenEnv == "" {
 			return fmt.Errorf("discord.bot_token must be set when discord.token_mode is bot")
 		}
 	case "user":
@@ -1160,10 +1209,14 @@ func (c Config) DiscordUsesBotToken() bool {
 
 func (c Config) ResolveDiscordGatewayToken() (string, error) {
 	if c.DiscordUsesBotToken() {
-		if strings.TrimSpace(c.Discord.BotToken) == "" {
+		token := strings.TrimSpace(c.Discord.BotToken)
+		if token == "" && c.Discord.BotTokenEnv != "" {
+			token = strings.TrimSpace(os.Getenv(c.Discord.BotTokenEnv))
+		}
+		if token == "" {
 			return "", fmt.Errorf("discord.bot_token is not configured")
 		}
-		return "Bot " + strings.TrimSpace(c.Discord.BotToken), nil
+		return "Bot " + token, nil
 	}
 
 	if strings.TrimSpace(c.Discord.UserToken) == "" {

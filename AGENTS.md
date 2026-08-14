@@ -84,6 +84,19 @@ trims per request.
     murmur's live notifiers (steam-updates/free-games cron jobs, neon usage,
     BNP worker) keep running — re-enable per-notifier only when lumen
     actually takes over that flow.
+  - notify pollers COPY (added 2026-08-14): `internal/notify` is a copy-only
+    port of the three murmur-side feeds so lumen can become self-contained in
+    an HF space: `steam_updates` (Steam GetNewsForApp Community Announcements,
+    dedupe `steam_seen`), `free_games` (lootscraper Atom feed, amazon + blocked
+    hosts skipped, dedupe `game_seen`), `neon_usage` (Neon org consumption via
+    REST, warning at N CU-h per org/period with state-file dedupe). config
+    section `notify:`; ALL pollers default disabled, lumen.yaml keeps them
+    off. webhook = the bridge notifications endpoint (default murmur space
+    URL; `notify.webhook_url` overrides). steam/free-games need
+    `notify.database_url` (or DATABASE_URL env) for the dedupe tables;
+    neon_usage needs `notify.neon_usage.api_key_env` (env var names holding
+    Neon API keys) + `thread_id` + optional `state_path`. NOT wired yet on
+    this box — copy only until cutover (mirrors bnp_enabled approach).
   - model-catalog listing (/ai models etc.) intentionally dropped — the fork
     uses the single `llm.model` config.
 - Pre-existing test failures on this machine (NOT caused by the merge, verified):

@@ -19,6 +19,7 @@ import (
 	"element-orion/internal/eventwebhook"
 	"element-orion/internal/httpaux"
 	"element-orion/internal/llm"
+	"element-orion/internal/notify"
 	"element-orion/internal/sandbox"
 	"element-orion/internal/tools"
 )
@@ -129,6 +130,14 @@ func runServe(args []string) error {
 		}
 	}
 
+	notifyService, err := buildNotify(&cfg)
+	if err != nil {
+		return fmt.Errorf("initialize notify service: %w", err)
+	}
+	if notifyService != nil {
+		defer notifyService.Close()
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -151,6 +160,13 @@ func runServe(args []string) error {
 		workers++
 		go func() {
 			errCh <- bridgeService.Run(ctx)
+		}()
+	}
+
+	if notifyService != nil {
+		workers++
+		go func() {
+			errCh <- notifyService.Run(ctx)
 		}()
 	}
 
@@ -185,6 +201,47 @@ func runServe(args []string) error {
 	}
 
 	return firstErr
+}
+
+// buildNotify constructs the notify poller service (steam-updates, free-games,
+// neon usage) only when at least one poller is enabled in config; returns nil
+// when everything is off so the base binary behaves exactly as before.
+func buildNotify(cfg *config.Config) (*notify.Service, error) {
+	n := cfg.Notify
+	anyEnabled := n.SteamUpdates.Enabled || n.FreeGames.Enabled || n.NeonUsage.Enabled
+	if !anyEnabled {
+		return nil, nil
+	}
+	nc := notify.Config{
+		WebhookURL:     n.WebhookURL,
+		WebhookToken:   n.WebhookToken,
+		WebhookTokenEnv: n.WebhookTokenEnv,
+		DatabaseURL:    n.DatabaseURL,
+		DatabaseURLEnv: n.DatabaseURLEnv,
+		SteamUpdates: notify.SteamUpdatesCfg{
+			Enabled:    n.SteamUpdates.Enabled,
+			Interval:   n.SteamUpdates.Interval,
+			AppIDs:     n.SteamUpdates.AppIDs,
+			ThreadIDs:  n.SteamUpdates.ThreadIDs,
+			MaxAgeDays: n.SteamUpdates.MaxAgeDays,
+			WebhookURL: n.SteamUpdates.WebhookURL,
+		},
+		FreeGames: notify.FreeGamesCfg{
+			Enabled:    n.FreeGames.Enabled,
+			Interval:   n.FreeGames.Interval,
+			ThreadIDs:  n.FreeGames.ThreadIDs,
+			WebhookURL: n.FreeGames.WebhookURL,
+		},
+		NeonUsage: notify.NeonUsageCfg{
+			Enabled:      n.NeonUsage.Enabled,
+			Interval:     n.NeonUsage.Interval,
+			WarningHours: n.NeonUsage.WarningHours,
+			ThreadID:     n.NeonUsage.ThreadID,
+			APIKeyEnv:    n.NeonUsage.APIKeyEnv,
+			StatePath:    n.NeonUsage.StatePath,
+		},
+	}
+	return notify.New(context.Background(), nc)
 }
 
 func runSystemEvent(args []string) error {

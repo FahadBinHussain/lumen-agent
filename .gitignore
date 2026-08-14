@@ -35,3 +35,4 @@ config/messenger-cookies.json
 *.exe
 *.exe~
 
+config/production.yaml
