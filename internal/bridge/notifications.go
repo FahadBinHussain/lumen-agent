@@ -31,9 +31,11 @@ func (s *Service) serveHTTP(ctx context.Context) error {
 	if s.cfg.Bridge.NotificationsEnabled {
 		mux.HandleFunc(s.cfg.Bridge.NotificationsPath, s.handleAutomationNotification)
 	}
-	if s.messenger != nil {
-		mux.HandleFunc("/api/cookies/upload", s.handleCookieUpload)
-	}
+	// always mount the cookie upload handler while the bridge is up: it is
+	// ops-critical (browserless refresher + first-boot provisioning) and
+	// writes the cookies file even when the messenger client isn't running
+	// yet (reload is a no-op then). secret-gated when bridge.secret is set.
+	mux.HandleFunc("/api/cookies/upload", s.handleCookieUpload)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
