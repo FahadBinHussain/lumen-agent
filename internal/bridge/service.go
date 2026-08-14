@@ -2,9 +2,12 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,7 +24,7 @@ import (
 	"element-orion/internal/whatsapp"
 )
 
-const maxSessionMessages = 100
+const bridgeHistoryFile = "bridge-sessions.json"
 
 type Service struct {
 	cfg       config.Config
@@ -33,14 +36,26 @@ type Service struct {
 
 	mu       sync.Mutex
 	sessions map[string][]llm.Message
+
+	historyPath string
+	toucher     func()
+}
+
+// SetPersistenceToucher registers a callback fired after session history is
+// written so the Neon snapshot backup (internal/persist) syncs promptly —
+// mirrors discordbot's session persistence contract.
+func (s *Service) SetPersistenceToucher(fn func()) {
+	s.toucher = fn
 }
 
 func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
 	s := &Service{
-		cfg:      cfg,
-		runner:   runner,
-		sessions: make(map[string][]llm.Message),
+		cfg:         cfg,
+		runner:      runner,
+		sessions:    make(map[string][]llm.Message),
+		historyPath: filepath.Join(cfg.App.SessionDir, bridgeHistoryFile),
 	}
+	s.loadHistory()
 
 	if cfg.Messenger.Enabled {
 		client, err := messenger.New(cfg.Messenger.CookiesPath, s.handleMessengerMessage)
@@ -278,14 +293,57 @@ func (s *Service) agentRun(ctx context.Context, platform string, threadID string
 	}
 
 	s.mu.Lock()
-	kept := cloneMessages(newHistory)
-	if len(kept) > maxSessionMessages {
-		kept = kept[len(kept)-maxSessionMessages:]
-	}
+	kept := agent.CompactHistoryForStorage(s.cfg, newHistory)
 	s.sessions[key] = kept
 	s.mu.Unlock()
+	s.saveHistory()
 
 	s.send(platform, threadID, jid, reply)
+}
+
+// loadHistory restores the per-platform:thread session history written by
+// saveHistory (a file inside the session dir, so internal/persist snapshot +
+// restore carries it to fresh machines exactly like Discord's session files).
+// Failures are logged and the bridge starts with empty sessions.
+func (s *Service) loadHistory() {
+	data, err := os.ReadFile(s.historyPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("bridge: failed to read history file %s: %v", s.historyPath, err)
+		}
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := json.Unmarshal(data, &s.sessions); err != nil {
+		log.Printf("bridge: failed to parse history file %s: %v (starting empty)", s.historyPath, err)
+		s.sessions = make(map[string][]llm.Message)
+		return
+	}
+	log.Printf("bridge: restored %d session histories from %s", len(s.sessions), s.historyPath)
+}
+
+// saveHistory writes the current sessions to the session dir (best-effort —
+// a failed write never breaks the turn; the persist ticker or toucher syncs it).
+func (s *Service) saveHistory() {
+	s.mu.Lock()
+	data, err := json.Marshal(s.sessions)
+	s.mu.Unlock()
+	if err != nil {
+		log.Printf("bridge: marshal history failed: %v", err)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(s.historyPath), 0o755); err != nil {
+		log.Printf("bridge: mkdir for history file failed: %v", err)
+		return
+	}
+	if err := os.WriteFile(s.historyPath, data, 0o644); err != nil {
+		log.Printf("bridge: write history file failed: %v", err)
+		return
+	}
+	if s.toucher != nil {
+		s.toucher()
+	}
 }
 
 func (s *Service) send(platform string, threadID string, jid string, text string) {

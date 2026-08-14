@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"element-orion/internal/config"
+	"element-orion/internal/llm"
 )
 
 func writeTestConfig(t *testing.T, extra string) config.Config {
@@ -118,6 +119,30 @@ func TestBridgeNotificationsAuth(t *testing.T) {
 	s.handleAutomationNotification(rec, req)
 	if rec.status != http.StatusOK {
 		t.Fatalf("expected 200 with secret, got %d: %s", rec.status, rec.body.String())
+	}
+}
+
+func TestBridgeHistoryRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	cfg := writeTestConfig(t, "")
+	s, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("new bridge: %v", err)
+	}
+	s.historyPath = filepath.Join(dir, bridgeHistoryFile)
+
+	s.mu.Lock()
+	s.sessions["messenger:12345"] = []llm.Message{{Role: "user", Content: "hello"}}
+	s.mu.Unlock()
+	s.saveHistory()
+
+	loaded := &Service{sessions: make(map[string][]llm.Message), historyPath: s.historyPath}
+	loaded.loadHistory()
+	loaded.mu.Lock()
+	defer loaded.mu.Unlock()
+	got, ok := loaded.sessions["messenger:12345"]
+	if !ok || len(got) != 1 || got[0].Content != "hello" {
+		t.Fatalf("history did not survive round trip: %+v", loaded.sessions)
 	}
 }
 
