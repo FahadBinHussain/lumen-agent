@@ -275,10 +275,41 @@ func (s *Service) agentRun(ctx context.Context, platform string, threadID string
 		s.whatsapp.StartTyping(ctx, jid)
 	}
 
+	// murmur-style formatting: messenger shows a "thinking." animation while
+	// the model works, then the final reply is edited into the same message
+	// as "[model]\nresponse". whatsapp skips the animation and uses a single
+	// "[model] response" line.
+	modelName := s.cfg.ResolveLLMModel()
+	var msgID string
+	var stopThinking chan struct{}
+	if platform == "messenger" {
+		msgID = s.send(platform, threadID, jid, "thinking.")
+		if msgID != "" {
+			stopThinking = make(chan struct{})
+			go func() {
+				dots := []string{"thinking.", "thinking..", "thinking..."}
+				i := 0
+				for edits := 0; edits < 4; edits++ {
+					select {
+					case <-stopThinking:
+						return
+					case <-time.After(500 * time.Millisecond):
+						i = (i + 1) % len(dots)
+						s.editMessage(threadID, msgID, dots[i])
+					}
+				}
+			}()
+		}
+	}
+
 	newHistory, err := s.runner.Run(ctx, history, prompt, conversation, emit)
+	if stopThinking != nil {
+		close(stopThinking)
+	}
+
 	if err != nil {
 		log.Printf("bridge: agent run failed (%s %s): %v", platform, threadID, err)
-		s.send(platform, threadID, jid, "[error] "+err.Error())
+		s.sendReply(platform, threadID, jid, msgID, "[chat error] "+err.Error())
 		return
 	}
 
@@ -289,6 +320,7 @@ func (s *Service) agentRun(ctx context.Context, platform string, threadID string
 	reply := lastAssistantContent(newHistory)
 	if reply == "" {
 		log.Printf("bridge: agent returned empty reply (%s %s)", platform, threadID)
+		s.sendReply(platform, threadID, jid, msgID, "[error] model returned empty response")
 		return
 	}
 
@@ -298,7 +330,7 @@ func (s *Service) agentRun(ctx context.Context, platform string, threadID string
 	s.mu.Unlock()
 	s.saveHistory()
 
-	s.send(platform, threadID, jid, reply)
+	s.sendReply(platform, threadID, jid, msgID, fmt.Sprintf("[%s] %s", modelName, reply))
 }
 
 // loadHistory restores the per-platform:thread session history written by
@@ -346,36 +378,63 @@ func (s *Service) saveHistory() {
 	}
 }
 
-func (s *Service) send(platform string, threadID string, jid string, text string) {
+func (s *Service) send(platform string, threadID string, jid string, text string) string {
 	switch platform {
 	case "messenger":
 		if s.messenger == nil {
 			log.Printf("bridge: messenger not enabled, cannot send to %s", threadID)
-			return
+			return ""
 		}
 		if !s.cfg.MessengerThreadAllowed(threadID) {
 			log.Printf("bridge: send to messenger thread %s blocked (not in messenger.allowed_thread_ids)", threadID)
-			return
+			return ""
 		}
 		id, err := strconv.ParseInt(threadID, 10, 64)
 		if err != nil {
 			log.Printf("bridge: invalid messenger thread id %q", threadID)
-			return
+			return ""
 		}
-		s.messenger.SendText(context.Background(), id, text)
+		return s.messenger.SendText(context.Background(), id, text)
 	case "whatsapp":
 		if s.whatsapp == nil {
 			log.Printf("bridge: whatsapp not enabled, cannot send to %s", jid)
-			return
+			return ""
 		}
 		if !s.cfg.WhatsAppJIDAllowed(jid) {
 			log.Printf("bridge: send to whatsapp jid %s blocked (not in whatsapp.allowed_jids)", jid)
-			return
+			return ""
 		}
 		if err := s.whatsapp.SendText(context.Background(), jid, text); err != nil {
 			log.Printf("bridge: whatsapp send failed: %v", err)
 		}
+		return ""
 	}
+	return ""
+}
+
+// editMessage replaces an existing messenger message, allowlist-gated like
+// send. Used by the murmur-style thinking animation and the final reply.
+func (s *Service) editMessage(threadID string, messageID string, text string) error {
+	if s.messenger == nil {
+		return fmt.Errorf("messenger not enabled")
+	}
+	if !s.cfg.MessengerThreadAllowed(threadID) {
+		return fmt.Errorf("thread %s not in messenger.allowed_thread_ids", threadID)
+	}
+	return s.messenger.EditMessage(context.Background(), messageID, text)
+}
+
+// sendReply delivers a formatted message the murmur way: edit the pending
+// thinking message on messenger when one exists, otherwise send a new one.
+func (s *Service) sendReply(platform string, threadID string, jid string, msgID string, text string) {
+	if platform == "messenger" && msgID != "" {
+		if err := s.editMessage(threadID, msgID, text); err != nil {
+			log.Printf("bridge: edit reply in %s failed: %v", threadID, err)
+			s.send(platform, threadID, jid, text)
+		}
+		return
+	}
+	s.send(platform, threadID, jid, text)
 }
 
 func (s *Service) notify(platform string, threadID string, text string) {
