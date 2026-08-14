@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOverrideWorkspaceRootUsesWorkingDirectory(t *testing.T) {
@@ -614,5 +615,98 @@ func TestActiveModelProviderFallsBackToTopLevel(t *testing.T) {
 	}
 	if apiKey != "top-key" {
 		t.Fatalf("expected top-level API key, got %q", apiKey)
+	}
+}
+
+func TestResolvePersistenceDatabaseURLUsesExplicitURLFirst(t *testing.T) {
+	cfg := PersistenceConfig{DatabaseURL: "postgres://explicit", DatabaseURLEnv: "SOME_ENV"}
+	value, err := cfg.ResolvePersistenceDatabaseURL()
+	if err != nil {
+		t.Fatalf("ResolvePersistenceDatabaseURL returned error: %v", err)
+	}
+	if value != "postgres://explicit" {
+		t.Fatalf("expected explicit database_url, got %q", value)
+	}
+}
+
+func TestResolvePersistenceDatabaseURLFallsBackToEnv(t *testing.T) {
+	t.Setenv("LUMEN_DATABASE_URL_TEST", "postgres://from-env")
+	cfg := PersistenceConfig{DatabaseURLEnv: "LUMEN_DATABASE_URL_TEST"}
+	value, err := cfg.ResolvePersistenceDatabaseURL()
+	if err != nil {
+		t.Fatalf("ResolvePersistenceDatabaseURL returned error: %v", err)
+	}
+	if value != "postgres://from-env" {
+		t.Fatalf("expected env database_url, got %q", value)
+	}
+}
+
+func TestResolvePersistenceDatabaseURLDefaultsToDATABASE_URL(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://default-env")
+	cfg := PersistenceConfig{}
+	value, err := cfg.ResolvePersistenceDatabaseURL()
+	if err != nil {
+		t.Fatalf("ResolvePersistenceDatabaseURL returned error: %v", err)
+	}
+	if value != "postgres://default-env" {
+		t.Fatalf("expected DATABASE_URL fallback, got %q", value)
+	}
+}
+
+func TestResolvePersistenceDatabaseURLFailsWithoutSource(t *testing.T) {
+	t.Setenv("DATABASE_URL", "")
+	cfg := PersistenceConfig{}
+	if _, err := cfg.ResolvePersistenceDatabaseURL(); err == nil {
+		t.Fatal("expected error when no database_url and no env value")
+	}
+}
+
+func TestPersistenceIntervalDefaultsToOneMinute(t *testing.T) {
+	empty := PersistenceConfig{}
+	if got := empty.PersistenceInterval(); got != time.Minute {
+		t.Fatalf("expected default 1m interval, got %v", got)
+	}
+	fiveMin := PersistenceConfig{Interval: "5m"}
+	if got := fiveMin.PersistenceInterval(); got != 5*time.Minute {
+		t.Fatalf("expected 5m interval, got %v", got)
+	}
+}
+
+func TestPersistenceExcludeDefaultsAddedOnResolve(t *testing.T) {
+	cfg := Config{Persistence: PersistenceConfig{Enabled: true, DatabaseURL: "postgres://x"}}
+	cfg.App.WorkspaceRoot = t.TempDir()
+	cfg.App.SessionDir = t.TempDir()
+	cfg.App.MemoryDir = t.TempDir()
+	cfg.Discord.BotToken = "token"
+	cfg.LLM.BaseURL = "http://x"
+	cfg.LLM.Model = "m"
+	cfg.LLM.MaxTokens = 100
+	cfg.LLM.ContextWindowTokens = 1000
+	cfg.LLM.RequestMaxAttempts = 3
+	cfg.LLM.Timeout = "180s"
+	cfg.LLM.RetryInitialBackoff = "2s"
+	cfg.LLM.RetryMaxBackoff = "8s"
+	cfg.Tools.ExecTimeout = "120s"
+	cfg.Tools.MaxFileBytes = 1000
+	cfg.Tools.MaxSearchResults = 10
+	cfg.Tools.MaxCommandOutputBytes = 1000
+	cfg.App.MaxAgentLoops = 12
+	cfg.App.MaxToolCallsPerTurn = 10
+	cfg.Discord.AllowDirectMessages = true
+
+	if err := cfg.resolvePaths(); err != nil {
+		t.Fatalf("resolvePaths returned error: %v", err)
+	}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate returned error: %v", err)
+	}
+	excluded := map[string]bool{}
+	for _, ex := range cfg.Persistence.Exclude {
+		excluded[ex] = true
+	}
+	for _, def := range DefaultPersistenceExclude {
+		if !excluded[def] {
+			t.Fatalf("expected default exclude %q to be present", def)
+		}
 	}
 }

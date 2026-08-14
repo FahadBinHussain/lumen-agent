@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"element-orion/internal/agent"
 	"element-orion/internal/auditlog"
@@ -20,6 +21,7 @@ import (
 	"element-orion/internal/httpaux"
 	"element-orion/internal/llm"
 	"element-orion/internal/notify"
+	"element-orion/internal/persist"
 	"element-orion/internal/sandbox"
 	"element-orion/internal/tools"
 )
@@ -87,6 +89,29 @@ func runServe(args []string) error {
 	}
 	defer alog.Close()
 
+	var persistStore *persist.Store
+	if cfg.Persistence.Enabled {
+		dsn, err := cfg.Persistence.ResolvePersistenceDatabaseURL()
+		if err != nil {
+			return fmt.Errorf("resolve persistence database: %w", err)
+		}
+		persistStore, err = persist.Open(context.Background(), dsn, cfg.App.SessionDir, cfg.Persistence.Exclude)
+		if err != nil {
+			return fmt.Errorf("initialize persistence: %w", err)
+		}
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			persistStore.SyncNow(shutdownCtx)
+			persistStore.Close()
+		}()
+		if err := persistStore.Restore(context.Background()); err != nil {
+			log.Printf("persistence: restore failed (continuing with local state): %v", err)
+		} else {
+			log.Printf("persistence: restore pass complete")
+		}
+	}
+
 	apiKey, err := cfg.ResolveAPIKey()
 	if err != nil {
 		return fmt.Errorf("resolve API key: %w", err)
@@ -121,6 +146,9 @@ func runServe(args []string) error {
 	if err != nil {
 		return fmt.Errorf("initialize Discord service: %w", err)
 	}
+	if persistStore != nil {
+		service.SetPersistenceToucher(persistStore.Touch)
+	}
 
 	var bridgeService *bridge.Service
 	if cfg.Bridge.Enabled {
@@ -143,6 +171,14 @@ func runServe(args []string) error {
 
 	workers := 1
 	errCh := make(chan error, 4)
+
+	if persistStore != nil {
+		workers++
+		go func() {
+			persistStore.Run(ctx, cfg.Persistence.PersistenceInterval())
+			errCh <- nil
+		}()
+	}
 
 	log.Printf(
 		"startup: config=%s dashboard.enabled=%t dashboard.listen_addr=%q dashboard.path=%q",

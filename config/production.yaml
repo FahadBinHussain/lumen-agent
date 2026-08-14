@@ -246,6 +246,17 @@ notify:
     interval: 1h
     warning_hours: 90
 
+persistence:
+  enabled: true
+  database_url: ""
+  database_url_env: DATABASE_URL
+  interval: 1m
+  exclude:
+    - sandboxes
+    - whatsapp
+    - incoming-attachments
+    - logs
+
 mcp:
   servers: []
 
