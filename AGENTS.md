@@ -136,6 +136,15 @@ restored on boot). The old blunt 100-message cap is gone (2026-08-14).
 
 ## Platform gotchas
 
+- **Messenger redelivery ghost replies (fixed 2026-08-15, commit 38dac85)**: Meta
+  redelivers messages that were queued while the MQTT socket was down — they
+  arrive again on reconnect with their ORIGINAL send timestamp. The murmur-style
+  boot-time guard in `relay()` (skip msgs older than client start) does NOT catch
+  them when the original send happened after boot. Symptom: the bot replies to an
+  already-answered message hours later (user saw "who are u" answered 3x — 23:25,
+  00:13, 00:31 local, each delivery ~3s after a socket drop). Fix: `relay()`
+  dedups on `MessageID` (map with 24h retention, pruned on growth >500). Keep
+  both guards — the time guard still protects against fresh-boot history delivery.
 - `exec_command` tool is POSIX-only (upstream `exec.Command(shell, "-lc", ...)`) —
   keep it disabled/`pwsh`-only on Windows; the merge plan documents this constraint.
 - Superseded murmur bits (better-native replacements, added 2026-08-12):
