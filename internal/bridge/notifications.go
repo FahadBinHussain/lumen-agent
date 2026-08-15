@@ -188,6 +188,10 @@ func (s *Service) handleWhatsAppQR(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"status": "waiting", "message": "no QR yet - check back in a few seconds"})
 		return
 	}
+	if r.URL.Query().Get("format") == "json" {
+		json.NewEncoder(w).Encode(map[string]string{"status": "qr", "ref": s.whatsapp.QRRef()})
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(qr))
 }

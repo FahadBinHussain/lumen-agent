@@ -29,6 +29,7 @@ type WhatsmeowClient struct {
 
 	mu     sync.Mutex
 	qrCode string
+	qrRef  string
 }
 
 func NewWhatsmeowClient(dbPath string, proxyAddr string, logger zerolog.Logger, handler MessageHandler) (*WhatsmeowClient, error) {
@@ -112,6 +113,7 @@ func (w *WhatsmeowClient) handleEvent(evt interface{}) {
 			var buf bytes.Buffer
 			qrterminal.GenerateHalfBlock(code, qrterminal.L, &buf)
 			w.setQR(buf.String())
+			w.setQRRef(code)
 		}
 		w.logger.Info().Msg("WhatsApp QR code received - scan with your phone (GET /api/whatsapp/qr)")
 	}
@@ -121,12 +123,27 @@ func (w *WhatsmeowClient) setQR(qr string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.qrCode = qr
+	if qr == "" {
+		w.qrRef = ""
+	}
+}
+
+func (w *WhatsmeowClient) setQRRef(ref string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.qrRef = ref
 }
 
 func (w *WhatsmeowClient) QRCode() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.qrCode
+}
+
+func (w *WhatsmeowClient) QRRef() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.qrRef
 }
 
 func (w *WhatsmeowClient) handleMessage(evt *events.Message) {
