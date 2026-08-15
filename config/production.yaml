@@ -17,14 +17,14 @@ llm:
   base_url: http://49.205.178.204:11434/v1
   api_key: "llama-cpp"
   api_key_env: ""
-  model: mistral-large
+  model: deepseek-v4-flash
   models:
     - name: deepseek-v4-flash
       model: unsloth/DeepSeek-V4-Flash-0731-GGUF:UD-Q4_K_XL
-      enabled: false
+      enabled: true
     - name: mistral-large
       model: admin_mistral_ai_fahadbinhussain001/mistral-large-latest
-      enabled: true
+      enabled: false
       base_url: https://alchoholpad-litellm.hf.space/v1
       api_key_env: LITELLM_API_KEY
     - name: mistral-small
