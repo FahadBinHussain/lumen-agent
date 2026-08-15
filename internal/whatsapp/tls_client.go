@@ -46,26 +46,26 @@ func NewChromeHTTPClient(proxyAddr string) *http.Client {
 		DialContext:         dialer.DialContext,
 		MaxIdleConns:        100,
 		IdleConnTimeout:     90 * time.Second,
-		TLSHandshakeTimeout: 15 * time.Second,
+		TLSHandshakeTimeout: 30 * time.Second,
 	}
 
 	return &http.Client{
 		Transport: transport,
-		Timeout:   30 * time.Second,
+		Timeout:   60 * time.Second,
 	}
 }
 
 func proxyDialer(proxyAddr string) proxy.ContextDialer {
 	if proxyAddr == "" {
-		return &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+		return &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	}
 	addr := strings.TrimPrefix(strings.TrimPrefix(proxyAddr, "socks5://"), "socks5h://")
-	d, err := proxy.SOCKS5("tcp", addr, nil, &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second})
+	d, err := proxy.SOCKS5("tcp", addr, nil, &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second})
 	if err != nil {
-		return &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+		return &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	}
 	if cd, ok := d.(proxy.ContextDialer); ok {
 		return cd
 	}
-	return &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	return &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 }
