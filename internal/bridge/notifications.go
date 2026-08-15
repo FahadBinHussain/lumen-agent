@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/skip2/go-qrcode"
+
 	"element-orion/internal/cookies"
 )
 
@@ -190,6 +192,32 @@ func (s *Service) handleWhatsAppQR(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Query().Get("format") == "json" {
 		json.NewEncoder(w).Encode(map[string]string{"status": "qr", "ref": s.whatsapp.QRRef()})
+		return
+	}
+	if r.URL.Query().Get("format") == "png" {
+		png, err := qrcode.Encode(s.whatsapp.QRRef(), qrcode.Medium, 512)
+		if err != nil {
+			http.Error(w, "qr encode failed", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Write(png)
+		return
+	}
+	if r.URL.Query().Get("format") == "html" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8"><title>WhatsApp pairing QR</title>
+<style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px}h1{font-size:20px;margin:0}#qrbox{background:#fff;padding:16px;border-radius:12px}ol{font-size:14px;color:#ccc}</style></head>
+<body><h1>WhatsApp pairing QR &mdash; lumen</h1><div id="status" style="color:#8be08b">loading...</div>
+<div id="qrbox"><img id="qr" width="512" height="512" alt="QR"></div>
+<ol><li>Open WhatsApp on <b>+8801911104251</b></li><li>Settings &rarr; Linked devices &rarr; Link a device</li><li>Scan this QR &mdash; it refreshes automatically every 4 seconds</li></ol>
+<script>const img=document.getElementById('qr'),st=document.getElementById('status');let have='';
+async function tick(){try{const j=await(await fetch('?format=json')).json();if(j.status==='paired'){st.textContent='paired - device linked';return}
+if(j.status!=='qr'){st.textContent=(j.status||'waiting')+' - '+(j.message||'');return}
+if(j.ref!==have){have=j.ref;img.src='?format=png&t='+Date.now();st.textContent='refreshed '+new Date().toLocaleTimeString()}else{st.textContent='waiting for next refresh...'}}
+catch(e){st.textContent='error: '+e.message}}
+tick();setInterval(tick,4000)</script></body></html>`))
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain")
