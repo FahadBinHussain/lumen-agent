@@ -39,6 +39,10 @@ type Service struct {
 
 	historyPath string
 	toucher     func()
+
+	waLastMtime   time.Time
+	waLastSize    int64
+	waLastSavedAt time.Time
 }
 
 // SetPersistenceToucher registers a callback fired after session history is
@@ -137,7 +141,11 @@ func (s *Service) Run(ctx context.Context) error {
 			}
 			s.saveWhatsAppSession(ctx)
 			log.Printf("bridge: whatsapp connected")
-			ticker := time.NewTicker(15 * time.Minute)
+			// symmetric with persist's 1m cadence, but change-gated: the
+			// store file only changes when something actually happens, so
+			// idle nights upload nothing and the Neon compute stays asleep.
+			// the 15m max-interval fallback still covers edge cases.
+			ticker := time.NewTicker(1 * time.Minute)
 			defer ticker.Stop()
 			for {
 				select {
@@ -189,11 +197,22 @@ func (s *Service) saveWhatsAppSession(ctx context.Context) {
 	if s.whatsapp == nil || s.neon == nil {
 		return
 	}
+	st, err := os.Stat(s.waDBPath)
+	if err != nil {
+		return
+	}
+	if st.ModTime().Equal(s.waLastMtime) && st.Size() == s.waLastSize &&
+		time.Since(s.waLastSavedAt) < 15*time.Minute {
+		return
+	}
 	if err := s.whatsapp.SaveSession(ctx, s.waDBPath, s.neon.SaveWhatsAppSession); err != nil {
 		log.Printf("bridge: failed to save whatsapp session: %v", err)
-	} else {
-		log.Printf("bridge: whatsapp session saved to neon")
+		return
 	}
+	s.waLastMtime = st.ModTime()
+	s.waLastSize = st.Size()
+	s.waLastSavedAt = time.Now()
+	log.Printf("bridge: whatsapp session saved to neon")
 }
 
 func (s *Service) handleMessengerMessage(ctx context.Context, msg messenger.Incoming) {
