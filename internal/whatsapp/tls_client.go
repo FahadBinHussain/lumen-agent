@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
+	"net/url"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -59,8 +59,17 @@ func proxyDialer(proxyAddr string) proxy.ContextDialer {
 	if proxyAddr == "" {
 		return &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	}
-	addr := strings.TrimPrefix(strings.TrimPrefix(proxyAddr, "socks5://"), "socks5h://")
-	d, err := proxy.SOCKS5("tcp", addr, nil, &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second})
+	u, err := url.Parse(proxyAddr)
+	if err != nil || u.Host == "" {
+		return &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	}
+	addr := u.Host
+	var auth *proxy.Auth
+	if u.User != nil {
+		pass, _ := u.User.Password()
+		auth = &proxy.Auth{User: u.User.Username(), Password: pass}
+	}
+	d, err := proxy.SOCKS5("tcp", addr, auth, &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second})
 	if err != nil {
 		return &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	}
