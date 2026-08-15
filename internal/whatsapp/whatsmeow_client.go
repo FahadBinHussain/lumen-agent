@@ -239,6 +239,14 @@ func (w *WhatsmeowClient) scheduleReconnect() {
 	}()
 }
 
+func (w *WhatsmeowClient) PairPhone(ctx context.Context, phone string) (string, error) {
+	code, err := w.client.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "lumen")
+	if err != nil {
+		return "", fmt.Errorf("pair phone: %w", err)
+	}
+	return code, nil
+}
+
 func (w *WhatsmeowClient) Disconnect() {
 	if w.client != nil {
 		w.client.Disconnect()
