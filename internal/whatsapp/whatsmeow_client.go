@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/mdp/qrterminal/v3"
 	"github.com/rs/zerolog"
@@ -27,9 +28,10 @@ type WhatsmeowClient struct {
 	handler     MessageHandler
 	connected   bool
 
-	mu     sync.Mutex
-	qrCode string
-	qrRef  string
+	mu          sync.Mutex
+	qrCode      string
+	qrRef       string
+	reconnecting bool
 }
 
 func NewWhatsmeowClient(dbPath string, proxyAddr string, logger zerolog.Logger, handler MessageHandler) (*WhatsmeowClient, error) {
@@ -102,7 +104,11 @@ func (w *WhatsmeowClient) handleEvent(evt interface{}) {
 		w.logger.Info().Msg("WhatsApp connected")
 	case *events.Disconnected:
 		w.connected = false
+		w.setQR("")
 		w.logger.Warn().Msg("WhatsApp disconnected")
+		if !w.IsLoggedIn() {
+			w.scheduleReconnect()
+		}
 	case *events.LoggedOut:
 		w.connected = false
 		w.setQR("")
@@ -205,6 +211,28 @@ func (w *WhatsmeowClient) Connect(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (w *WhatsmeowClient) scheduleReconnect() {
+	w.mu.Lock()
+	if w.reconnecting {
+		w.mu.Unlock()
+		return
+	}
+	w.reconnecting = true
+	w.mu.Unlock()
+
+	go func() {
+		time.Sleep(15 * time.Second)
+		w.logger.Info().Msg("whatsapp: not logged in, reconnecting for a fresh QR session")
+		err := w.Connect(context.Background())
+		if err != nil {
+			w.logger.Error().Err(err).Msg("whatsapp reconnect failed")
+		}
+		w.mu.Lock()
+		w.reconnecting = false
+		w.mu.Unlock()
+	}()
 }
 
 func (w *WhatsmeowClient) Disconnect() {
