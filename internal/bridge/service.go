@@ -278,8 +278,12 @@ func (s *Service) agentRun(ctx context.Context, platform string, threadID string
 	// murmur-style formatting: messenger shows a "thinking." animation while
 	// the model works, then the final reply is edited into the same message
 	// as "[model]\nresponse". whatsapp skips the animation and uses a single
-	// "[model] response" line.
+	// "[model] response" line. The tag uses the catalog's short name (like
+	// murmur's model alias), falling back to the full model id.
 	modelName := s.cfg.ResolveLLMModel()
+	if entry, ok := s.cfg.LLM.ActiveModelEntry(); ok && strings.TrimSpace(entry.Name) != "" {
+		modelName = entry.Name
+	}
 	var msgID string
 	var stopThinking chan struct{}
 	if platform == "messenger" {
