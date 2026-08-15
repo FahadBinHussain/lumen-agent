@@ -39,6 +39,7 @@ func (s *Service) serveHTTP(ctx context.Context) error {
 	// yet (reload is a no-op then). secret-gated when bridge.secret is set.
 	mux.HandleFunc("/api/cookies/upload", s.handleCookieUpload)
 	mux.HandleFunc("/api/whatsapp/qr", s.handleWhatsAppQR)
+	mux.HandleFunc("/api/whatsapp/pair", s.handleWhatsAppPair)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
@@ -167,6 +168,43 @@ func (s *Service) handleCookieUpload(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Cookies uploaded and bridge reloaded"})
 }
 
+func (s *Service) handleWhatsAppPair(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// public like the QR endpoint: the linking code is transient and can
+	// only be used from the account's own phone.
+	if s.whatsapp == nil {
+		http.Error(w, "whatsapp not enabled", http.StatusBadRequest)
+		return
+	}
+	if s.whatsapp.IsLoggedIn() {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "paired", "message": "device already linked"})
+		return
+	}
+	var req struct {
+		Phone string `json:"phone"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Phone == "" {
+		http.Error(w, "phone is required", http.StatusBadRequest)
+		return
+	}
+	code, err := s.whatsapp.PairPhone(r.Context(), req.Phone)
+	if err != nil {
+		log.Printf("bridge: whatsapp pair phone failed: %v", err)
+		http.Error(w, "pair failed: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "code", "code": code})
+}
+
 func (s *Service) handleWhatsAppQR(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -206,16 +244,23 @@ func (s *Service) handleWhatsAppQR(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Query().Get("format") == "html" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8"><title>WhatsApp pairing QR</title>
-<style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px}h1{font-size:20px;margin:0}#qrbox{background:#fff;padding:16px;border-radius:12px}ol{font-size:14px;color:#ccc}</style></head>
-<body><h1>WhatsApp pairing QR &mdash; lumen</h1><div id="status" style="color:#8be08b">loading...</div>
+		w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8"><title>WhatsApp pairing</title>
+<style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px}h1{font-size:20px;margin:0}h2{font-size:16px;margin:24px 0 4px}#qrbox{background:#fff;padding:16px;border-radius:12px}ol{font-size:14px;color:#ccc}button{font-size:15px;padding:10px 20px;border-radius:8px;border:0;background:#2b8a3e;color:#fff;cursor:pointer}button:disabled{opacity:.5}#code{font-size:34px;letter-spacing:6px;font-weight:700;background:#222;padding:14px 24px;border-radius:10px;display:none;font-family:monospace}</style></head>
+<body><h1>WhatsApp pairing &mdash; lumen</h1>
+<div id="status" style="color:#8be08b">loading...</div>
 <div id="qrbox"><img id="qr" width="512" height="512" alt="QR"></div>
 <ol><li>Open WhatsApp on <b>+8801911104251</b></li><li>Settings &rarr; Linked devices &rarr; Link a device</li><li>Scan this QR &mdash; it refreshes automatically every 4 seconds</li></ol>
-<script>const img=document.getElementById('qr'),st=document.getElementById('status');let have='';
-async function tick(){try{const j=await(await fetch('?format=json')).json();if(j.status==='paired'){st.textContent='paired - device linked';return}
+<h2>or link with phone number</h2>
+<button id="pairbtn" onclick="genCode()">Generate linking code</button>
+<div id="code"></div>
+<ol><li>Press the button above</li><li>Open WhatsApp on the phone &rarr; Settings &rarr; Linked devices &rarr; <b>Link with phone number instead</b></li><li>Type the code shown above into the phone</li></ol>
+<script>const img=document.getElementById('qr'),st=document.getElementById('status'),btn=document.getElementById('pairbtn'),code=document.getElementById('code');let have='';
+async function tick(){try{const j=await(await fetch('?format=json')).json();if(j.status==='paired'){st.textContent='paired - device linked';btn.style.display='none';return}
 if(j.status!=='qr'){st.textContent=(j.status||'waiting')+' - '+(j.message||'');return}
 if(j.ref!==have){have=j.ref;img.src='?format=png&t='+Date.now();st.textContent='refreshed '+new Date().toLocaleTimeString()}else{st.textContent='waiting for next refresh...'}}
 catch(e){st.textContent='error: '+e.message}}
+async function genCode(){btn.disabled=true;code.style.display='none';st.textContent='requesting code...';try{const r=await fetch('/api/whatsapp/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:'8801911104251'})});const j=await r.json();if(j.status==='code'){code.textContent=j.code;code.style.display='block';st.textContent='enter this code on the phone'}else{st.textContent=(j.message||'pair failed');btn.disabled=false}}
+catch(e){st.textContent='error: '+e.message;btn.disabled=false}}
 tick();setInterval(tick,4000)</script></body></html>`))
 		return
 	}
