@@ -178,7 +178,7 @@ messenger:
     - 2637078310061988
 
 whatsapp:
-  enabled: false
+  enabled: true
   store_dir: ./.element-orion/whatsapp
   database_url: ""
   proxy: ""

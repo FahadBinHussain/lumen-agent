@@ -36,6 +36,7 @@ func (s *Service) serveHTTP(ctx context.Context) error {
 	// writes the cookies file even when the messenger client isn't running
 	// yet (reload is a no-op then). secret-gated when bridge.secret is set.
 	mux.HandleFunc("/api/cookies/upload", s.handleCookieUpload)
+	mux.HandleFunc("/api/whatsapp/qr", s.handleWhatsAppQR)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
@@ -162,6 +163,33 @@ func (s *Service) handleCookieUpload(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Cookies uploaded and bridge reloaded"})
+}
+
+func (s *Service) handleWhatsAppQR(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authenticated(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if s.whatsapp == nil {
+		json.NewEncoder(w).Encode(map[string]string{"status": "disabled", "message": "whatsapp not enabled"})
+		return
+	}
+	if s.whatsapp.IsLoggedIn() {
+		json.NewEncoder(w).Encode(map[string]string{"status": "paired", "message": "device already linked"})
+		return
+	}
+	qr := s.whatsapp.QRCode()
+	if qr == "" {
+		json.NewEncoder(w).Encode(map[string]string{"status": "waiting", "message": "no QR yet - check back in a few seconds"})
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(qr))
 }
 
 func (s *Service) authenticated(r *http.Request) bool {
