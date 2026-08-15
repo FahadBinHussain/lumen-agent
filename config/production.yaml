@@ -181,7 +181,10 @@ whatsapp:
   enabled: true
   store_dir: ./.element-orion/whatsapp
   database_url: ""
-  proxy: ""
+  # Render datacenter IPs get TLS-blocked by WhatsApp; route the websocket
+  # through the home laptop's socks5 proxy over tailscale (laptop-main
+  # 100.76.10.50:1080, automata/tools/socks5-proxy).
+  proxy: socks5://100.76.10.50:1080
   # send-side allowlist (mirrors messenger.allowed_thread_ids): outgoing
   # WhatsApp sends are blocked when the chat JID is not listed (empty = allow
   # all). test thread: +880 1711-472629 -> 8801711472629@s.whatsapp.net

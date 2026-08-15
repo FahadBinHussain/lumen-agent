@@ -5,16 +5,15 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
+	"golang.org/x/net/proxy"
 	utls "github.com/refraction-networking/utls"
 )
 
 func NewChromeHTTPClient(proxyAddr string) *http.Client {
-	dialer := &net.Dialer{
-		Timeout:   15 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}
+	dialer := proxyDialer(proxyAddr)
 
 	transport := &http.Transport{
 		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -44,7 +43,7 @@ func NewChromeHTTPClient(proxyAddr string) *http.Client {
 
 			return uconn.NetConn(), nil
 		},
-		DialContext:         (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:         dialer.DialContext,
 		MaxIdleConns:        100,
 		IdleConnTimeout:     90 * time.Second,
 		TLSHandshakeTimeout: 15 * time.Second,
@@ -54,4 +53,19 @@ func NewChromeHTTPClient(proxyAddr string) *http.Client {
 		Transport: transport,
 		Timeout:   30 * time.Second,
 	}
+}
+
+func proxyDialer(proxyAddr string) proxy.ContextDialer {
+	if proxyAddr == "" {
+		return &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	}
+	addr := strings.TrimPrefix(strings.TrimPrefix(proxyAddr, "socks5://"), "socks5h://")
+	d, err := proxy.SOCKS5("tcp", addr, nil, &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second})
+	if err != nil {
+		return &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	}
+	if cd, ok := d.(proxy.ContextDialer); ok {
+		return cd
+	}
+	return &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
 }
