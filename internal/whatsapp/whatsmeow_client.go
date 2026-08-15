@@ -1,11 +1,14 @@
 package whatsapp
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
 	"os"
+	"sync"
 
+	"github.com/mdp/qrterminal/v3"
 	"github.com/rs/zerolog"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
@@ -23,6 +26,9 @@ type WhatsmeowClient struct {
 	logger      zerolog.Logger
 	handler     MessageHandler
 	connected   bool
+
+	mu     sync.Mutex
+	qrCode string
 }
 
 func NewWhatsmeowClient(dbPath string, proxyAddr string, logger zerolog.Logger, handler MessageHandler) (*WhatsmeowClient, error) {
@@ -91,16 +97,36 @@ func (w *WhatsmeowClient) handleEvent(evt interface{}) {
 		w.handleMessage(e)
 	case *events.Connected:
 		w.connected = true
+		w.setQR("")
 		w.logger.Info().Msg("WhatsApp connected")
 	case *events.Disconnected:
 		w.connected = false
 		w.logger.Warn().Msg("WhatsApp disconnected")
 	case *events.LoggedOut:
 		w.connected = false
+		w.setQR("")
 		w.logger.Error().Msg("WhatsApp logged out")
 	case *events.QR:
-		w.logger.Info().Msg("WhatsApp QR code received - scan with your phone")
+		w.setQR("")
+		for _, code := range e.Codes {
+			var buf bytes.Buffer
+			qrterminal.GenerateHalfBlock(code, qrterminal.L, &buf)
+			w.setQR(buf.String())
+		}
+		w.logger.Info().Msg("WhatsApp QR code received - scan with your phone (GET /api/whatsapp/qr)")
 	}
+}
+
+func (w *WhatsmeowClient) setQR(qr string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.qrCode = qr
+}
+
+func (w *WhatsmeowClient) QRCode() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.qrCode
 }
 
 func (w *WhatsmeowClient) handleMessage(evt *events.Message) {
