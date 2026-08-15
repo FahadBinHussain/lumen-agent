@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -44,6 +45,8 @@ type Client struct {
 	handler     Handler
 	cookiesPath string
 	startTime   time.Time
+	seenMu      sync.Mutex
+	seen        map[string]time.Time
 }
 
 func New(cookiesPath string, handler Handler) (*Client, error) {
@@ -68,6 +71,7 @@ func New(cookiesPath string, handler Handler) (*Client, error) {
 		handler:     handler,
 		cookiesPath: cookiesPath,
 		startTime:   time.Now(),
+		seen:        make(map[string]time.Time),
 	}, nil
 }
 
@@ -219,6 +223,28 @@ func (c *Client) relay(ctx context.Context, msg Incoming) {
 	ts := time.UnixMilli(msg.Timestamp)
 	if !ts.IsZero() && ts.Before(c.startTime.Add(-5*time.Second)) {
 		return
+	}
+	// Meta redelivers messages that were queued during a socket drop (the
+	// original send timestamp stays after boot, so the time guard above does
+	// NOT catch them — they arrive again on reconnect and would ghost-reply).
+	// Dedup on message id, keeping recent ids only (prune on growth).
+	if msg.MessageID != "" {
+		c.seenMu.Lock()
+		if _, dup := c.seen[msg.MessageID]; dup {
+			c.seenMu.Unlock()
+			log.Printf("messenger: skip redelivered message %s", msg.MessageID)
+			return
+		}
+		if len(c.seen) > 500 {
+			cutoff := time.Now().Add(-24 * time.Hour)
+			for id, t := range c.seen {
+				if t.Before(cutoff) {
+					delete(c.seen, id)
+				}
+			}
+		}
+		c.seen[msg.MessageID] = time.Now()
+		c.seenMu.Unlock()
 	}
 	if c.handler != nil {
 		c.handler(ctx, msg)
