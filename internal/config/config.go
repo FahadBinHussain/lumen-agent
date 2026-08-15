@@ -168,6 +168,7 @@ type WhatsAppConfig struct {
 	StoreDir     string   `yaml:"store_dir"`
 	DatabaseURL  string   `yaml:"database_url"`
 	Proxy        string   `yaml:"proxy"`
+	ProxyEnv     string   `yaml:"proxy_env"`
 	AllowedJIDs  []string `yaml:"allowed_jids"`
 }
 
@@ -669,6 +670,10 @@ func (c *Config) resolvePaths() error {
 	c.WhatsApp.StoreDir = resolvedStoreDir
 	c.WhatsApp.DatabaseURL = strings.TrimSpace(c.WhatsApp.DatabaseURL)
 	c.WhatsApp.Proxy = strings.TrimSpace(c.WhatsApp.Proxy)
+	c.WhatsApp.ProxyEnv = strings.TrimSpace(c.WhatsApp.ProxyEnv)
+	if c.WhatsApp.Proxy == "" && c.WhatsApp.ProxyEnv != "" {
+		c.WhatsApp.Proxy = strings.TrimSpace(os.Getenv(c.WhatsApp.ProxyEnv))
+	}
 
 	c.Bridge.ListenAddr = strings.TrimSpace(c.Bridge.ListenAddr)
 	c.Bridge.NotificationsPath = strings.TrimSpace(c.Bridge.NotificationsPath)
