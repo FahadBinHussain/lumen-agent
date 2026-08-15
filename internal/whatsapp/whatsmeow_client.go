@@ -202,6 +202,10 @@ func (w *WhatsmeowClient) Connect(ctx context.Context) error {
 					w.logger.Info().Msg("Scan QR code to link WhatsApp")
 				}
 			}
+			w.logger.Warn().Msg("whatsapp: QR channel closed")
+			if !w.IsLoggedIn() {
+				w.scheduleReconnect()
+			}
 		}()
 	}
 
