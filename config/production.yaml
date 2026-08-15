@@ -243,7 +243,7 @@ bridge:
   enabled: true
   listen_addr: 0.0.0.0:7860
   notifications_path: /api/automation/notifications
-  notifications_enabled: false
+  notifications_enabled: true
   bnp_enabled: false
   secret: ""
   secret_env: ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET
