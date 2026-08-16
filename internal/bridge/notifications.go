@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -40,6 +41,7 @@ func (s *Service) serveHTTP(ctx context.Context) error {
 	mux.HandleFunc("/api/cookies/upload", s.handleCookieUpload)
 	mux.HandleFunc("/api/whatsapp/qr", s.handleWhatsAppQR)
 	mux.HandleFunc("/api/whatsapp/pair", s.handleWhatsAppPair)
+	mux.HandleFunc("/api/whatsapp/session/upload", s.handleWhatsAppSessionUpload)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
@@ -285,4 +287,32 @@ func (s *Service) authenticated(r *http.Request) bool {
 		provided = strings.TrimSpace(provided[7:])
 	}
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(secret)) == 1
+}
+
+// handleWhatsAppSessionUpload receives a raw whatsmeow.db from an external
+// machine (e.g. a laptop that paired locally) and stores it in Neon so the
+// next boot restores it. Secret-gated like the other bridge endpoints.
+func (s *Service) handleWhatsAppSessionUpload(w http.ResponseWriter, r *http.Request) {
+	if !s.authenticated(r) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if s.whatsapp == nil || s.neon == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, 32<<20))
+	if err != nil || len(data) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	if err := s.neon.SaveWhatsAppSession(ctx, data, nil); err != nil {
+		log.Printf("bridge: whatsapp session upload save failed: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	log.Printf("bridge: whatsapp session uploaded (%d bytes)", len(data))
+	w.WriteHeader(http.StatusOK)
 }
