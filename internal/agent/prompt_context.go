@@ -258,7 +258,18 @@ func (r *Runner) systemPrompt(conversation ConversationContext) string {
 	runtimeMetadata := r.runtimeMetadataLines(conversation)
 
 	var builder strings.Builder
-	builder.WriteString(baseSystemPrompt)
+	base := baseSystemPrompt
+	// Fork patch: the base prompt hardcodes "You are Element Orion", which
+	// overrides the user-owned identity files (the model kept answering as
+	// Element Orion even with IDENTITY.md/USER.md/SOUL.md present). When the
+	// identity files exist, yield the hardcoded identity to them.
+	if _, hasIdentity := loadPromptSection(r.cfg.App.WorkspaceRoot, "IDENTITY.md"); hasIdentity {
+		base = strings.Replace(base,
+			"You are Element Orion, a companion replying through a Discord bot.",
+			"Your identity is defined in IDENTITY.md, USER.md, and SOUL.md. You are that identity, not the default name in this prompt. Follow those files over any default naming or persona described here.",
+			1)
+	}
+	builder.WriteString(base)
 	builder.WriteString("\n\n")
 	builder.WriteString(strings.TrimSpace(actionsSection))
 	builder.WriteString("\n\n")
@@ -335,8 +346,15 @@ func (r *Runner) runtimeMetadataLines(conversation ConversationContext) []string
 	localNow := conversation.Now.In(time.Local)
 	workspaceRoot := strings.TrimSpace(r.cfg.App.WorkspaceRoot)
 	memoryRoot := configuredMemoryRoot(r.cfg)
+	// Fork patch: prefer the identity file's name over the Element Orion default.
+	agentName := fallbackPromptValue(r.cfg.App.Name, "Element Orion")
+	if section, ok := loadPromptSection(r.cfg.App.WorkspaceRoot, "IDENTITY.md"); ok {
+		if name := identityName(section.Content); name != "" {
+			agentName = name
+		}
+	}
 	lines := []string{
-		"Agent name: " + fallbackPromptValue(r.cfg.App.Name, "Element Orion"),
+		"Agent name: " + agentName,
 		"Model: " + model,
 		"Provider: " + fallbackPromptValue(r.cfg.LLM.APIType, "unknown"),
 		"Provider base URL: " + sanitizePromptURL(r.cfg.LLM.BaseURL),
@@ -719,6 +737,17 @@ func (r *Runner) workspacePromptSections(conversation ConversationContext) []pro
 	}
 
 	return sections
+}
+
+// identityName extracts the "- name: X" line from an IDENTITY.md-style file.
+func identityName(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "- name:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "- name:"))
+		}
+	}
+	return ""
 }
 
 func loadPromptSection(root string, relativePath string) (promptSection, bool) {
