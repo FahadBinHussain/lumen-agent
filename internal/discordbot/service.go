@@ -924,12 +924,13 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 	if memoryPrompt == "" {
 		memoryPrompt = strings.TrimSpace(prompt.Content)
 	}
+	identityName := agent.IdentityDisplayName(s.cfg)
 	if memoryRoot := s.sharedMemoryRoot(state.Key); memoryRoot != "" {
-		if err := agent.AppendToMemoryShard(memoryRoot, memoryPrompt, reply, time.Now()); err != nil {
+		if err := agent.AppendToMemoryShard(memoryRoot, identityName, memoryPrompt, reply, time.Now()); err != nil {
 			s.audit.Write("error", state.ID, map[string]any{"op": "append_shared_memory_shard", "error": err.Error()})
 		}
 	} else if state.Key.GuildID == "" {
-		if err := agent.AppendToMemoryShard(s.cfg.App.MemoryDir, memoryPrompt, reply, time.Now()); err != nil {
+		if err := agent.AppendToMemoryShard(s.cfg.App.MemoryDir, identityName, memoryPrompt, reply, time.Now()); err != nil {
 			s.audit.Write("error", state.ID, map[string]any{"op": "append_memory_shard", "error": err.Error()})
 		}
 	}

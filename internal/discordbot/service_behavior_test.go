@@ -455,7 +455,7 @@ func TestGuildMemoryShardPathUsesSessionDir(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), ".element-orion")
 	guildMemoryRoot := filepath.Join(sessionDir, "guild-memory", "guild-1", "channel-1")
 
-	if err := agent.AppendToMemoryShard(guildMemoryRoot, "what did we talk about today", "we talked about memory", time.Date(2026, 3, 12, 15, 4, 0, 0, time.UTC)); err != nil {
+	if err := agent.AppendToMemoryShard(guildMemoryRoot, "Kite", "what did we talk about today", "we talked about memory", time.Date(2026, 3, 12, 15, 4, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("AppendToMemoryShard returned error: %v", err)
 	}
 

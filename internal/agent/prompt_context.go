@@ -347,12 +347,7 @@ func (r *Runner) runtimeMetadataLines(conversation ConversationContext) []string
 	workspaceRoot := strings.TrimSpace(r.cfg.App.WorkspaceRoot)
 	memoryRoot := configuredMemoryRoot(r.cfg)
 	// Fork patch: prefer the identity file's name over the Element Orion default.
-	agentName := fallbackPromptValue(r.cfg.App.Name, "Element Orion")
-	if section, ok := loadPromptSection(r.cfg.App.WorkspaceRoot, "IDENTITY.md"); ok {
-		if name := identityName(section.Content); name != "" {
-			agentName = name
-		}
-	}
+	agentName := IdentityDisplayName(r.cfg)
 	lines := []string{
 		"Agent name: " + agentName,
 		"Model: " + model,
@@ -750,6 +745,27 @@ func identityName(content string) string {
 	return ""
 }
 
+// IdentityDisplayName returns the identity name from IDENTITY.md at the
+// workspace root, falling back to the configured app name, then "Element
+// Orion". Exported for the bridge (fork).
+func IdentityDisplayName(cfg config.Config) string {
+	name := fallbackPromptValue(cfg.App.Name, "Element Orion")
+	if section, ok := loadPromptSection(cfg.App.WorkspaceRoot, "IDENTITY.md"); ok {
+		if parsed := identityName(section.Content); parsed != "" {
+			name = parsed
+		}
+	}
+	return name
+}
+
+// SharedConversationMemoryRoot returns the memory root used for shared
+// conversations (guild-memory/<guild>/<channel> or
+// group-dm-memory/<channel>) plus its prefix. Exported for the bridge so
+// WhatsApp/Messenger write the same shards their prompt reads (fork).
+func SharedConversationMemoryRoot(cfg config.Config, guildID string, channelID string) (string, string) {
+	return configuredSharedConversationMemoryRoot(cfg, guildID, channelID)
+}
+
 func loadPromptSection(root string, relativePath string) (promptSection, bool) {
 	path := filepath.Join(root, relativePath)
 	data, err := os.ReadFile(path)
@@ -907,8 +923,9 @@ func memoryShardFileName(now time.Time) string {
 // AppendToMemoryShard appends a brief exchange record to the current half-day
 // shard file at <memoryRoot>/YYYY-MM-DD-AM.md (or PM.md). The caller should
 // log but not treat a returned error as fatal — conversation can continue
-// without the shard.
-func AppendToMemoryShard(memoryRoot string, userMsg string, assistantMsg string, now time.Time) error {
+// without the shard. assistantLabel names the bot in the record (identity
+// name, not the default "Element Orion").
+func AppendToMemoryShard(memoryRoot string, assistantLabel string, userMsg string, assistantMsg string, now time.Time) error {
 	userMsg = strings.TrimSpace(userMsg)
 	assistantMsg = strings.TrimSpace(assistantMsg)
 	if userMsg == "" && assistantMsg == "" {
@@ -918,6 +935,11 @@ func AppendToMemoryShard(memoryRoot string, userMsg string, assistantMsg string,
 	memoryRoot = strings.TrimSpace(memoryRoot)
 	if memoryRoot == "" {
 		return fmt.Errorf("memory root is not configured")
+	}
+
+	assistantLabel = strings.TrimSpace(assistantLabel)
+	if assistantLabel == "" {
+		assistantLabel = "Element Orion"
 	}
 
 	shardPath := filepath.Join(memoryRoot, memoryShardFileName(now))
@@ -935,7 +957,7 @@ func AppendToMemoryShard(memoryRoot string, userMsg string, assistantMsg string,
 		sb.WriteString("\n\n")
 	}
 	if assistantMsg != "" {
-		sb.WriteString("**Element Orion:** ")
+		sb.WriteString("**" + assistantLabel + ":** ")
 		sb.WriteString(assistantMsg)
 		sb.WriteString("\n")
 	}
