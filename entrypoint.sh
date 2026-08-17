@@ -5,7 +5,7 @@ set -e
 # Render free). tailscaled exposes a SOCKS5 server on 127.0.0.1:1055 that
 # can reach tailnet IPs (the home laptop's socks5-proxy at 100.76.10.50:1080).
 if [ -n "$TS_AUTHKEY" ]; then
-  /app/tailscaled --tun=userspace-networking --socks5-server=127.0.0.1:1055 --state=mem --accept-dns=false &
+  /app/tailscaled --tun=userspace-networking --socks5-server=127.0.0.1:1055 --state=mem &
   /app/tailscale up --authkey="$TS_AUTHKEY" --hostname=lumen-render --accept-dns=false --timeout=40s
   echo "entrypoint: tailscale userspace node up ($(/app/tailscale ip -4))"
 else
