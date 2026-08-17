@@ -251,7 +251,7 @@ func (s *Service) handleWhatsAppQR(w http.ResponseWriter, r *http.Request) {
 <body><h1>WhatsApp pairing &mdash; lumen</h1>
 <div id="status" style="color:#8be08b">loading...</div>
 <div id="qrbox"><img id="qr" width="512" height="512" alt="QR"></div>
-<ol><li>Open WhatsApp on <b>+8801911104251</b></li><li>Settings &rarr; Linked devices &rarr; Link a device</li><li>Scan this QR &mdash; it refreshes automatically every 4 seconds</li></ol>
+<ol><li>Open WhatsApp on <b>+8801522116449</b></li><li>Settings &rarr; Linked devices &rarr; Link a device</li><li>Scan this QR &mdash; it refreshes automatically every 4 seconds</li></ol>
 <h2>or link with phone number</h2>
 <button id="pairbtn" onclick="genCode()">Generate linking code</button>
 <div id="code"></div>
@@ -261,7 +261,7 @@ async function tick(){try{const j=await(await fetch('?format=json')).json();if(j
 if(j.status!=='qr'){st.textContent=(j.status||'waiting')+' - '+(j.message||'');return}
 if(j.ref!==have){have=j.ref;img.src='?format=png&t='+Date.now();st.textContent='refreshed '+new Date().toLocaleTimeString()}else{st.textContent='waiting for next refresh...'}}
 catch(e){st.textContent='error: '+e.message}}
-async function genCode(){btn.disabled=true;code.style.display='none';st.textContent='requesting code...';try{const r=await fetch('/api/whatsapp/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:'8801911104251'})});const j=await r.json();if(j.status==='code'){code.textContent=j.code;code.style.display='block';st.textContent='enter this code on the phone'}else{st.textContent=(j.message||'pair failed');btn.disabled=false}}
+async function genCode(){btn.disabled=true;code.style.display='none';st.textContent='requesting code...';try{const r=await fetch('/api/whatsapp/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:'8801522116449'})});const j=await r.json();if(j.status==='code'){code.textContent=j.code;code.style.display='block';st.textContent='enter this code on the phone'}else{st.textContent=(j.message||'pair failed');btn.disabled=false}}
 catch(e){st.textContent='error: '+e.message;btn.disabled=false}}
 tick();setInterval(tick,4000)</script></body></html>`))
 		return

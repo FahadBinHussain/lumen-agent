@@ -291,6 +291,27 @@ config, so patched `internal/discordbot/service.go` with `formatDirectMessagePro
 style as shared channels). Only upstream file touched outside the original merge
 files — keep an eye on it when rebasing upstream. Rebuilt exe 2026-08-14.
 
+## WhatsApp pairing gotchas (2026-08-17)
+
+- Pairing target moved to a NEW account (`01522116449`, intl `8801522116449`);
+  old number `+8801911104251` is hard-blocked (QR "couldn't link device",
+  PairPhone 400/429) — do not retry it.
+- **Burned store identity**: `whatsmeow.db` device ID survives every restart and
+  got flagged after failed attempts — a burned store makes QR scans silently
+  dropped and PairPhone 400 even from a fresh account. Symptom to look for: scan
+  produces ZERO log activity (no `companion_reg_refresh`, no pair IQ). Fix: stop
+  instance, move `whatsmeow.db` aside, restart for a fresh device ID.
+- Client must be current: whatsmeow <2026-06-22 breaks pairing (server now
+  expects passkey + client-props handshake). Pinned Aug 16 build
+  (`fb386f152837`) + mautrix-go v0.30.0 — both required together (util v0.10.0).
+- Local debugging stack: `C:\tmp\lumen-mini.yaml` (persistence disabled, whatsapp
+  proxy = local socks5 127.0.0.1:1080, bridge 127.0.0.1:8793), launcher
+  `C:\tmp\lumen-local.cmd` (clears DATABASE_URL — local pgx→Neon hangs), log
+  `C:\tmp\lumen-local.log`, store `C:\tmp\.element-orion\whatsapp`.
+- Local pairing path: kill local instance AFTER pairing before deploying Render
+  (same identity dual-connect conflict); transfer session via
+  `POST /api/whatsapp/session/upload` (bridge secret auth) → Neon restore on boot.
+
 ## Upstream tracking
 
 Upstream is `eli32-vlc/lumen-agent`; this fork is `FahadBinHussain/lumen-agent`.
