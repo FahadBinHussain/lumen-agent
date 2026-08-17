@@ -67,6 +67,7 @@ func NewWhatsmeowClient(dbPath string, proxyAddr string, logger zerolog.Logger, 
 	}
 
 	client := whatsmeow.NewClient(device, log)
+	client.QRClientType = whatsmeow.PairClientChrome
 
 	wsHTTPClient := NewChromeHTTPClient(proxyAddr)
 	client.SetWebsocketHTTPClient(wsHTTPClient)
@@ -240,7 +241,7 @@ func (w *WhatsmeowClient) scheduleReconnect() {
 }
 
 func (w *WhatsmeowClient) PairPhone(ctx context.Context, phone string) (string, error) {
-	code, err := w.client.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "lumen")
+	code, err := w.client.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Chrome (Windows)")
 	if err != nil {
 		return "", fmt.Errorf("pair phone: %w", err)
 	}
