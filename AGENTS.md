@@ -293,21 +293,36 @@ files — keep an eye on it when rebasing upstream. Rebuilt exe 2026-08-14.
 
 ## WhatsApp pairing gotchas (2026-08-17)
 
-- Pairing target moved to a NEW account (`REDACTED_PHONE`, intl `REDACTED_PHONE`);
-  old number `+8801911104251` is hard-blocked (QR "couldn't link device",
-  PairPhone 400/429) — do not retry it.
-- **Burned store identity**: `whatsmeow.db` device ID survives every restart and
-  got flagged after failed attempts — a burned store makes QR scans silently
-  dropped and PairPhone 400 even from a fresh account. Symptom to look for: scan
-  produces ZERO log activity (no `companion_reg_refresh`, no pair IQ). Fix: stop
-  instance, move `whatsmeow.db` aside, restart for a fresh device ID.
+- **RESOLVED 2026-08-17**: paired via PairPhone code flow (account `REDACTED_PHONE`
+  / `REDACTED_PHONE`) and transferred to Render through Neon
+  (`POST /api/whatsapp/session/upload`); QR page reports `"status":"paired"`.
+  Commit `c9d4ae8` carries the fixes. Old number `+8801911104251` stays
+  hard-blocked — never retry it.
+- **Pairing identity fixes (the actual root cause)**: (1) whatsmeow `Client.QRClientType`
+  was unset → QR advertised client type `9` (OtherWebClient) and the server
+  rejected phone confirms ("unnamed device" + "couldn't link device"). Must be
+  `PairClientChrome`. (2) `PairPhone` display name must be `Browser (OS)`
+  format (`"Chrome (Windows)"`); `"lumen"` → server returns `400 bad-request`
+  on the code flow. Set both in `internal/whatsapp/whatsmeow_client.go`.
+- QR page button hardcodes the pairing number (`notifications.go` line ~264) —
+  update it when the target account changes (the pair endpoint itself takes
+  the phone in the body).
 - Client must be current: whatsmeow <2026-06-22 breaks pairing (server now
   expects passkey + client-props handshake). Pinned Aug 16 build
   (`fb386f152837`) + mautrix-go v0.30.0 — both required together (util v0.10.0).
+- **Burned store identity**: `whatsmeow.db` device ID survives every restart and
+  got flagged after failed attempts. Symptom: scan produces ZERO log activity.
+  Fix: stop instance, move `whatsmeow.db` aside, restart for a fresh device ID.
 - Local debugging stack: `C:\tmp\lumen-mini.yaml` (persistence disabled, whatsapp
   proxy = local socks5 127.0.0.1:1080, bridge 127.0.0.1:8793), launcher
   `C:\tmp\lumen-local.cmd` (clears DATABASE_URL — local pgx→Neon hangs), log
   `C:\tmp\lumen-local.log`, store `C:\tmp\.element-orion\whatsapp`.
+- **Tunnel maintenance**: Render's whatsapp egresses through the local pinggy
+  tunnel + socks5 proxy (WHATSAPP_PROXY_URL env). Pinggy free tunnels die at
+  60 min and the socks5 proxy (pid 26760) must stay alive — refresh the tunnel
+  and re-PUT the env var before Render's whatsapp drops. Current endpoint
+  `lhexk-103-149-57-212.run.pinggy-free.link:36215` (started 2026-08-17 ~09:04,
+  expires ~10:04 local).
 - Local pairing path: kill local instance AFTER pairing before deploying Render
   (same identity dual-connect conflict); transfer session via
   `POST /api/whatsapp/session/upload` (bridge secret auth) → Neon restore on boot.
