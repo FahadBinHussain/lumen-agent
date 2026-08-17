@@ -169,9 +169,11 @@ func (w *WhatsmeowClient) handleMessage(evt *events.Message) {
 		return
 	}
 
+	chat := w.resolvePN(context.Background(), evt.Info.Chat)
+
 	chatJID := ChatJID{
-		User:   evt.Info.Chat.User,
-		Server: evt.Info.Chat.Server,
+		User:   chat.User,
+		Server: chat.Server,
 	}
 
 	msg := ParsedMessage{
@@ -248,6 +250,20 @@ func (w *WhatsmeowClient) PairPhone(ctx context.Context, phone string) (string, 
 	return code, nil
 }
 
+// resolvePN maps a LID (privacy-number) chat JID to its phone-number JID
+// using whatsmeow's LID store, so allowlists and session keys can use the
+// stable PN form. Returns the input unchanged when the JID is not a LID or
+// the mapping is not yet known.
+func (w *WhatsmeowClient) resolvePN(ctx context.Context, jid types.JID) types.JID {
+	if jid.Server != types.HiddenUserServer {
+		return jid
+	}
+	if pn, err := w.client.Store.LIDs.GetPNForLID(ctx, jid); err == nil && pn.User != "" && pn.Server == types.DefaultUserServer {
+		return pn
+	}
+	return jid
+}
+
 func (w *WhatsmeowClient) Disconnect() {
 	if w.client != nil {
 		w.client.Disconnect()
@@ -259,6 +275,8 @@ func (w *WhatsmeowClient) SendText(ctx context.Context, to string, text string) 
 	if err != nil {
 		return fmt.Errorf("parse JID: %w", err)
 	}
+
+	jid = w.resolvePN(ctx, jid)
 
 	msg := &waE2E.Message{
 		Conversation: &text,
