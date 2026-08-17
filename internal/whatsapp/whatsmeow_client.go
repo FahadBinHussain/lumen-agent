@@ -100,18 +100,24 @@ func (w *WhatsmeowClient) handleEvent(evt interface{}) {
 	case *events.Message:
 		w.handleMessage(e)
 	case *events.Connected:
+		w.mu.Lock()
 		w.connected = true
+		w.mu.Unlock()
 		w.setQR("")
 		w.logger.Info().Msg("WhatsApp connected")
 	case *events.Disconnected:
+		w.mu.Lock()
 		w.connected = false
+		w.mu.Unlock()
 		w.setQR("")
 		w.logger.Warn().Msg("WhatsApp disconnected")
 		if !w.IsLoggedIn() {
 			w.scheduleReconnect()
 		}
 	case *events.LoggedOut:
+		w.mu.Lock()
 		w.connected = false
+		w.mu.Unlock()
 		w.setQR("")
 		w.logger.Error().Msg("WhatsApp logged out")
 	case *events.QR:
@@ -292,6 +298,8 @@ func (w *WhatsmeowClient) SendText(ctx context.Context, to string, text string) 
 }
 
 func (w *WhatsmeowClient) IsConnected() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	return w.connected
 }
 

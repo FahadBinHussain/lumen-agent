@@ -47,6 +47,23 @@ type Client struct {
 	startTime   time.Time
 	seenMu      sync.Mutex
 	seen        map[string]time.Time
+
+	connMu    sync.Mutex
+	connected bool
+}
+
+// IsConnected reports whether the MQTT socket is currently up (Ready or
+// Reconnected seen, no socket error since). Used by the bridge health watch.
+func (c *Client) IsConnected() bool {
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+	return c.connected
+}
+
+func (c *Client) setConnected(v bool) {
+	c.connMu.Lock()
+	c.connected = v
+	c.connMu.Unlock()
 }
 
 func New(cookiesPath string, handler Handler) (*Client, error) {
@@ -104,6 +121,7 @@ func (c *Client) Start(ctx context.Context) error {
 }
 
 func (c *Client) ReloadCookies(ctx context.Context) error {
+	c.setConnected(false)
 	cookieMap, err := cookies.LoadFromFile(c.cookiesPath)
 	if err != nil {
 		return fmt.Errorf("load cookies: %w", err)
@@ -138,6 +156,7 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 	return func(evtCtx context.Context, evt any) {
 		switch e := evt.(type) {
 		case *messagix.Event_Ready:
+			c.setConnected(true)
 			log.Printf("messenger: MQTT connected (code %s)", e.ConnectionCode)
 			go func() {
 				ticker := time.NewTicker(60 * time.Second)
@@ -205,12 +224,15 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 			}
 
 		case *messagix.Event_SocketError:
+			c.setConnected(false)
 			log.Printf("messenger: socket error (attempts %d): %v", e.ConnectionAttempts, e.Err)
 
 		case *messagix.Event_PermanentError:
+			c.setConnected(false)
 			log.Printf("messenger: permanent error: %v", e.Err)
 
 		case *messagix.Event_Reconnected:
+			c.setConnected(true)
 			log.Printf("messenger: MQTT reconnected")
 		}
 	}
