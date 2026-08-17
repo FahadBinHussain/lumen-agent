@@ -305,6 +305,27 @@ identity-yields instruction, and `runtimeMetadataLines()` uses the `- name:` lin
 from IDENTITY.md for "Agent name" instead of the Element Orion fallback. Keep an
 eye on this when rebasing upstream.
 
+## Platform symmetry audit (2026-08-17)
+
+All three platforms (Discord, WhatsApp, Messenger) share the same agent Runner,
+so identity files, memory prompts, and history compaction are symmetric by
+construction. Per-platform persistence:
+
+- **Identity files** (IDENTITY.md/USER.md/SOUL.md): workspace root, loaded into
+  every platform's system prompt. ✓
+- **Session history**: Discord `session-*.json` ↔ bridge `bridge-sessions.json`,
+  both in the session dir, both backed up by internal/persist. ✓
+- **Memory shards**: Discord appends each exchange to the half-day shard
+  (`AppendToMemoryShard` in service.go). The bridge did NOT — WhatsApp/Messenger
+  prompts already read `guild-memory/<platform>/<thread>/` shards but nothing
+  ever wrote them. Fixed 2026-08-17 (commit TBD): bridge `agentRun` now appends
+  the exchange to the same shared memory root via
+  `agent.SharedConversationMemoryRoot` + `AppendToMemoryShard`, symmetric with
+  Discord's guild-channel path. ✓
+- **Shard speaker label**: `AppendToMemoryShard` now takes the assistant label
+  (identity name from IDENTITY.md via `agent.IdentityDisplayName`), so shards
+  say "**Kite:**" not "**Element Orion:**" on all platforms. ✓
+
 ## WhatsApp pairing gotchas (2026-08-17)
 
 - **RESOLVED 2026-08-17**: paired via PairPhone code flow (account `01522116449`

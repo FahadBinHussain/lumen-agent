@@ -357,6 +357,16 @@ func (s *Service) agentRun(ctx context.Context, platform string, threadID string
 	s.mu.Unlock()
 	s.saveHistory()
 
+	// Fork patch: symmetric with Discord — append the exchange to the shared
+	// memory shard (guild-memory/<platform>/<thread>/) so WhatsApp/Messenger
+	// conversations persist into the same half-day shards their prompt reads.
+	// Best-effort, like the history write; the persist ticker syncs it.
+	if memoryRoot, _ := agent.SharedConversationMemoryRoot(s.cfg, platform, threadID); memoryRoot != "" {
+		if err := agent.AppendToMemoryShard(memoryRoot, agent.IdentityDisplayName(s.cfg), prompt, reply, time.Now()); err != nil {
+			log.Printf("bridge: append memory shard failed (%s %s): %v", platform, threadID, err)
+		}
+	}
+
 	s.sendReply(platform, threadID, jid, msgID, fmt.Sprintf("[%s] %s", modelName, reply))
 }
 
