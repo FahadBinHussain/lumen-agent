@@ -289,6 +289,15 @@ persistence:
     - whatsapp
     - incoming-attachments
     - logs
+    # TEMPORARY purge (2026-08-17): user asked to wipe old session/memory
+    # state, keeping only the identity files. Excluding these paths makes the
+    # running container's sync delete their Neon rows (stale) and never
+    # re-upload them. Revert this list once the rows are gone and a fresh
+    # deploy has booted clean.
+    - bridge-sessions.json
+    - heartbeat-state.json
+    - session-20260817-023152-5d2d8e47.json
+    - guild-memory/751043966182621234/1537650032441032765/2026-08-17-AM.md
 
 mcp:
   servers: []
