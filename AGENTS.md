@@ -244,14 +244,19 @@ notes): ~90% covered. Remaining gaps and how they're handled:
   2637078310061988). Blocks are log-only + HTTP 200 `{"status":"sent"}`
   (murmur contract — pollers keep working); watch Render logs for "blocked
   (not in messenger.allowed_thread_ids)".
-- **Cookie-health auto-refresh (watchdog, READY but not scheduled)**: local
+- **Cookie-health auto-refresh (watchdog, SCHEDULED 2026-08-17)**: local
   script `C:\Users\Admin\Downloads\automata\facebook.com\cookie-health.ps1` —
   port of murmur.ps1 Check-CookieHealth/Invoke-CookieRefresh/
   Reset-FailedBnpOutbox: polls dailyBNP Neon (`BNP_DATABASE_URL`, wss via
   bnp-db.mjs) for `send returned empty message ID` failures in a window, runs
   the browserless refresher against the lumen bridge, then resets failed rows
   to pending. Runs only after messenger goes live (needs the BNP worker +
-  vault email); schedule via `schtasks /sc minute /mo 10`. Health-gates on
+  vault email). Task `lumen-cookie-health` (scheduled task) recreated
+  2026-08-17 with the murmur pattern (LogonTrigger + PT30M repetition,
+  InteractiveToken, HighestAvailable, IgnoreNew) — same behavior as the
+  `murmur` task, NOT the old schtasks /sc minute form. On-demand verify:
+  `schtasks /run /tn "lumen-cookie-health"`; log `$env:TEMP\lumen-cookie-health.log`;
+  Next Run shows N/A (logon-only trigger fires at next logon). Health-gates on
   `MURMUR_HF_SPACE_URL` (default http://127.0.0.1:8791).
 - **Dedupe continuity (WIRED 2026-08-14)**: `notify.database_url_env` now
   points at `NOTIFY_DATABASE_URL` = murmur's Neon DSN (steam_seen/game_seen)
@@ -372,6 +377,22 @@ construction. Per-platform persistence:
   `entrypoint: tailscale userspace node up (<ip>)` + `WhatsApp connected`;
   tailnet shows `lumen-render` (linux, active). The laptop socks5-proxy (pid
   26760) must stay alive — it's now the tailnet upstream. pinggy retired.
+- **Log-noise flood from the SOCKS listeners (resolved 2026-08-17, commits
+  cdb00e1 + b13d34b)**: the container logs were drowned by ~1-2/s
+  `[ERR] socks: Unsupported SOCKS version: [72]` + `serve 127.0.0.1:PORT: ...`
+  pairs starting the first second of boot, making Render logs useless
+  (log API caps at ~300-500 lines ≈ a few minutes of flood). Root cause:
+  tailscaled's netstack PORT DISCOVERY probes the container's own listeners
+  with HTTP-ish first bytes (0x48 = 'H') — every probe hitting a SOCKS
+  listener gets rejected and logged by BOTH socks servers (tailscaled's
+  1055 AND sockschain's 1081 via armon/go-socks5, which also wraps rejects
+  with its own `serve %s: %v`). Harmless rejects, cosmetic problem. Fix:
+  entrypoint.sh pipes BOTH processes' stderr through
+  `grep --line-buffered -vE 'Unsupported SOCKS version|incompatible SOCKS
+  version|socks5: client connection failed|peerapi: unknown peer|RATELIMIT'`.
+  The first commit only filtered tailscaled (flood persisted — sockschain
+  was the louder half); filtering both = clean logs. Verify after deploys:
+  `render-cli logs` shows no socks-noise lines.
 - **Neon from local while Proton VPN is on** (2026-08-17): Proton's WFP filter
   driver blocks direct psql/pgx traffic even with host routes added, and its
   client rewrites ServiceSettings.json split-tunnel edits on restart — don't
