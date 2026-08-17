@@ -284,10 +284,13 @@ func (s *Store) Sync(ctx context.Context) error {
 	stale := make([]string, 0)
 	for rel := range stored {
 		if strings.HasPrefix(rel, wsPathPrefix) {
-			name := strings.TrimPrefix(rel, wsPathPrefix)
-			if _, ok := liveWs[name]; !ok {
-				stale = append(stale, rel)
-			}
+			// Workspace rows are NEVER deleted by sync: the container has no
+			// local identity files until a boot actually restores them, so a
+			// missing local file just means the row is seed data for the next
+			// fresh container (deleting it here would wipe it before the next
+			// restore ever sees it — a real race seen on 2026-08-17). To
+			// remove an identity file for good, delete its @workspace/ row in
+			// the snapshot table manually.
 			continue
 		}
 		if _, ok := live[rel]; !ok {
