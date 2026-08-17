@@ -183,8 +183,10 @@ whatsapp:
   store_dir: ./.element-orion/whatsapp
   database_url: ""
   # Render datacenter IPs get TLS-blocked by WhatsApp; route the websocket
-  # through the home laptop's socks5 proxy (public IP via router UPnP port
-  # mapping, auth'd). URL comes from env so creds stay out of the repo.
+  # through the home laptop's socks5 proxy (100.76.10.50:1080) over a
+  # tailscale mesh link: the container runs a userspace tailscale node and
+  # the sockschain sidecar (cmd/sockschain) chains whatsmeow's SOCKS5
+  # connection through it. WHATSAPP_PROXY_URL=socks5://127.0.0.1:1081.
   proxy: ""
   proxy_env: WHATSAPP_PROXY_URL
   # send-side allowlist (mirrors messenger.allowed_thread_ids): outgoing

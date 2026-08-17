@@ -321,8 +321,27 @@ files — keep an eye on it when rebasing upstream. Rebuilt exe 2026-08-14.
   tunnel + socks5 proxy (WHATSAPP_PROXY_URL env). Pinggy free tunnels die at
   60 min and the socks5 proxy (pid 26760) must stay alive — refresh the tunnel
   and re-PUT the env var before Render's whatsapp drops. Current endpoint
-  `lhexk-103-149-57-212.run.pinggy-free.link:36215` (started 2026-08-17 ~09:04,
-  expires ~10:04 local).
+  `othvm-149-50-211-136.run.pinggy-free.link:33853` (started 2026-08-17 ~12:37,
+  expires ~13:37 local).
+- **Neon from local while Proton VPN is on** (2026-08-17): Proton's WFP filter
+  driver blocks direct psql/pgx traffic even with host routes added, and its
+  client rewrites ServiceSettings.json split-tunnel edits on restart — don't
+  fight the config file. Working bypass: route through v2rayN's mihomo core
+  (socks 127.0.0.1:7891). mihomo runs in `mode: global`, so `GLOBAL` selector
+  must point at `PROXY` (PUT http://127.0.0.1:9090/proxies/GLOBAL
+  {"name":"PROXY"}) or traffic egresses DIRECT and gets blocked. Then forward
+  psql via the one-shot socks relay `C:\tmp\socks5-fwd.ps1` (listens
+  127.0.0.1:5433, accepts multiple connections, CopyToAsync — never Start-Job,
+  streams can't cross runspaces). psql hits 127.0.0.1:5433 and MUST pass the
+  endpoint ID since SNI is lost: `?options=endpoint%3Dep-divine-sunset-a67l3n4m`.
+  Neon project `lumen` = `aged-fire-12399795`, branch `br-damp-sea-a6c1ccfj`,
+  db `neondb`, user `neondb_owner`.
+- **Memory files on the remote** (2026-08-17): `memory/SOUL.md`, `IDENTITY.md`,
+  `USER.md` are gitignored locally but backed up to Neon `lumen_snapshots`
+  (upsert by path) so Render restores them on boot — commit-time they do NOT
+  exist in the repo. When the local files change, re-insert them
+  (`INSERT ... ON CONFLICT (path) DO UPDATE`, base64 + sha256) and trigger a
+  fresh deploy; verify via logs `persist: restored N file(s) from snapshot`.
 - Local pairing path: kill local instance AFTER pairing before deploying Render
   (same identity dual-connect conflict); transfer session via
   `POST /api/whatsapp/session/upload` (bridge secret auth) → Neon restore on boot.
