@@ -268,6 +268,10 @@ func (s *Service) handleWhatsAppMessage(ctx context.Context, msg whatsapp.Parsed
 	}
 
 	chatJID := msg.Chat.String()
+	if !s.cfg.WhatsAppJIDAllowed(chatJID) {
+		log.Printf("bridge: whatsapp message from %s in chat %s dropped (not in whatsapp.allowed_jids)", msg.SenderJID, chatJID)
+		return
+	}
 	log.Printf("bridge: whatsapp message from %s in chat %s", msg.SenderJID, chatJID)
 	s.agentRun(ctx, "whatsapp", chatJID, chatJID, prompt)
 }
