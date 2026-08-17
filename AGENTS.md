@@ -317,12 +317,26 @@ files — keep an eye on it when rebasing upstream. Rebuilt exe 2026-08-14.
   proxy = local socks5 127.0.0.1:1080, bridge 127.0.0.1:8793), launcher
   `C:\tmp\lumen-local.cmd` (clears DATABASE_URL — local pgx→Neon hangs), log
   `C:\tmp\lumen-local.log`, store `C:\tmp\.element-orion\whatsapp`.
-- **Tunnel maintenance**: Render's whatsapp egresses through the local pinggy
-  tunnel + socks5 proxy (WHATSAPP_PROXY_URL env). Pinggy free tunnels die at
-  60 min and the socks5 proxy (pid 26760) must stay alive — refresh the tunnel
-  and re-PUT the env var before Render's whatsapp drops. Current endpoint
-  `othvm-149-50-211-136.run.pinggy-free.link:33853` (started 2026-08-17 ~12:37,
-  expires ~13:37 local).
+- **WhatsApp egress via tailscale mesh (2026-08-17, replaces pinggy tunnel)**:
+  Render's whatsapp connects through the home laptop's socks5-proxy
+  (automata\tools\socks5-proxy, `C:\Users\Admin\Downloads\automata\tools\socks5-proxy\socks5-proxy.exe`
+  0.0.0.0:1080, auth only if SOCKS5_USER set; firewall allow rule
+  "socks5-proxy inbound 1080" exists) over the tailnet — no more 60-min pinggy
+  refresh. Chain: whatsmeow → `WHATSAPP_PROXY_URL=socks5://127.0.0.1:1081`
+  (sockschain sidecar, `cmd/sockschain`) → tailscale userspace socks
+  (127.0.0.1:1055) → `SOCKS_CHAIN_UPSTREAM=socks5://lumenwa:z0xpjLQVd4nEgX5GtMqN2IDw@100.76.10.50:1080`
+  (laptop-main) → WhatsApp, egressing from the home IP. `TS_AUTHKEY` = the
+  fleet reusable authkey (mainframe tailscale profile); `--state=mem` makes
+  every container node EPHEMERAL regardless of key type (verified: tailscaled
+  help says mem state registers as ephemeral). entrypoint.sh runs tailscaled
+  `--tun=userspace-networking --socks5-server=127.0.0.1:1055 --state=mem` then
+  `tailscale up --authkey=... --hostname=lumen-render --accept-dns=false
+  --timeout=40s`. GOTCHA: `--accept-dns` is a `tailscale up` flag, NOT a
+  tailscaled flag — passing it to tailscaled makes it print usage and exit 1
+  (deploy update_failed; fixed 2026-08-17, commit 2a0ac08). Verify: logs
+  `entrypoint: tailscale userspace node up (<ip>)` + `WhatsApp connected`;
+  tailnet shows `lumen-render` (linux, active). The laptop socks5-proxy (pid
+  26760) must stay alive — it's now the tailnet upstream. pinggy retired.
 - **Neon from local while Proton VPN is on** (2026-08-17): Proton's WFP filter
   driver blocks direct psql/pgx traffic even with host routes added, and its
   client rewrites ServiceSettings.json split-tunnel edits on restart — don't
