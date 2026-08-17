@@ -350,12 +350,22 @@ files — keep an eye on it when rebasing upstream. Rebuilt exe 2026-08-14.
   endpoint ID since SNI is lost: `?options=endpoint%3Dep-divine-sunset-a67l3n4m`.
   Neon project `lumen` = `aged-fire-12399795`, branch `br-damp-sea-a6c1ccfj`,
   db `neondb`, user `neondb_owner`.
-- **Memory files on the remote** (2026-08-17): `memory/SOUL.md`, `IDENTITY.md`,
-  `USER.md` are gitignored locally but backed up to Neon `lumen_snapshots`
-  (upsert by path) so Render restores them on boot — commit-time they do NOT
-  exist in the repo. When the local files change, re-insert them
-  (`INSERT ... ON CONFLICT (path) DO UPDATE`, base64 + sha256) and trigger a
-  fresh deploy; verify via logs `persist: restored N file(s) from snapshot`.
+- **Identity files (fixed 2026-08-17, commit TBD)**: the prompt loader reads
+  `IDENTITY.md`/`USER.md`/`SOUL.md` from the WORKSPACE ROOT (`/app/config/` on
+  Render), not from the session/memory dir — they were originally backed up as
+  `memory/*.md` rows and restored into `.element-orion/memory/` where nothing
+  ever read them (the bot kept identifying as "Element Orion"). persist now
+  (1) backs up the workspace-root identity files under the `@workspace/` path
+  prefix (Restore writes them to the workspace root, only when absent locally;
+  Sync upserts/deletes them like session files), and (2) permanently excludes
+  the legacy `memory/SOUL.md`, `memory/IDENTITY.md`, `memory/USER.md` paths
+  from restore+sync so those rows self-delete on the first sync. The local
+  files live at `config/{IDENTITY,USER,SOUL}.md` (gitignored). To push a
+  changed identity: update the local file, upsert the `@workspace/<name>` row
+  in Neon (`INSERT ... ON CONFLICT (path) DO UPDATE`, base64 + sha256, via the
+  Neon-under-Proton relay), and trigger a fresh deploy; verify via logs
+  `persist: restored N file(s) from snapshot` + the agent prompt no longer
+  saying "Element Orion".
 - Local pairing path: kill local instance AFTER pairing before deploying Render
   (same identity dual-connect conflict); transfer session via
   `POST /api/whatsapp/session/upload` (bridge secret auth) → Neon restore on boot.

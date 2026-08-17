@@ -10,6 +10,9 @@ config/lumen.yaml
 config/element-orion.yaml
 config/lumenmac.yaml
 config/*.local.yaml
+config/IDENTITY.md
+config/USER.md
+config/SOUL.md
 IDENTITY.md
 USER.md
 SOUL.md

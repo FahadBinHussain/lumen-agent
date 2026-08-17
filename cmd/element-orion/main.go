@@ -95,7 +95,7 @@ func runServe(args []string) error {
 		if err != nil {
 			return fmt.Errorf("resolve persistence database: %w", err)
 		}
-		persistStore, err = persist.Open(context.Background(), dsn, cfg.App.SessionDir, cfg.Persistence.Exclude)
+		persistStore, err = persist.Open(context.Background(), dsn, cfg.App.SessionDir, cfg.App.WorkspaceRoot, cfg.Persistence.Exclude)
 		if err != nil {
 			return fmt.Errorf("initialize persistence: %w", err)
 		}
