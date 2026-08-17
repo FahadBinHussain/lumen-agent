@@ -291,6 +291,20 @@ config, so patched `internal/discordbot/service.go` with `formatDirectMessagePro
 style as shared channels). Only upstream file touched outside the original merge
 files — keep an eye on it when rebasing upstream. Rebuilt exe 2026-08-14.
 
+## Identity-first system prompt (2026-08-17 fork patch)
+
+Upstream `baseSystemPrompt` (internal/agent/prompt_context.go) hardcodes "You are
+Element Orion, a companion replying through a Discord bot." plus an "Agent name:
+Element Orion" metadata fallback — so even with IDENTITY.md/USER.md/SOUL.md in the
+workspace, the model kept self-identifying as Element Orion (repro: `/ai who are
+you` answered "I'm Element Orion" AND offered the bootstrap ritual, contradicting
+SOUL.md's "the ritual is complete, never mention it" — proof the identity sections
+weren't winning against the system prompt). Patch: when IDENTITY.md exists at the
+workspace root, `systemPrompt()` replaces the hardcoded first line with an
+identity-yields instruction, and `runtimeMetadataLines()` uses the `- name:` line
+from IDENTITY.md for "Agent name" instead of the Element Orion fallback. Keep an
+eye on this when rebasing upstream.
+
 ## WhatsApp pairing gotchas (2026-08-17)
 
 - **RESOLVED 2026-08-17**: paired via PairPhone code flow (account `01522116449`
