@@ -222,7 +222,7 @@ Hardcoded test targets — use these for cutover test sends only:
 
 - Messenger thread `2637078310061988` (already in `messenger.allowed_thread_ids`)
 - Discord channel `1537650032441032765` (AlgoJect — where @murmur hello tests happen)
-- WhatsApp contact +880 1711-472629 → JID `8801711472629@s.whatsapp.net` (now gated
+- WhatsApp contact +880 1911-104251 → JID `8801911104251@s.whatsapp.net` (now gated
   by the new `whatsapp.allowed_jids`, mirror of `messenger.allowed_thread_ids`:
   empty list = allow all; blocked sends log `blocked (not in whatsapp.allowed_jids)`
   and are dropped).

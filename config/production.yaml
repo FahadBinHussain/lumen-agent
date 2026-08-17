@@ -189,9 +189,9 @@ whatsapp:
   proxy_env: WHATSAPP_PROXY_URL
   # send-side allowlist (mirrors messenger.allowed_thread_ids): outgoing
   # WhatsApp sends are blocked when the chat JID is not listed (empty = allow
-  # all). test thread: +880 1711-472629 -> 8801711472629@s.whatsapp.net
+  # all). test thread: +880 1911-104251 -> 8801911104251@s.whatsapp.net
   allowed_jids:
-    - 8801711472629@s.whatsapp.net
+    - 8801911104251@s.whatsapp.net
 
 gifs:
   enabled: false
