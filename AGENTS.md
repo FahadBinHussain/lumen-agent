@@ -331,6 +331,36 @@ construction. Per-platform persistence:
   (identity name from IDENTITY.md via `agent.IdentityDisplayName`), so shards
   say "**Kite:**" not "**Element Orion:**" on all platforms. ✓
 
+## Cross-platform health notifications (2026-08-17)
+
+In-container watch (`internal/bridge/healthwatch.go`, config `bridge.health_watch:`):
+when whatsapp dies/recovers it tells the messenger test thread
+(`messenger_thread_id`, currently 2637078310061988); when messenger
+dies/recovers it tells the whatsapp test jid (`whatsapp_jid`, currently
+8801911104251@s.whatsapp.net). Sends go through the normal allowlist-gated
+`send()` path, so alerts to unlisted channels are dropped with a log line.
+
+Semantics (all covered by unit tests):
+- **Arming**: no notification until the platform has been connected at least
+  once (boot/deploy spam guard — a fresh deploy never spams while both
+  platforms come up).
+- **Dead debounce** (`dead_after`, default 45s): a dead state must persist
+  before "X is dead" fires, so brief reconnect blips AND the intentional
+  messenger cookie reload (ReloadCookies sets connected=false for a few
+  seconds) stay silent.
+- **Cooldown** (`min_notify_interval`, default 2m): caps flap spam — dead→alive
+  →dead cycles within the window only send once.
+- Watch loop runs inside the container (`bridge.health_watch.enabled`), so the
+  whatsapp-dead alert still has a working messenger channel when the laptop
+  (the whatsapp tailnet route) is down. Pure notification — nothing here
+  heals anything; the platforms auto-retry on their own.
+
+Platform state plumbing: `messenger.Client.IsConnected()` added (messagix has no
+disconnect event — Ready/Reconnected set connected=true, Event_SocketError /
+Event_PermanentError set false; ReloadCookies resets it at the start).
+`whatsapp.WhatsmeowClient.IsConnected()` is now mutex-guarded (was a racy plain
+bool). Both are polled, not event-driven.
+
 ## WhatsApp pairing gotchas (2026-08-17)
 
 - **RESOLVED 2026-08-17**: paired via PairPhone code flow (account `REDACTED_PHONE`
@@ -365,7 +395,19 @@ construction. Per-platform persistence:
   refresh. Chain: whatsmeow → `WHATSAPP_PROXY_URL=socks5://127.0.0.1:1081`
   (sockschain sidecar, `cmd/sockschain`) → tailscale userspace socks
   (127.0.0.1:1055) → `SOCKS_CHAIN_UPSTREAM=socks5://lumenwa:z0xpjLQVd4nEgX5GtMqN2IDw@100.76.10.50:1080`
-  (laptop-main) → WhatsApp, egressing from the home IP. `TS_AUTHKEY` = the
+  (laptop-main) → WhatsApp, egressing from the home IP. AUTO-HEAL analysis
+  (2026-08-17): the route needs NO laptop-side watcher — whatsmeow retries
+  forever in the container (disconnect → infinite reconnect loop with backoff),
+  and tailscale rejoins via authkey on any container restart, so a dead laptop /
+  proxy / tailnet path heals by itself once the laptop returns. The only
+  non-auto-heal cases: WhatsApp logging the device out (needs manual phone
+  re-pair, watcher could only alert) and a sockschain sidecar crash with no
+  container restart (rare, fixed by next deploy). The cookie-health watch
+  exists only because messenger cookie refresh is an ACTIVE laptop-side heal
+  (agent-browser vault push); WhatsApp is passive-wait, so no watch. Note the
+  bridge `/api/health` returns bare "ok" — it does NOT expose WhatsApp state,
+  and `WhatsmeowClient.IsConnected()` is not surfaced anywhere.
+  `TS_AUTHKEY` = the
   fleet reusable authkey (mainframe tailscale profile); `--state=mem` makes
   every container node EPHEMERAL regardless of key type (verified: tailscaled
   help says mem state registers as ephemeral). entrypoint.sh runs tailscaled

@@ -177,6 +177,14 @@ func (s *Service) Run(ctx context.Context) error {
 		errCh <- s.serveHTTP(ctx)
 	}()
 
+	if s.cfg.Bridge.HealthWatch.Enabled {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.watchHealth(ctx)
+		}()
+	}
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
