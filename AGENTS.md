@@ -357,9 +357,14 @@ files — keep an eye on it when rebasing upstream. Rebuilt exe 2026-08-14.
   ever read them (the bot kept identifying as "Element Orion"). persist now
   (1) backs up the workspace-root identity files under the `@workspace/` path
   prefix (Restore writes them to the workspace root, only when absent locally;
-  Sync upserts/deletes them like session files), and (2) permanently excludes
-  the legacy `memory/SOUL.md`, `memory/IDENTITY.md`, `memory/USER.md` paths
-  from restore+sync so those rows self-delete on the first sync. The local
+  Sync upserts changed content but NEVER deletes @workspace/ rows — the
+  container has no local copy until a boot restores them, so auto-deleting
+  them wipes the seed before the next restore sees it; that race actually
+  bit us on 2026-08-17: the first 83940e0 deploy's sync deleted freshly
+  inserted rows within a minute), and (2) permanently excludes the legacy
+  `memory/SOUL.md`, `memory/IDENTITY.md`, `memory/USER.md` paths from
+  restore+sync so those rows self-delete on the first sync. To remove an
+  identity file for good, delete its @workspace/ row in Neon manually. The local
   files live at `config/{IDENTITY,USER,SOUL}.md` (gitignored). To push a
   changed identity: update the local file, upsert the `@workspace/<name>` row
   in Neon (`INSERT ... ON CONFLICT (path) DO UPDATE`, base64 + sha256, via the
