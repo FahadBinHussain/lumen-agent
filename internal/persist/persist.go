@@ -22,9 +22,17 @@ import (
 // write-only-ish backup layer: the local dir stays authoritative while
 // running, Restore only fills a missing/empty dir, and Sync only touches
 // rows whose content actually changed.
+//
+// Besides the session dir, the store also backs up the workspace-root
+// identity files (IDENTITY.md / USER.md / SOUL.md): the prompt loader reads
+// them from the workspace root, not the session dir, and they are gitignored,
+// so Neon is their only durable copy. They are stored under the
+// "@workspace/" path prefix so they can never collide with session-dir
+// paths.
 type Store struct {
 	pool    *pgxpool.Pool
 	dir     string
+	ws      string
 	exclude []string
 	touchCh chan struct{}
 	minSync time.Duration
@@ -32,7 +40,26 @@ type Store struct {
 
 const minSyncInterval = 2 * time.Second
 
-func Open(ctx context.Context, dsn string, dir string, exclude []string) (*Store, error) {
+// workspaceIdentityFiles are the gitignored workspace-root files the prompt
+// loader reads (internal/agent/prompt_context.go). Backed up alongside the
+// session dir and restored on a fresh container.
+var workspaceIdentityFiles = []string{"IDENTITY.md", "USER.md", "SOUL.md"}
+
+// wsPathPrefix separates workspace-root rows from session-dir rows in the
+// snapshot table.
+const wsPathPrefix = "@workspace/"
+
+// legacyMovedPaths: identity files were originally backed up under memory/
+// (memory/SOUL.md etc.) where the prompt loader never reads them. They have
+// moved to the workspace root; these rows are excluded from restore and sync
+// so they self-delete as stale on the next sync.
+var legacyMovedPaths = map[string]bool{
+	"memory/SOUL.md":     true,
+	"memory/IDENTITY.md": true,
+	"memory/USER.md":     true,
+}
+
+func Open(ctx context.Context, dsn string, dir string, ws string, exclude []string) (*Store, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("persist connect: %w", err)
@@ -43,6 +70,7 @@ func Open(ctx context.Context, dsn string, dir string, exclude []string) (*Store
 	s := &Store{
 		pool:    pool,
 		dir:     dir,
+		ws:      ws,
 		exclude: exclude,
 		touchCh: make(chan struct{}, 1),
 		minSync: minSyncInterval,
@@ -76,7 +104,8 @@ func (s *Store) migrate(ctx context.Context) error {
 // is missing or contains no real files (i.e. a fresh container). Subdirectories
 // created at boot (memory/, logs/) do not count as existing state, so restore
 // still runs. Existing local files always win, and excluded paths are never
-// written.
+// written. Workspace-root identity rows ("@workspace/" prefix) are written to
+// the workspace root and only when the local file is absent.
 func (s *Store) Restore(ctx context.Context) error {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -99,10 +128,31 @@ func (s *Store) Restore(ctx context.Context) error {
 		if err := rows.Scan(&rel, &data); err != nil {
 			return fmt.Errorf("persist restore scan: %w", err)
 		}
-		abs, ok := s.safePath(rel)
-		if !ok {
-			log.Printf("persist: skipping restore of out-of-root path %q", rel)
+		if legacyMovedPaths[rel] {
+			log.Printf("persist: skipping legacy path %q (identity files moved to workspace root)", rel)
 			continue
+		}
+		var abs string
+		if strings.HasPrefix(rel, wsPathPrefix) {
+			name := strings.TrimPrefix(rel, wsPathPrefix)
+			if !containsString(workspaceIdentityFiles, name) {
+				log.Printf("persist: skipping unknown workspace file %q", rel)
+				continue
+			}
+			if s.ws == "" || s.ws == s.dir {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(s.ws, name)); err == nil {
+				continue // local file wins
+			}
+			abs = filepath.Join(s.ws, name)
+		} else {
+			ok := false
+			abs, ok = s.safePath(rel)
+			if !ok {
+				log.Printf("persist: skipping restore of out-of-root path %q", rel)
+				continue
+			}
 		}
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 			return fmt.Errorf("persist restore mkdir %s: %w", rel, err)
@@ -139,7 +189,7 @@ func (s *Store) Sync(ctx context.Context) error {
 			return nil
 		}
 		rel := relOf(s.dir, path)
-		if s.isExcluded(rel) {
+		if legacyMovedPaths[rel] || s.isExcluded(rel) {
 			return nil
 		}
 		sum, err := fileSHA256(path)
@@ -150,6 +200,22 @@ func (s *Store) Sync(ctx context.Context) error {
 		return nil
 	}); err != nil {
 		return fmt.Errorf("persist sync walk: %w", err)
+	}
+
+	liveWs := map[string]string{} // identity file name -> sha256
+	if s.ws != "" && s.ws != s.dir {
+		for _, name := range workspaceIdentityFiles {
+			abs := filepath.Join(s.ws, name)
+			fi, err := os.Stat(abs)
+			if err != nil || fi.IsDir() {
+				continue
+			}
+			sum, err := fileSHA256(abs)
+			if err != nil {
+				continue
+			}
+			liveWs[name] = sum
+		}
 	}
 
 	stored := map[string]string{}
@@ -195,8 +261,35 @@ func (s *Store) Sync(ctx context.Context) error {
 		changed++
 	}
 
+	for name, sum := range liveWs {
+		rel := wsPathPrefix + name
+		if stored[rel] == sum {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(s.ws, name))
+		if err != nil {
+			log.Printf("persist: sync read %s: %v", rel, err)
+			continue
+		}
+		if _, err := s.pool.Exec(ctx, `
+			INSERT INTO lumen_snapshots (path, data, sha256, updated_at)
+			VALUES ($1, $2, $3, NOW())
+			ON CONFLICT (path) DO UPDATE SET data = $2, sha256 = $3, updated_at = NOW()
+		`, rel, data, sum); err != nil {
+			return fmt.Errorf("persist sync upsert %s: %w", rel, err)
+		}
+		changed++
+	}
+
 	stale := make([]string, 0)
 	for rel := range stored {
+		if strings.HasPrefix(rel, wsPathPrefix) {
+			name := strings.TrimPrefix(rel, wsPathPrefix)
+			if _, ok := liveWs[name]; !ok {
+				stale = append(stale, rel)
+			}
+			continue
+		}
 		if _, ok := live[rel]; !ok {
 			stale = append(stale, rel)
 		}
@@ -311,4 +404,13 @@ func fileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func containsString(list []string, s string) bool {
+	for _, item := range list {
+		if item == s {
+			return true
+		}
+	}
+	return false
 }
