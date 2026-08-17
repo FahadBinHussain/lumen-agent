@@ -173,13 +173,31 @@ type WhatsAppConfig struct {
 }
 
 type BridgeConfig struct {
-	Enabled              bool   `yaml:"enabled"`
-	ListenAddr           string `yaml:"listen_addr"`
-	NotificationsPath    string `yaml:"notifications_path"`
-	NotificationsEnabled bool   `yaml:"notifications_enabled"`
-	BNPEnabled           bool   `yaml:"bnp_enabled"`
-	Secret               string `yaml:"secret"`
-	SecretEnv            string `yaml:"secret_env"`
+	Enabled              bool              `yaml:"enabled"`
+	ListenAddr           string            `yaml:"listen_addr"`
+	NotificationsPath    string            `yaml:"notifications_path"`
+	NotificationsEnabled bool              `yaml:"notifications_enabled"`
+	BNPEnabled           bool              `yaml:"bnp_enabled"`
+	Secret               string            `yaml:"secret"`
+	SecretEnv            string            `yaml:"secret_env"`
+	HealthWatch          HealthWatchConfig `yaml:"health_watch"`
+}
+
+// HealthWatchConfig controls the cross-platform health notifications: when
+// whatsapp dies/recovers, tell the messenger test thread; when messenger
+// dies/recovers, tell the whatsapp test jid. Runs inside the container so it
+// keeps working when the laptop (and the whatsapp tailnet route through it)
+// is down. No notification fires until the platform has been connected at
+// least once, and a dead state must persist for dead_after before it counts
+// (brief reconnect blips, including the intentional messenger cookie reload,
+// stay silent).
+type HealthWatchConfig struct {
+	Enabled           bool   `yaml:"enabled"`
+	Interval          string `yaml:"interval"`
+	DeadAfter         string `yaml:"dead_after"`
+	MinNotifyInterval string `yaml:"min_notify_interval"`
+	MessengerThreadID string `yaml:"messenger_thread_id"`
+	WhatsAppJID       string `yaml:"whatsapp_jid"`
 }
 
 // NotifyConfig mirrors the murmur Vercel pollers' env surface. Copy-only for
@@ -491,6 +509,11 @@ func defaultConfig() Config {
 			NotificationsEnabled: true,
 			BNPEnabled:           true,
 			SecretEnv:            "ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET",
+			HealthWatch: HealthWatchConfig{
+				Interval:          "15s",
+				DeadAfter:         "45s",
+				MinNotifyInterval: "2m",
+			},
 		},
 		Notify: NotifyConfig{
 			WebhookTokenEnv:  "ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET",
