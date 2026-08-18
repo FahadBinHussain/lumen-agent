@@ -45,6 +45,9 @@ type Service struct {
 	// Entries are consumed once on edit and dropped when the window is
 	// missed (fresh-message fallback then).
 	waEdits map[string]string
+	// dcEdits is the same contract for discord (keyed "messengerID|channelID",
+	// discord PATCH edits).
+	dcEdits map[string]string
 
 	runCancels map[string]runCancel
 	runSeq     int64
@@ -64,11 +67,12 @@ func (s *Service) SetPersistenceToucher(fn func()) {
 	s.toucher = fn
 }
 
-// DiscordHealthClient is the slice of the Discord service the health watch
-// needs: gateway connection state and plain sends to a channel.
+// DiscordHealthClient is the slice of the Discord service the bridge needs:
+// gateway connection state and plain send/edit of a channel message.
 type DiscordHealthClient interface {
 	IsConnected() bool
-	SendPlainText(channelID string, text string) error
+	SendPlainText(channelID string, text string) (string, error)
+	EditPlainText(channelID string, messageID string, text string) error
 }
 
 // SetDiscord wires the Discord service into the bridge so the health watch
@@ -83,6 +87,7 @@ func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
 		runner:      runner,
 		sessions:    make(map[string][]llm.Message),
 		waEdits:     make(map[string]string),
+		dcEdits:     make(map[string]string),
 		runCancels:  make(map[string]runCancel),
 		historyPath: filepath.Join(cfg.App.SessionDir, bridgeHistoryFile),
 	}
@@ -560,7 +565,7 @@ func (s *Service) notify(platform string, threadID string, text string) {
 			log.Printf("bridge: discord not wired, dropping health alert for %s", threadID)
 			return
 		}
-		if err := s.discord.SendPlainText(threadID, text); err != nil {
+		if _, err := s.discord.SendPlainText(threadID, text); err != nil {
 			log.Printf("bridge: discord alert to %s failed: %v", threadID, err)
 		}
 		return
@@ -608,10 +613,11 @@ func (s *Service) SendWhatsApp(ctx context.Context, jid string, text string) (st
 }
 
 // sendDiscord delivers text to one discord channel through the health-watch
-// client when it is wired. Per-channel primitive for the route fanout.
-func (s *Service) sendDiscord(channelID string, text string) error {
+// client when it is wired; returns the discord message ID so route edits can
+// target it in place. Per-channel primitive for the route fanout.
+func (s *Service) sendDiscord(channelID string, text string) (string, error) {
 	if s.discord == nil {
-		return fmt.Errorf("discord not wired")
+		return "", fmt.Errorf("discord not wired")
 	}
 	return s.discord.SendPlainText(channelID, text)
 }
@@ -655,8 +661,15 @@ func (s *Service) SendRoute(ctx context.Context, route string, text string) (str
 				s.mu.Unlock()
 			}
 		case "discord":
-			if err := s.sendDiscord(ch.ChannelID, text); err != nil {
+			dcID, err := s.sendDiscord(ch.ChannelID, text)
+			if err != nil {
 				log.Printf("bnp: route %s discord channel %s failed: %v", route, ch.ChannelID, err)
+				continue
+			}
+			if primaryID != "" {
+				s.mu.Lock()
+				s.dcEdits[primaryID+"|"+ch.ChannelID] = dcID
+				s.mu.Unlock()
 			}
 		}
 	}
@@ -664,9 +677,11 @@ func (s *Service) SendRoute(ctx context.Context, route string, text string) (str
 }
 
 // EditRoute implements bnp.RouteSender: replaces the primary messenger
-// message of a route (edit_pending outbox items). Messenger is the only
-// channel that can edit; every other channel gets the edited text as a
-// fresh best-effort message so the route stays content-symmetric.
+// message of a route (edit_pending outbox items). Messenger is the primary
+// edit target; whatsapp and discord edit their mirrored message IN PLACE
+// when the mirror ID was recorded (whatsmeow BuildEdit within the 20-min
+// window, discord PATCH), otherwise the edited text goes out as a fresh
+// best-effort message so the route stays content-symmetric.
 func (s *Service) EditRoute(ctx context.Context, route string, messageID string, text string) error {
 	channels := s.cfg.Bridge.Routes[route]
 	if len(channels) == 0 {
@@ -703,7 +718,21 @@ func (s *Service) EditRoute(ctx context.Context, route string, messageID string,
 				log.Printf("bnp: route %s whatsapp channel %s edit mirror failed: %v", route, ch.JID, err)
 			}
 		case "discord":
-			if err := s.sendDiscord(ch.ChannelID, text); err != nil {
+			key := messageID + "|" + ch.ChannelID
+			s.mu.Lock()
+			dcID, have := s.dcEdits[key]
+			if have {
+				delete(s.dcEdits, key)
+			}
+			s.mu.Unlock()
+			if have && s.discord != nil {
+				if err := s.discord.EditPlainText(ch.ChannelID, dcID, text); err == nil {
+					continue
+				} else {
+					log.Printf("bnp: route %s discord channel %s in-place edit failed (%v), mirroring fresh", route, ch.ChannelID, err)
+				}
+			}
+			if _, err := s.sendDiscord(ch.ChannelID, text); err != nil {
 				log.Printf("bnp: route %s discord channel %s edit mirror failed: %v", route, ch.ChannelID, err)
 			}
 		}

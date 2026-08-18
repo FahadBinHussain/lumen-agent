@@ -253,12 +253,27 @@ func (s *Service) IsConnected() bool {
 }
 
 // SendPlainText posts a plain message to a channel, used by the bridge health
-// watch to deliver cross-platform alerts.
-func (s *Service) SendPlainText(channelID string, text string) error {
+// watch to deliver cross-platform alerts; returns the discord message ID so
+// route fanouts can edit it in place later.
+func (s *Service) SendPlainText(channelID string, text string) (string, error) {
+	if s == nil || s.discord == nil {
+		return "", fmt.Errorf("discord session not initialized")
+	}
+	msg, err := s.discord.ChannelMessageSend(channelID, text)
+	if err != nil {
+		return "", err
+	}
+	return msg.ID, nil
+}
+
+// EditPlainText replaces a message we sent earlier in a channel (discord
+// PATCH message endpoint), used by the bridge route fanout to keep the
+// discord leg in sync with messenger edits.
+func (s *Service) EditPlainText(channelID string, messageID string, text string) error {
 	if s == nil || s.discord == nil {
 		return fmt.Errorf("discord session not initialized")
 	}
-	_, err := s.discord.ChannelMessageSend(channelID, text)
+	_, err := s.discord.ChannelMessageEdit(channelID, messageID, text)
 	return err
 }
 
