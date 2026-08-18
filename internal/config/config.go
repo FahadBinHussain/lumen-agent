@@ -173,14 +173,52 @@ type WhatsAppConfig struct {
 }
 
 type BridgeConfig struct {
-	Enabled              bool              `yaml:"enabled"`
-	ListenAddr           string            `yaml:"listen_addr"`
-	NotificationsPath    string            `yaml:"notifications_path"`
-	NotificationsEnabled bool              `yaml:"notifications_enabled"`
-	BNPEnabled           bool              `yaml:"bnp_enabled"`
-	Secret               string            `yaml:"secret"`
-	SecretEnv            string            `yaml:"secret_env"`
-	HealthWatch          HealthWatchConfig `yaml:"health_watch"`
+	Enabled              bool                       `yaml:"enabled"`
+	ListenAddr           string                     `yaml:"listen_addr"`
+	NotificationsPath    string                     `yaml:"notifications_path"`
+	NotificationsEnabled bool                       `yaml:"notifications_enabled"`
+	BNPEnabled           bool                       `yaml:"bnp_enabled"`
+	Secret               string                     `yaml:"secret"`
+	SecretEnv            string                     `yaml:"secret_env"`
+	HealthWatch          HealthWatchConfig          `yaml:"health_watch"`
+	Routes               map[string][]RouteChannel  `yaml:"routes"`
+}
+
+// RouteChannel is one delivery target in a route. Exactly one target field
+// applies per platform: thread_id for messenger, jid for whatsapp,
+// channel_id for discord.
+type RouteChannel struct {
+	Platform  string `yaml:"platform"`
+	ThreadID  string `yaml:"thread_id"`
+	JID       string `yaml:"jid"`
+	ChannelID string `yaml:"channel_id"`
+}
+
+func (b BridgeConfig) validateRoutes() error {
+	for route, channels := range b.Routes {
+		if len(channels) == 0 {
+			return fmt.Errorf("bridge.routes.%s: must list at least one channel", route)
+		}
+		for i, ch := range channels {
+			switch strings.ToLower(strings.TrimSpace(ch.Platform)) {
+			case "messenger":
+				if strings.TrimSpace(ch.ThreadID) == "" {
+					return fmt.Errorf("bridge.routes.%s[%d]: messenger channel needs thread_id", route, i)
+				}
+			case "whatsapp":
+				if strings.TrimSpace(ch.JID) == "" {
+					return fmt.Errorf("bridge.routes.%s[%d]: whatsapp channel needs jid", route, i)
+				}
+			case "discord":
+				if strings.TrimSpace(ch.ChannelID) == "" {
+					return fmt.Errorf("bridge.routes.%s[%d]: discord channel needs channel_id", route, i)
+				}
+			default:
+				return fmt.Errorf("bridge.routes.%s[%d]: platform must be messenger, whatsapp, or discord", route, i)
+			}
+		}
+	}
+	return nil
 }
 
 // HealthWatchConfig controls the cross-platform health notifications: when a
@@ -1199,6 +1237,9 @@ func (c Config) validate() error {
 		}
 		if !strings.HasPrefix(c.Bridge.NotificationsPath, "/") {
 			return fmt.Errorf("bridge.notifications_path must start with '/'")
+		}
+		if err := c.Bridge.validateRoutes(); err != nil {
+			return err
 		}
 	}
 

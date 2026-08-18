@@ -182,7 +182,6 @@ func (s *Service) Run(ctx context.Context) error {
 				return
 			}
 			bnpWorker := bnp.NewWorker(s, nil)
-			bnpWorker.SetWhatsAppSender(s)
 			bnpWorker.Run(ctx)
 		}()
 	}
@@ -535,8 +534,9 @@ func (s *Service) notify(platform string, threadID string, text string) {
 	s.send(platform, threadID, "", text)
 }
 
-// SendMessage implements bnp.MessengerSender: delivers an outbox item to the
-// configured Messenger thread. Returns the message ID, or "" on failure.
+// SendMessage delivers text to one messenger thread through the allowlist
+// gate. Returns the message ID, or "" on failure. Per-channel primitive for
+// the route fanout.
 func (s *Service) SendMessage(ctx context.Context, threadID int64, text string) (string, error) {
 	if s.messenger == nil {
 		return "", fmt.Errorf("messenger not enabled")
@@ -547,8 +547,8 @@ func (s *Service) SendMessage(ctx context.Context, threadID int64, text string) 
 	return s.messenger.SendText(ctx, threadID, text), nil
 }
 
-// EditMessage implements bnp.MessengerSender: replaces an existing Messenger
-// message (edit_pending outbox items).
+// EditMessage replaces an existing Messenger message (edit_pending outbox
+// items). Per-channel primitive for the route fanout.
 func (s *Service) EditMessage(ctx context.Context, threadID int64, messageID string, text string) error {
 	if s.messenger == nil {
 		log.Printf("bnp: messenger not enabled, cannot edit message %s", messageID)
@@ -560,9 +560,8 @@ func (s *Service) EditMessage(ctx context.Context, threadID int64, messageID str
 	return s.messenger.EditMessage(ctx, messageID, text)
 }
 
-// SendWhatsApp implements bnp.WhatsAppSender: mirrors an outbox item to a
-// WhatsApp chat. Best-effort — the worker logs failures and the messenger
-// ack contract stays unchanged.
+// SendWhatsApp delivers text to one whatsapp chat through the allowlist
+// gate. Per-channel primitive for the route fanout.
 func (s *Service) SendWhatsApp(ctx context.Context, jid string, text string) error {
 	if s.whatsapp == nil {
 		return fmt.Errorf("whatsapp not enabled")
@@ -571,6 +570,71 @@ func (s *Service) SendWhatsApp(ctx context.Context, jid string, text string) err
 		return fmt.Errorf("jid %s not in whatsapp.allowed_jids", jid)
 	}
 	return s.whatsapp.SendText(ctx, jid, text)
+}
+
+// sendDiscord delivers text to one discord channel through the health-watch
+// client when it is wired. Per-channel primitive for the route fanout.
+func (s *Service) sendDiscord(channelID string, text string) error {
+	if s.discord == nil {
+		return fmt.Errorf("discord not wired")
+	}
+	return s.discord.SendPlainText(channelID, text)
+}
+
+// SendRoute implements bnp.RouteSender: fans text out to every channel in
+// cfg.Bridge.Routes[route]. The messenger channel is the primary: its
+// message ID is returned for the ack contract and a primary failure fails
+// the item; every other channel is best-effort (logged, never fails the
+// ack).
+func (s *Service) SendRoute(ctx context.Context, route string, text string) (string, error) {
+	channels := s.cfg.Bridge.Routes[route]
+	if len(channels) == 0 {
+		return "", fmt.Errorf("route %q not configured in bridge.routes", route)
+	}
+	var primaryID string
+	for _, ch := range channels {
+		switch strings.ToLower(strings.TrimSpace(ch.Platform)) {
+		case "messenger":
+			threadID, err := strconv.ParseInt(ch.ThreadID, 10, 64)
+			if err != nil {
+				return "", fmt.Errorf("route %s messenger thread %q not numeric: %v", route, ch.ThreadID, err)
+			}
+			id, err := s.SendMessage(ctx, threadID, text)
+			if err != nil {
+				return "", err
+			}
+			primaryID = id
+		case "whatsapp":
+			if err := s.SendWhatsApp(ctx, ch.JID, text); err != nil {
+				log.Printf("bnp: route %s whatsapp channel %s failed: %v", route, ch.JID, err)
+			}
+		case "discord":
+			if err := s.sendDiscord(ch.ChannelID, text); err != nil {
+				log.Printf("bnp: route %s discord channel %s failed: %v", route, ch.ChannelID, err)
+			}
+		}
+	}
+	return primaryID, nil
+}
+
+// EditRoute implements bnp.RouteSender: replaces the primary messenger
+// message of a route (edit_pending outbox items).
+func (s *Service) EditRoute(ctx context.Context, route string, messageID string, text string) error {
+	channels := s.cfg.Bridge.Routes[route]
+	if len(channels) == 0 {
+		return fmt.Errorf("route %q not configured in bridge.routes", route)
+	}
+	for _, ch := range channels {
+		if strings.ToLower(strings.TrimSpace(ch.Platform)) != "messenger" {
+			continue
+		}
+		threadID, err := strconv.ParseInt(ch.ThreadID, 10, 64)
+		if err != nil {
+			return fmt.Errorf("route %s messenger thread %q not numeric: %v", route, ch.ThreadID, err)
+		}
+		return s.EditMessage(ctx, threadID, messageID, text)
+	}
+	return fmt.Errorf("route %q has no messenger channel for edits", route)
 }
 
 func cloneMessages(messages []llm.Message) []llm.Message {

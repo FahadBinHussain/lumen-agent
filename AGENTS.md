@@ -150,8 +150,10 @@ Bridge HTTP endpoints:
 - `POST <bridge.listen_addr>/api/automation/notifications` — port of murmur's
   endpoint used by the Vercel pollers (`triton.vercel.app/api/steam-updates` and
   `/api/free-games`). Body `{source, threadId, title, message, dedupeKey, url,
-  platform}`; `platform` defaults to `messenger` (backward compatible), `whatsapp`
-  takes the JID in `threadId`. Optional auth: `bridge.secret` /
+  platform, route}`; `platform` defaults to `messenger` (backward compatible),
+  `whatsapp` takes the JID in `threadId`. Optional `route` field fans out to
+  every channel of a `bridge.routes.<name>` config (messenger primary +
+  best-effort extras), unknown route = 400. Optional auth: `bridge.secret` /
   `ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET` env; header `X-HF-Authorization`
   (pollers already send it) or `Authorization: Bearer`.
 - `POST /api/cookies/upload` — murmur-cookie-refresher.mjs contract (only mounted
@@ -212,25 +214,32 @@ restored on boot). The old blunt 100-message cap is gone (2026-08-14).
     `image_gen.enabled: true` + `generate_image` in `tools.enabled`.
   - dailyBNP outbox pull worker: `internal/bnp` is a faithful port of murmur's
     claim/ack worker (poll `BNP_MESSENGER_OUTBOX_URL` GET ?limit=N → send or
-    edit via messagix → POST ack back). env contract identical to murmur
-    (`BNP_MESSENGER_OUTBOX_URL/TOKEN/THREAD_ID`, `BNP_MESSENGER_POLL_SECONDS`,
-    `BNP_MESSENGER_CLAIM_LIMIT`, `BNP_MESSENGER_REQUEST_TIMEOUT_SECONDS`).
+    edit → POST ack back). env contract: `BNP_MESSENGER_OUTBOX_URL/TOKEN`,
+    `BNP_ROUTE` (default "bnp"), `BNP_MESSENGER_POLL_SECONDS`,
+    `BNP_MESSENGER_CLAIM_LIMIT`, `BNP_MESSENGER_REQUEST_TIMEOUT_SECONDS`.
     wired in `bridge.Service.Run`, starts only when `messenger.enabled` is true
     AND the env vars are set (worker logs "disabled" otherwise). sender
-    interface (`MessengerSender`) defined in `internal/bnp` to avoid an import
-    cycle; `Service.SendMessage`/`EditMessage` implement it. the push endpoint
+    interface (`RouteSender`) defined in `internal/bnp` to avoid an import
+    cycle; `Service.SendRoute`/`EditRoute` implement it. the push endpoint
     `POST /api/automation/notifications` (with `bridge.secret` auth) remains
     the alternative for sources that can push.
-  - BNP whatsapp mirror (added 2026-08-18, commit f0a8622): the worker also
-    mirrors every NEW send to a whatsapp group when `BNP_WHATSAPP_THREAD_ID`
-    (a `@g.us` JID) is set — best-effort, logs failures, messenger ack
-    contract unchanged (edits NOT mirrored). bridge `SendWhatsApp` implements
-    the optional `bnp.WhatsAppSender` interface and is gated by
-    `whatsapp.allowed_jids`. current value on Render:
-    `120363409684314037@g.us` (user's "ai" group, in production.yaml
-    allowed_jids). group JID lookup endpoint: `GET /api/whatsapp/groups`
-    (secret-gated) → whatsmeow `GetJoinedGroups()`, returns `{groups:[{id,
-    name}]}` — group ids are `@g.us` JIDs, names are structs (use `.name`).
+  - routes fanout (added 2026-08-18, commit f0a8622 + routes standardization):
+    `bridge.routes.<name>` = list of `{platform, thread_id|jid|channel_id}`
+    channels (messenger/whatsapp/discord; validated at boot). the BNP worker
+    sends outbox items to its route's channels: the messenger channel is the
+    PRIMARY (its message ID feeds the ack contract, its failure fails the
+    item), every other channel is best-effort (logged, never fails the ack);
+    edits only touch the primary messenger message. the notifications
+    endpoint also accepts an optional `route` body field to fan out instead
+    of single platform/threadId (unknown route = 400). adding a channel =
+    edit `bridge.routes` in production.yaml + deploy, no code. current bnp
+    route: messenger thread 984803114200952 + whatsapp group
+    120363409684314037@g.us (user's "ai" group). group JID lookup: `GET
+    /api/whatsapp/groups` (secret-gated) → whatsmeow `GetJoinedGroups()`,
+    returns `{groups:[{id, name}]}` — group ids are `@g.us` JIDs, names are
+    structs (use `.name`). dead env vars: BNP_MESSENGER_THREAD_ID and
+    BNP_WHATSAPP_THREAD_ID were removed from Render 2026-08-18 — the thread
+    and jid live in the route config now.
   - notifier kill-switches (added 2026-08-14): `bridge.notifications_enabled`
     and `bridge.bnp_enabled` (both default true in code; set FALSE in
     config/lumen.yaml). notifications_enabled=false unmounts ONLY the

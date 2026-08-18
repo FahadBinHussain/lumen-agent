@@ -12,39 +12,36 @@ import (
 	"time"
 )
 
-// MessengerSender is the subset of the bridge Service that the BNP outbox
-// worker needs to deliver items. Defined here so the worker does not import
-// internal/bridge (which imports this package to start the worker).
-type MessengerSender interface {
-	SendMessage(ctx context.Context, threadID int64, text string) (string, error)
-	EditMessage(ctx context.Context, threadID int64, messageID string, text string) error
-}
-
-// WhatsAppSender is an optional second delivery channel for outbox items.
-// When configured, the worker mirrors every new send to this channel.
-type WhatsAppSender interface {
-	SendWhatsApp(ctx context.Context, jid string, text string) error
+// RouteSender is the subset of the bridge Service that the BNP outbox
+// worker needs: fan an item out to every channel of a route and return the
+// primary (messenger) message ID for the ack contract. Defined here so the
+// worker does not import internal/bridge (which imports this package to
+// start the worker).
+type RouteSender interface {
+	SendRoute(ctx context.Context, route string, text string) (string, error)
+	EditRoute(ctx context.Context, route string, messageID string, text string) error
 }
 
 type Settings struct {
-	OutboxURL        string
-	Token            string
-	ThreadID         string
-	WhatsAppThreadID string
-	PollSeconds      int
-	ClaimLimit       int
-	Timeout          int
+	OutboxURL   string
+	Token       string
+	Route       string
+	PollSeconds int
+	ClaimLimit  int
+	Timeout     int
 }
 
 func LoadSettings() *Settings {
 	s := &Settings{
-		OutboxURL:        os.Getenv("BNP_MESSENGER_OUTBOX_URL"),
-		Token:            os.Getenv("BNP_MESSENGER_OUTBOX_TOKEN"),
-		ThreadID:         os.Getenv("BNP_MESSENGER_THREAD_ID"),
-		WhatsAppThreadID: os.Getenv("BNP_WHATSAPP_THREAD_ID"),
-		PollSeconds:      30,
+		OutboxURL:   os.Getenv("BNP_MESSENGER_OUTBOX_URL"),
+		Token:       os.Getenv("BNP_MESSENGER_OUTBOX_TOKEN"),
+		Route:       "bnp",
+		PollSeconds: 30,
 		ClaimLimit:  2,
 		Timeout:     30,
+	}
+	if v := os.Getenv("BNP_ROUTE"); v != "" {
+		s.Route = v
 	}
 	if v := os.Getenv("BNP_MESSENGER_POLL_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 5 && n <= 3600 {
@@ -65,7 +62,7 @@ func LoadSettings() *Settings {
 }
 
 func (s *Settings) Enabled() bool {
-	return s.OutboxURL != "" && s.Token != "" && s.ThreadID != ""
+	return s.OutboxURL != "" && s.Token != ""
 }
 
 type Item struct {
@@ -77,38 +74,28 @@ type Item struct {
 }
 
 type Worker struct {
-	client     MessengerSender
-	waSender   WhatsAppSender
+	sender     RouteSender
 	settings   *Settings
 	httpClient *http.Client
 }
 
-func NewWorker(sender MessengerSender, s *Settings) *Worker {
+func NewWorker(sender RouteSender, s *Settings) *Worker {
 	if s == nil {
 		s = LoadSettings()
 	}
 	return &Worker{
-		client:     sender,
+		sender:     sender,
 		settings:   s,
 		httpClient: &http.Client{Timeout: time.Duration(s.Timeout) * time.Second},
 	}
 }
 
-// SetWhatsAppSender wires the optional mirror channel. Safe to call after
-// NewWorker; the worker only uses it when BNP_WHATSAPP_THREAD_ID is set.
-func (w *Worker) SetWhatsAppSender(sender WhatsAppSender) {
-	w.waSender = sender
-}
-
 func (w *Worker) Run(ctx context.Context) {
 	if !w.settings.Enabled() {
-		log.Printf("bnp: worker disabled (BNP_MESSENGER_OUTBOX_URL/TOKEN/THREAD_ID must be set)")
+		log.Printf("bnp: worker disabled (BNP_MESSENGER_OUTBOX_URL/TOKEN must be set)")
 		return
 	}
-	log.Printf("bnp: messenger notifications enabled for thread %s", w.settings.ThreadID)
-	if w.settings.WhatsAppThreadID != "" && w.waSender != nil {
-		log.Printf("bnp: whatsapp mirror enabled for jid %s", w.settings.WhatsAppThreadID)
-	}
+	log.Printf("bnp: notifications enabled via route %q", w.settings.Route)
 	ticker := time.NewTicker(time.Duration(w.settings.PollSeconds) * time.Second)
 	defer ticker.Stop()
 	for {
@@ -166,15 +153,9 @@ func (w *Worker) sendItem(ctx context.Context, item Item) {
 	if item.ID == "" || item.Message == "" {
 		return
 	}
-	threadID, err := strconv.ParseInt(w.settings.ThreadID, 10, 64)
-	if err != nil {
-		log.Printf("bnp: invalid thread ID: %v", err)
-		w.ackItem(ctx, item.ID, "failed", "", "", err.Error())
-		return
-	}
 
 	if item.Status == "edit_pending" && item.MessageID != "" {
-		if err := w.client.EditMessage(ctx, threadID, item.MessageID, item.Message); err != nil {
+		if err := w.sender.EditRoute(ctx, w.settings.Route, item.MessageID, item.Message); err != nil {
 			w.ackItem(ctx, item.ID, "failed", "", "", err.Error())
 			return
 		}
@@ -182,7 +163,7 @@ func (w *Worker) sendItem(ctx context.Context, item Item) {
 		return
 	}
 
-	msgID, err := w.client.SendMessage(ctx, threadID, item.Message)
+	msgID, err := w.sender.SendRoute(ctx, w.settings.Route, item.Message)
 	if err != nil {
 		w.ackItem(ctx, item.ID, "failed", "", "", err.Error())
 		return
@@ -190,11 +171,6 @@ func (w *Worker) sendItem(ctx context.Context, item Item) {
 	if msgID == "" {
 		w.ackItem(ctx, item.ID, "failed", "", "", "send returned empty message ID")
 		return
-	}
-	if w.settings.WhatsAppThreadID != "" && w.waSender != nil {
-		if err := w.waSender.SendWhatsApp(ctx, w.settings.WhatsAppThreadID, item.Message); err != nil {
-			log.Printf("bnp: whatsapp mirror send failed: %v", err)
-		}
 	}
 	w.ackItem(ctx, item.ID, "sent", msgID, "send", "")
 }
