@@ -194,6 +194,7 @@ whatsapp:
   # all). test thread: +880 1911-104251 -> 8801911104251@s.whatsapp.net
   allowed_jids:
     - 8801911104251@s.whatsapp.net
+    - 120363409684314037@g.us
 
 gifs:
   enabled: false
