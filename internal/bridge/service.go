@@ -643,23 +643,40 @@ func (s *Service) SendRoute(ctx context.Context, route string, text string) (str
 }
 
 // EditRoute implements bnp.RouteSender: replaces the primary messenger
-// message of a route (edit_pending outbox items).
+// message of a route (edit_pending outbox items). Messenger is the only
+// channel that can edit; every other channel gets the edited text as a
+// fresh best-effort message so the route stays content-symmetric.
 func (s *Service) EditRoute(ctx context.Context, route string, messageID string, text string) error {
 	channels := s.cfg.Bridge.Routes[route]
 	if len(channels) == 0 {
 		return fmt.Errorf("route %q not configured in bridge.routes", route)
 	}
+	edited := false
 	for _, ch := range channels {
-		if strings.ToLower(strings.TrimSpace(ch.Platform)) != "messenger" {
-			continue
+		switch strings.ToLower(strings.TrimSpace(ch.Platform)) {
+		case "messenger":
+			threadID, err := strconv.ParseInt(ch.ThreadID, 10, 64)
+			if err != nil {
+				return fmt.Errorf("route %s messenger thread %q not numeric: %v", route, ch.ThreadID, err)
+			}
+			if err := s.EditMessage(ctx, threadID, messageID, text); err != nil {
+				return err
+			}
+			edited = true
+		case "whatsapp":
+			if err := s.SendWhatsApp(ctx, ch.JID, text); err != nil {
+				log.Printf("bnp: route %s whatsapp channel %s edit mirror failed: %v", route, ch.JID, err)
+			}
+		case "discord":
+			if err := s.sendDiscord(ch.ChannelID, text); err != nil {
+				log.Printf("bnp: route %s discord channel %s edit mirror failed: %v", route, ch.ChannelID, err)
+			}
 		}
-		threadID, err := strconv.ParseInt(ch.ThreadID, 10, 64)
-		if err != nil {
-			return fmt.Errorf("route %s messenger thread %q not numeric: %v", route, ch.ThreadID, err)
-		}
-		return s.EditMessage(ctx, threadID, messageID, text)
 	}
-	return fmt.Errorf("route %q has no messenger channel for edits", route)
+	if !edited {
+		return fmt.Errorf("route %q has no messenger channel for edits", route)
+	}
+	return nil
 }
 
 func cloneMessages(messages []llm.Message) []llm.Message {
