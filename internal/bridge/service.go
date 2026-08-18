@@ -38,6 +38,14 @@ type Service struct {
 	mu       sync.Mutex
 	sessions map[string][]llm.Message
 
+	// waEdits maps a route fanout's primary (messenger) message ID to the
+	// whatsapp message ID that mirrored it, keyed "messengerID|jid", so a
+	// later edit_pending can be applied IN PLACE on whatsapp (whatsmeow
+	// BuildEdit, 20-minute edit window) instead of a fresh-message mirror.
+	// Entries are consumed once on edit and dropped when the window is
+	// missed (fresh-message fallback then).
+	waEdits map[string]string
+
 	runCancels map[string]runCancel
 	runSeq     int64
 
@@ -74,6 +82,7 @@ func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
 		cfg:         cfg,
 		runner:      runner,
 		sessions:    make(map[string][]llm.Message),
+		waEdits:     make(map[string]string),
 		runCancels:  make(map[string]runCancel),
 		historyPath: filepath.Join(cfg.App.SessionDir, bridgeHistoryFile),
 	}
@@ -505,7 +514,7 @@ func (s *Service) send(platform string, threadID string, jid string, text string
 			log.Printf("bridge: send to whatsapp jid %s blocked (not in whatsapp.allowed_jids)", jid)
 			return ""
 		}
-		if err := s.whatsapp.SendText(context.Background(), jid, text); err != nil {
+		if _, err := s.whatsapp.SendText(context.Background(), jid, text); err != nil {
 			log.Printf("bridge: whatsapp send failed: %v", err)
 		}
 		return ""
@@ -586,13 +595,14 @@ func (s *Service) EditMessage(ctx context.Context, threadID int64, messageID str
 }
 
 // SendWhatsApp delivers text to one whatsapp chat through the allowlist
-// gate. Per-channel primitive for the route fanout.
-func (s *Service) SendWhatsApp(ctx context.Context, jid string, text string) error {
+// gate. Per-channel primitive for the route fanout; returns the whatsapp
+// message ID so route edits can target it in place.
+func (s *Service) SendWhatsApp(ctx context.Context, jid string, text string) (string, error) {
 	if s.whatsapp == nil {
-		return fmt.Errorf("whatsapp not enabled")
+		return "", fmt.Errorf("whatsapp not enabled")
 	}
 	if !s.cfg.WhatsAppJIDAllowed(jid) {
-		return fmt.Errorf("jid %s not in whatsapp.allowed_jids", jid)
+		return "", fmt.Errorf("jid %s not in whatsapp.allowed_jids", jid)
 	}
 	return s.whatsapp.SendText(ctx, jid, text)
 }
@@ -618,20 +628,31 @@ func (s *Service) SendRoute(ctx context.Context, route string, text string) (str
 	}
 	var primaryID string
 	for _, ch := range channels {
+		if strings.ToLower(strings.TrimSpace(ch.Platform)) != "messenger" {
+			continue
+		}
+		threadID, err := strconv.ParseInt(ch.ThreadID, 10, 64)
+		if err != nil {
+			return "", fmt.Errorf("route %s messenger thread %q not numeric: %v", route, ch.ThreadID, err)
+		}
+		id, err := s.SendMessage(ctx, threadID, text)
+		if err != nil {
+			return "", err
+		}
+		primaryID = id
+	}
+	for _, ch := range channels {
 		switch strings.ToLower(strings.TrimSpace(ch.Platform)) {
-		case "messenger":
-			threadID, err := strconv.ParseInt(ch.ThreadID, 10, 64)
-			if err != nil {
-				return "", fmt.Errorf("route %s messenger thread %q not numeric: %v", route, ch.ThreadID, err)
-			}
-			id, err := s.SendMessage(ctx, threadID, text)
-			if err != nil {
-				return "", err
-			}
-			primaryID = id
 		case "whatsapp":
-			if err := s.SendWhatsApp(ctx, ch.JID, text); err != nil {
+			waID, err := s.SendWhatsApp(ctx, ch.JID, text)
+			if err != nil {
 				log.Printf("bnp: route %s whatsapp channel %s failed: %v", route, ch.JID, err)
+				continue
+			}
+			if primaryID != "" {
+				s.mu.Lock()
+				s.waEdits[primaryID+"|"+ch.JID] = waID
+				s.mu.Unlock()
 			}
 		case "discord":
 			if err := s.sendDiscord(ch.ChannelID, text); err != nil {
@@ -664,7 +685,21 @@ func (s *Service) EditRoute(ctx context.Context, route string, messageID string,
 			}
 			edited = true
 		case "whatsapp":
-			if err := s.SendWhatsApp(ctx, ch.JID, text); err != nil {
+			key := messageID + "|" + ch.JID
+			s.mu.Lock()
+			waID, have := s.waEdits[key]
+			if have {
+				delete(s.waEdits, key)
+			}
+			s.mu.Unlock()
+			if have && s.whatsapp != nil {
+				if err := s.whatsapp.EditText(ctx, ch.JID, waID, text); err == nil {
+					continue
+				} else {
+					log.Printf("bnp: route %s whatsapp channel %s in-place edit failed (%v), mirroring fresh", route, ch.JID, err)
+				}
+			}
+			if _, err := s.SendWhatsApp(ctx, ch.JID, text); err != nil {
 				log.Printf("bnp: route %s whatsapp channel %s edit mirror failed: %v", route, ch.JID, err)
 			}
 		case "discord":
