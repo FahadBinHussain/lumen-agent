@@ -55,7 +55,18 @@
   Fix: restore now only skips when the dir contains real FILES (subdirs like
   memory/ logs/ don't count). Diagnosis tool: `render.cmd logs -r
   srv-d9vd3oh42hec738odeg0 --start ... --end ...` with RENDER_API_KEY env —
-  the public API has NO log endpoint, but the CLI does.
+  that's the OFFICIAL Render CLI (github.com/render-oss/cli, binary `render`),
+  not npm `render-cli` (0.3.2 = unrelated template engine, a decoy).
+- **Render log access (2026-08-17): the public API NOW has logs** — the old
+  "public API has NO log endpoint, CLI only" note is STALE. `GET
+  https://api.render.com/v1/logs?ownerId=tea-cu1mom1u0jms738ka280&resource=srv-d9vd3oh42hec738odeg0&startTime=...&endTime=...&direction=forward&limit=100`
+  with the plain API key (mainframe render profile) returns `{hasMore,
+  nextStartTime, nextEndTime, logs[]}`; optional filters level/type/text
+  (regex), host, instance, path, method; paginate by passing back
+  nextStartTime/nextEndTime; `GET /v1/logs/values` lists label values; WebSocket
+  subscribe (`/v1/logs/subscribe`) streams live. This surfaced the 2026-08-17
+  TS_AUTHKEY crash: `backend error: invalid key: API key k2bx6Qw2KB11CNTRL not
+  valid` -> `Exited with status 1` (see Deploy section).
 - Config section `persistence:` (enabled, database_url, database_url_env
   default DATABASE_URL, interval, exclude). Enabled in production.yaml; DSN
   comes from the DATABASE_URL Render env var. Validation fails startup when
@@ -124,7 +135,15 @@ Bridge HTTP endpoints:
 
 Trigger semantics (ported from murmur): Messenger replies when the message starts
 with `/ai`, is a reply to one of our messages, or mentions our uid (mentions are
-stripped from the prompt). WhatsApp replies only on `/ai` prefix. The `/ai` prefix
+stripped from the prompt). WhatsApp now mirrors messenger exactly (symmetric
+2026-08-17): `/ai` prefix, a reply to one of our OWN sent messages, or a mention
+of our jid (group mentions via MentionedJID). Reply detection = whatsmeow
+`ContextInfo.StanzaID` matched against a 24h TTL map of outbound message IDs
+(`recordSent`/`isRecentSent` in whatsmeow_client.go); mention detection = own
+jid (Store.ID) in `ContextInfo.MentionedJID`. WhatsApp mentions are NOT stripped
+from the prompt (no jid->name resolution available — the rendered `@Name` stays,
+harmless; messenger strips because it has raw uids). Media-only replies/mentions
+stay silent on both. The `/ai` prefix
 is stripped; the rest becomes the prompt for the agent runner. No murmur `/ai`
 subcommands (models/image) — the fork uses the single `llm.model` config.
 
@@ -408,7 +427,14 @@ bool). Both are polled, not event-driven.
   bridge `/api/health` returns bare "ok" — it does NOT expose WhatsApp state,
   and `WhatsmeowClient.IsConnected()` is not surfaced anywhere.
   `TS_AUTHKEY` = the
-  fleet reusable authkey (mainframe tailscale profile); `--state=mem` makes
+  fleet reusable authkey (mainframe tailscale profile; since 2026-08-17 the
+  validated vault key, also saved to the mainframe tailscale profile's
+  authkey.txt; the old fleet key expired and every fresh boot failed with
+  `invalid key: API key k2bx6Qw2KB11CNTRL not valid` -> `Exited with status 1`
+  -> deploy update_failed/crash loop, while the old instance kept serving);
+  GOTCHA: `tailscale up` failing = exit 1 via `set -e` in entrypoint.sh; fix =
+  PUT a valid key via `PUT /v1/services/<id>/env-vars/TS_AUTHKEY` then redeploy
+  (manual deploy POST; autodeploy on push does NOT fire). `--state=mem` makes
   every container node EPHEMERAL regardless of key type (verified: tailscaled
   help says mem state registers as ephemeral). entrypoint.sh runs tailscaled
   `--tun=userspace-networking --socks5-server=127.0.0.1:1055 --state=mem` then
