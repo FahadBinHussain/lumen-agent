@@ -27,6 +27,33 @@ type chatClient interface {
 	Chat(ctx context.Context, req Request) (Message, error)
 }
 
+// StreamDelta is one partial token chunk from a streaming chat call.
+type StreamDelta struct {
+	Content          string
+	ReasoningContent string
+}
+
+// streamingChatClient is implemented by backends that can stream partial
+// tokens (OpenAI-compatible SSE chat.completion.chunk events). Backends
+// without it fall back to a single whole-message delta.
+type streamingChatClient interface {
+	StreamChat(ctx context.Context, req Request, onDelta func(StreamDelta)) (Message, error)
+}
+
+// StreamChat runs a chat call with partial-token delivery: every chunk the
+// backend emits (content and/or reasoning_content) is forwarded to onDelta
+// as it arrives. The returned Message is the fully accumulated response.
+func (c *Client) StreamChat(ctx context.Context, req Request, onDelta func(StreamDelta)) (Message, error) {
+	if sc, ok := c.impl.(streamingChatClient); ok {
+		return sc.StreamChat(ctx, req, onDelta)
+	}
+	msg, err := c.impl.Chat(ctx, req)
+	if err == nil && onDelta != nil {
+		onDelta(StreamDelta{Content: msg.Content, ReasoningContent: msg.ReasoningContent})
+	}
+	return msg, err
+}
+
 type httpJSONClient struct {
 	endpoint   string
 	apiKey     string
@@ -209,6 +236,64 @@ func (c *httpJSONClient) postJSONTo(ctx context.Context, payload any, overrideBa
 	return data, nil
 }
 
+// postStreamTo is postJSONTo for SSE: returns the raw response without
+// reading the body so the caller can stream it line by line. Non-2xx
+// responses are drained, decoded, and returned as an error like postJSONTo.
+func (c *httpJSONClient) postStreamTo(ctx context.Context, payload any, overrideBaseURL string, overrideAPIKey string) (*http.Response, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode request: %w", err)
+	}
+
+	endpoint := c.endpoint
+	apiKey := c.apiKey
+	if overrideBaseURL != "" {
+		baseURL := strings.TrimRight(overrideBaseURL, "/")
+		if idx := strings.LastIndex(c.endpoint, "/chat/completions"); idx >= 0 {
+			endpoint = baseURL + c.endpoint[idx:]
+		} else if idx := strings.LastIndex(c.endpoint, "/responses"); idx >= 0 {
+			endpoint = baseURL + c.endpoint[idx:]
+		} else {
+			endpoint = baseURL + "/chat/completions"
+		}
+	}
+	if overrideAPIKey != "" {
+		apiKey = overrideAPIKey
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	if apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	for key, value := range c.headers {
+		httpReq.Header.Set(key, value)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		defer resp.Body.Close()
+		data, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("API error (%d): %v", resp.StatusCode, readErr)
+		}
+		var apiErr apiErrorEnvelope
+		if err := json.Unmarshal(data, &apiErr); err == nil && apiErr.Error != nil {
+			return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, apiErr.Error.Message)
+		}
+		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return resp, nil
+}
+
 func (c *httpJSONClient) doJSONRequest(ctx context.Context, payload any) (*http.Response, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -275,38 +360,7 @@ func normalizeDeepSeekMessage(message Message) Message {
 }
 
 func (c *chatCompletionsClient) Chat(ctx context.Context, req Request) (Message, error) {
-	messages := req.Messages
-	if c.normalizeMessage != nil {
-		normalized := make([]Message, len(messages))
-		for i, msg := range messages {
-			normalized[i] = c.normalizeMessage(msg)
-		}
-		messages = normalized
-	}
-	payload := map[string]any{
-		"model":       req.Model,
-		"messages":    buildChatCompletionsMessages(messages),
-		"temperature": req.Temperature,
-		"stream":      false,
-	}
-
-	if req.MaxTokens > 0 {
-		payload["max_tokens"] = req.MaxTokens
-	}
-	if effort := normalizedReasoningEffort(req.ReasoningEffort); effort != "" {
-		payload["reasoning_effort"] = effort
-	}
-	if maxThinkingTokens, ok := normalizedMaxThinkingToken(req.MaxThinkingToken, req.ReasoningEffort); ok {
-		payload["max_thinking_tokens"] = maxThinkingTokens
-	}
-
-	if len(req.Tools) > 0 {
-		payload["tools"] = req.Tools
-		payload["tool_choice"] = "auto"
-	}
-	for key, value := range c.extraBody {
-		payload[key] = value
-	}
+	payload := c.chatPayload(req)
 
 	data, err := c.postJSONTo(ctx, payload, req.BaseURL, req.APIKey)
 	if err != nil {
@@ -329,6 +383,102 @@ func (c *chatCompletionsClient) Chat(ctx context.Context, req Request) (Message,
 	message.Usage = extractUsage(rawResponse)
 	message.OutputTokens = extractOutputTokens(message.Usage)
 	message.ReasoningTokens = extractReasoningTokens(message.Usage)
+	return message, nil
+}
+
+// chatPayload builds the shared non-stream request body (payload["stream"]
+// is set by the caller so Chat and StreamChat stay in lockstep).
+func (c *chatCompletionsClient) chatPayload(req Request) map[string]any {
+	messages := req.Messages
+	if c.normalizeMessage != nil {
+		normalized := make([]Message, len(messages))
+		for i, msg := range messages {
+			normalized[i] = c.normalizeMessage(msg)
+		}
+		messages = normalized
+	}
+	payload := map[string]any{
+		"model":       req.Model,
+		"messages":    buildChatCompletionsMessages(messages),
+		"temperature": req.Temperature,
+	}
+
+	if req.MaxTokens > 0 {
+		payload["max_tokens"] = req.MaxTokens
+	}
+	if effort := normalizedReasoningEffort(req.ReasoningEffort); effort != "" {
+		payload["reasoning_effort"] = effort
+	}
+	if maxThinkingTokens, ok := normalizedMaxThinkingToken(req.MaxThinkingToken, req.ReasoningEffort); ok {
+		payload["max_thinking_tokens"] = maxThinkingTokens
+	}
+
+	if len(req.Tools) > 0 {
+		payload["tools"] = req.Tools
+		payload["tool_choice"] = "auto"
+	}
+	for key, value := range c.extraBody {
+		payload[key] = value
+	}
+	return payload
+}
+
+// StreamChat delivers partial tokens as OpenAI-compatible SSE
+// chat.completion.chunk events. Reasoning deltas (thinking-model
+// reasoning_content) are forwarded too. The returned Message is the
+// accumulated response, normalized like the non-streaming path.
+func (c *chatCompletionsClient) StreamChat(ctx context.Context, req Request, onDelta func(StreamDelta)) (Message, error) {
+	payload := c.chatPayload(req)
+	payload["stream"] = true
+
+	resp, err := c.postStreamTo(ctx, payload, req.BaseURL, req.APIKey)
+	if err != nil {
+		return Message{}, err
+	}
+	defer resp.Body.Close()
+
+	var content, reasoning strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+		var chunk chatCompletionChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		delta := chunk.Choices[0].Delta
+		if delta.Content != "" {
+			content.WriteString(delta.Content)
+		}
+		if delta.ReasoningContent != "" {
+			reasoning.WriteString(delta.ReasoningContent)
+		}
+		if onDelta != nil {
+			onDelta(StreamDelta{Content: delta.Content, ReasoningContent: delta.ReasoningContent})
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return Message{}, fmt.Errorf("read stream: %w", err)
+	}
+
+	message := Message{
+		Role:             "assistant",
+		Content:          StripMessageTimeMetadata(content.String()),
+		ReasoningContent: strings.TrimSpace(reasoning.String()),
+	}
+	if c.normalizeMessage != nil {
+		message = c.normalizeMessage(message)
+	}
 	return message, nil
 }
 
@@ -701,6 +851,21 @@ func shouldRetryResponsesAsStream(err error) bool {
 
 type chatCompletionResponse struct {
 	Choices []chatChoice `json:"choices"`
+}
+
+// chatCompletionChunk is one SSE data payload of a streamed chat
+// completion (OpenAI-compatible chat.completion.chunk).
+type chatCompletionChunk struct {
+	Choices []chatCompletionChunkChoice `json:"choices"`
+}
+
+type chatCompletionChunkChoice struct {
+	Delta chatCompletionChunkDelta `json:"delta"`
+}
+
+type chatCompletionChunkDelta struct {
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content"`
 }
 
 type chatChoice struct {

@@ -34,6 +34,24 @@ func (f *fakeChatClient) Chat(_ context.Context, req llm.Request) (llm.Message, 
 	return result.message, result.err
 }
 
+type fakeStreamingChatClient struct {
+	*fakeChatClient
+	streamErr  error
+	streamCalls int
+	deltas     []llm.StreamDelta
+}
+
+func (f *fakeStreamingChatClient) StreamChat(_ context.Context, req llm.Request, onDelta func(llm.StreamDelta)) (llm.Message, error) {
+	f.streamCalls++
+	if f.streamErr != nil {
+		return llm.Message{}, f.streamErr
+	}
+	for _, d := range f.deltas {
+		onDelta(d)
+	}
+	return llm.Message{Role: "assistant", Content: "streamed reply"}, nil
+}
+
 func TestTrimHistoryForContextKeepsLatestMessage(t *testing.T) {
 	history := []llm.Message{
 		{Role: "user", Content: "first message"},
@@ -380,5 +398,102 @@ func TestCompactHistoryForStorageChunksLargeHistory(t *testing.T) {
 	}
 	if !strings.Contains(compacted[0].Content, "abc123") {
 		t.Fatalf("expected identifiers to survive compaction, got %q", compacted[0].Content)
+	}
+}
+
+func TestChatTurnStreamsDeltasWhenStreamingEnabled(t *testing.T) {
+	client := &fakeStreamingChatClient{
+		fakeChatClient: &fakeChatClient{results: []fakeChatResult{
+			{message: llm.Message{Role: "assistant", Content: "should not be used"}},
+		}},
+		deltas: []llm.StreamDelta{
+			{ReasoningContent: "think "},
+			{ReasoningContent: "hard"},
+			{Content: "hello "},
+			{Content: "world"},
+		},
+	}
+	runner := &Runner{cfg: config.Config{}, client: client}
+
+	var got []string
+	message, err := runner.chatTurn(context.Background(), llm.Request{}, ConversationContext{Streaming: true}, func(ev Event) {
+		if ev.Kind == EventStreamDelta {
+			got = append(got, ev.Message)
+		}
+	})
+	if err != nil {
+		t.Fatalf("chatTurn failed: %v", err)
+	}
+	if client.streamCalls != 1 {
+		t.Fatalf("expected 1 stream call, got %d", client.streamCalls)
+	}
+	if client.calls != 0 {
+		t.Fatalf("non-streaming Chat must not be used when streaming, got %d calls", client.calls)
+	}
+	if message.Content != "streamed reply" {
+		t.Fatalf("expected streamed reply, got %q", message.Content)
+	}
+	want := []string{"think ", "hard", "hello ", "world"}
+	if len(got) != 4 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] || got[3] != want[3] {
+		t.Fatalf("unexpected delta events %v, want %v", got, want)
+	}
+}
+
+func TestChatTurnUsesPlainChatWithoutStreaming(t *testing.T) {
+	client := &fakeStreamingChatClient{
+		fakeChatClient: &fakeChatClient{results: []fakeChatResult{
+			{message: llm.Message{Role: "assistant", Content: "plain reply"}},
+		}},
+	}
+	runner := &Runner{cfg: config.Config{}, client: client}
+
+	message, err := runner.chatTurn(context.Background(), llm.Request{}, ConversationContext{}, nil)
+	if err != nil {
+		t.Fatalf("chatTurn failed: %v", err)
+	}
+	if client.streamCalls != 0 {
+		t.Fatalf("stream must not run without Streaming, got %d calls", client.streamCalls)
+	}
+	if message.Content != "plain reply" {
+		t.Fatalf("expected plain reply, got %q", message.Content)
+	}
+}
+
+func TestChatTurnFallsBackToRetryWhenStreamFails(t *testing.T) {
+	client := &fakeStreamingChatClient{
+		fakeChatClient: &fakeChatClient{results: []fakeChatResult{
+			{err: context.DeadlineExceeded},
+			{message: llm.Message{Role: "assistant", Content: "recovered"}},
+		}},
+		streamErr: context.DeadlineExceeded,
+	}
+	runner := &Runner{cfg: config.Config{
+		LLM: config.LLMConfig{
+			RequestMaxAttempts:  3,
+			RetryInitialBackoff: "1ms",
+			RetryMaxBackoff:     "2ms",
+		},
+	}, client: client}
+
+	var streamed []string
+	message, err := runner.chatTurn(context.Background(), llm.Request{}, ConversationContext{Streaming: true}, func(ev Event) {
+		if ev.Kind == EventStreamDelta {
+			streamed = append(streamed, ev.Message)
+		}
+	})
+	if err != nil {
+		t.Fatalf("chatTurn failed: %v", err)
+	}
+	if client.streamCalls != 1 {
+		t.Fatalf("expected 1 stream attempt, got %d", client.streamCalls)
+	}
+	if client.calls != 2 {
+		t.Fatalf("expected fallback retry path (2 plain calls), got %d", client.calls)
+	}
+	if message.Content != "recovered" {
+		t.Fatalf("expected recovered reply, got %q", message.Content)
+	}
+	if len(streamed) != 0 {
+		t.Fatalf("failed stream must not emit deltas, got %v", streamed)
 	}
 }

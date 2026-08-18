@@ -27,6 +27,7 @@ const (
 	EventModelDone    EventKind = "model_done"
 	EventToolStarted  EventKind = "tool_started"
 	EventToolFinished EventKind = "tool_finished"
+	EventStreamDelta  EventKind = "stream_delta"
 )
 
 type Event struct {
@@ -144,7 +145,7 @@ func (r *Runner) Run(ctx context.Context, history []llm.Message, userPrompt stri
 			BaseURL:          reqBaseURL,
 			APIKey:           reqAPIKey,
 		}
-		response, err := r.chatWithRetry(ctx, request, emit)
+		response, err := r.chatTurn(ctx, request, conversation, emit)
 		if err != nil {
 			emit(Event{Kind: EventStatus, Message: "Request failed", Time: time.Now()})
 			return workingHistory, err
@@ -433,6 +434,38 @@ func (r *Runner) chatWithRetry(ctx context.Context, req llm.Request, emit func(E
 	}
 
 	return llm.Message{}, lastErr
+}
+
+// chatTurn runs one model call for a turn. When the conversation asked for
+// streaming, partial tokens are forwarded as EventStreamDelta events; a
+// mid-stream failure falls back to the plain (retrying) call so a broken
+// SSE pipe never loses a turn.
+func (r *Runner) chatTurn(ctx context.Context, request llm.Request, conversation ConversationContext, emit func(Event)) (llm.Message, error) {
+	if !conversation.Streaming || emit == nil {
+		return r.chatWithRetry(ctx, request, emit)
+	}
+	sc, ok := r.client.(streamingChatClient)
+	if !ok {
+		return r.chatWithRetry(ctx, request, emit)
+	}
+	response, err := sc.StreamChat(ctx, request, func(d llm.StreamDelta) {
+		text := d.ReasoningContent
+		if d.Content != "" {
+			text += d.Content
+		}
+		if text != "" {
+			emit(Event{Kind: EventStreamDelta, Message: text, Time: time.Now()})
+		}
+	})
+	if err != nil {
+		return r.chatWithRetry(ctx, request, emit)
+	}
+	return response, nil
+}
+
+// streamingChatClient is the subset of llm.Client that can stream tokens.
+type streamingChatClient interface {
+	StreamChat(ctx context.Context, req llm.Request, onDelta func(llm.StreamDelta)) (llm.Message, error)
 }
 
 func (r *Runner) withSystemPrompt(history []llm.Message, conversation ConversationContext) []llm.Message {

@@ -226,19 +226,23 @@ History: per `platform:thread` in memory, persisted to
 pattern, same Neon snapshot backup via internal/persist + `SetPersistenceToucher`,
 restored on boot). The old blunt 100-message cap is gone (2026-08-14).
 
-Thinking animation (2026-08-18): all three platforms show a "thinking"
-placeholder that the final reply edits in place. messenger keeps the short
-capped animation (Meta's message-edit limits; 4 edits, 500ms apart) — do NOT
-make messenger's animation longer. whatsapp (bridge agentRun, `sendReply`)
-and discord (fork patch `internal/discordbot/thinking.go`, wired through
-`processPrompt`'s panic/cancel/error/silent/success paths) have no practical
-edit cap, so they animate smoothly until the run finishes: whatsapp frames at
-400ms (whatsmeow BuildEdit, 20-min edit window), discord frames at 1s
-(stays under the discord message-edit rate limit of ~5/5s; single-part
-replies ≤2000 chars edit the placeholder in place, multi-part replies delete
-it and fall back to the normal sendReply fan-out). On discord, silent turns
-discard the placeholder so no stray "thinking..." lingers; heartbeat/dream/
-background prompts skip the animation entirely.
+Thinking animation + live token streaming (2026-08-18): all three platforms
+show a "thinking" placeholder that the final reply edits in place. messenger
+keeps the short capped dots animation (Meta's message-edit limits; 4 edits,
+500ms apart) — do NOT make messenger's animation longer. whatsapp (bridge
+agentRun, `sendReply`) and discord (fork patch `internal/discordbot/thinking.go`,
+wired through `processPrompt`'s panic/cancel/error/silent/success paths) have
+no practical edit cap, so they show the model's REAL token stream instead of
+fake dots: `agent.Runner.chatTurn` streams (llm `StreamChat`, OpenAI-compatible
+SSE `chat.completion.chunk` with content + reasoning_content) whenever
+`ConversationContext.Streaming` is set, emitting `EventStreamDelta` events
+(stream failures fall back to the plain retrying call); bridge/discord
+renderers feed those deltas into the placeholder with throttled edits
+(whatsapp ~400ms, discord 1s to stay under the ~5/5s edit rate limit),
+truncating the preview (whatsapp 1500 chars, discord 1800) and resetting to
+"using <tool>..." when a tool call starts (`EventToolStarted`). messenger
+never streams (Meta edits can't keep up). Silent turns discard the placeholder
+on discord; heartbeat/dream/background prompts skip the animation entirely.
 
 ## Platform gotchas
 

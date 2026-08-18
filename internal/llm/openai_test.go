@@ -953,3 +953,83 @@ func TestDeepSeekClientStripsReasoningContentWithoutToolCalls(t *testing.T) {
 		t.Fatalf("Chat returned error: %v", err)
 	}
 }
+
+func TestChatCompletionsStreamDeliversDeltasInOrder(t *testing.T) {
+	streamBody := strings.Join([]string{
+		`data: {"choices":[{"delta":{"reasoning_content":"careful "}}]}`,
+		`data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}`,
+		`data: {"choices":[{"delta":{"content":"hello "}}]}`,
+		`data: {"choices":[{"delta":{"content":"world"}}]}`,
+		`data: {"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}`,
+		`data: [DONE]`,
+	}, "\n") + "\n"
+
+	client := &Client{impl: &chatCompletionsClient{httpJSONClient: &httpJSONClient{
+		endpoint: "https://api.example.test/chat/completions",
+		apiKey:   "test-key",
+		headers:  map[string]string{},
+		httpClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if payload["stream"] != true {
+				t.Fatalf("expected stream=true in payload, got %v", payload["stream"])
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(streamBody)),
+			}, nil
+		})},
+	}}}
+
+	var got []string
+	message, err := client.StreamChat(context.Background(), Request{
+		Model:       "deepseek-v4-flash",
+		Messages:    []Message{{Role: "user", Content: "hi"}},
+		MaxTokens:   64,
+		BaseURL:     "https://api.example.test",
+		APIKey:      "test-key",
+	}, func(d StreamDelta) {
+		got = append(got, d.ReasoningContent, d.Content)
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+	if message.Content != "hello world" {
+		t.Fatalf("expected accumulated content, got %q", message.Content)
+	}
+	if message.ReasoningContent != "careful thinking" {
+		t.Fatalf("expected accumulated reasoning, got %q", message.ReasoningContent)
+	}
+if strings.Join(got, "|") != "careful ||thinking|||hello ||world||" {
+		t.Fatalf("unexpected delta order: %q", strings.Join(got, "|"))
+	}
+}
+
+func TestClientStreamChatFallsBackToWholeMessage(t *testing.T) {
+	client := &Client{impl: &fallbackOnlyChatClient{}}
+	var got []string
+	message, err := client.StreamChat(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	}, func(d StreamDelta) {
+		got = append(got, d.Content)
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+	if message.Content != "whole reply" {
+		t.Fatalf("expected whole reply, got %q", message.Content)
+	}
+	if len(got) != 1 || got[0] != "whole reply" {
+		t.Fatalf("expected single whole-message delta, got %v", got)
+	}
+}
+
+type fallbackOnlyChatClient struct{}
+
+func (f *fallbackOnlyChatClient) Chat(_ context.Context, req Request) (Message, error) {
+	return Message{Role: "assistant", Content: "whole reply"}, nil
+}

@@ -379,7 +379,11 @@ func (s *Service) agentRun(ctx context.Context, platform string, threadID string
 	}
 
 	emit := func(ev agent.Event) {
-		log.Printf("bridge: [%s %s] %s %s", platform, threadID, ev.Kind, ev.Message)
+		// stream deltas are forwarded to the live renderer, not the logs —
+		// they'd flood every turn otherwise.
+		if ev.Kind != agent.EventStreamDelta {
+			log.Printf("bridge: [%s %s] %s %s", platform, threadID, ev.Kind, ev.Message)
+		}
 	}
 
 	if s.whatsapp != nil && platform == "whatsapp" && jid != "" {
@@ -400,6 +404,7 @@ func (s *Service) agentRun(ctx context.Context, platform string, threadID string
 	}
 	var msgID string
 	var stopThinking chan struct{}
+	var stream chan streamSignal
 	switch platform {
 	case "messenger":
 		msgID = s.send(platform, threadID, jid, "thinking.")
@@ -428,22 +433,18 @@ func (s *Service) agentRun(ctx context.Context, platform string, threadID string
 			}
 			msgID = id
 			stopThinking = make(chan struct{})
-			go func() {
-				frames := []string{"thinking", "thinking.", "thinking..", "thinking...", "thinking...."}
-				i := 0
-				for {
-					select {
-					case <-stopThinking:
-						return
-					case <-time.After(400 * time.Millisecond):
-						i = (i + 1) % len(frames)
-						if err := s.whatsapp.EditText(ctx, jid, msgID, frames[i]); err != nil {
-							log.Printf("bridge: whatsapp thinking edit failed: %v", err)
-							return
-						}
-					}
-				}
-			}()
+			stream = make(chan streamSignal, 64)
+			go renderThinkingEdits(ctx, s.whatsapp, jid, msgID, stream, stopThinking)
+		}
+	}
+	if stream != nil {
+		// forward the model's real token stream into the renderer; the
+		// runner itself stays untouched (deltas ride the existing emit).
+		conversation.Streaming = true
+		baseEmit := emit
+		emit = func(ev agent.Event) {
+			baseEmit(ev)
+			feedStreamSignals(stream, ev)
 		}
 	}
 
