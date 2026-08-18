@@ -249,10 +249,16 @@ restored on boot). The old blunt 100-message cap is gone (2026-08-14).
     message ID was recorded (whatsmeow BuildEdit, 20-min edit window;
     mapping keyed "messengerID|jid" consumed on first edit, dropped when the
     window is missed) and falls back to a fresh-message mirror otherwise;
-    discord always gets a fresh mirror (no edit API). the original bug: the
-    whatsapp group kept stale "detected" text while messenger had the edited
-    "published" text (2026-08-18, commit 0e5a88a fresh-mirror, then commit
-    TBD in-place edits via whatsmewo BuildEdit). the notifications
+    discord edits IN PLACE too via REST PATCH (mapping keyed
+    "messengerID|channelID", `DiscordHealthClient.EditPlainText`), same
+    fresh-message fallback. the original bug: the whatsapp group kept stale
+    "detected" text while messenger had the edited "published" text
+    (2026-08-18, commit 0e5a88a fresh-mirror, then 28a87e1 whatsapp
+    BuildEdit + 310d91b discord PATCH in-place edits; live-verified
+    2026-08-18 with a fake detected→published pair through the real worker
+    on the production bnp route — the worker follows BNP_ROUTE, NOT the
+    route name in the fake item, and fake items go to the bnp route's
+    channels). the notifications
     endpoint also accepts an optional `route` body field to fan out instead
     of single platform/threadId (unknown route = 400). adding a channel =
     edit `bridge.routes` in production.yaml + deploy, no code. current bnp
