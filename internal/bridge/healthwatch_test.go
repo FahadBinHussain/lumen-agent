@@ -90,7 +90,10 @@ type fakeDiscordHealthClient struct {
 }
 
 func (f *fakeDiscordHealthClient) IsConnected() bool { return f.connected }
-func (f *fakeDiscordHealthClient) SendPlainText(channelID string, text string) error {
+func (f *fakeDiscordHealthClient) SendPlainText(channelID string, text string) (string, error) {
+	return "dc-test-" + channelID, nil
+}
+func (f *fakeDiscordHealthClient) EditPlainText(channelID string, messageID string, text string) error {
 	return nil
 }
 
