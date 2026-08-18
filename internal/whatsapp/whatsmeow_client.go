@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -188,6 +189,7 @@ func (w *WhatsmeowClient) handleMessage(evt *events.Message) {
 
 	var replyToID, replyToSender string
 	var isReplyToUs, mentionsMe bool
+	var mentionedJIDs []string
 	if ext := evt.Message.GetExtendedTextMessage(); ext != nil {
 		if ctx := ext.GetContextInfo(); ctx != nil {
 			replyToID = ctx.GetStanzaID()
@@ -199,8 +201,8 @@ func (w *WhatsmeowClient) handleMessage(evt *events.Message) {
 				for _, jid := range ctx.GetMentionedJID() {
 					if jid == own {
 						mentionsMe = true
-						break
 					}
+					mentionedJIDs = append(mentionedJIDs, jid)
 				}
 			}
 		}
@@ -218,6 +220,7 @@ func (w *WhatsmeowClient) handleMessage(evt *events.Message) {
 		ReplyToSenderJID: replyToSender,
 		IsReplyToUs:      isReplyToUs,
 		MentionsMe:       mentionsMe,
+		MentionedJIDs:    mentionedJIDs,
 		IsGroup:          evt.Info.IsGroup,
 	}
 
@@ -335,6 +338,68 @@ func (w *WhatsmeowClient) ownJID() string {
 		return ""
 	}
 	return types.NewJID(w.client.Store.ID.User, types.DefaultUserServer).String()
+}
+
+// CleanMentions removes the "@<name>" token(s) for OUR mention from the text.
+// WhatsApp renders mentions as literal text plus a MentionedJID annotation, so
+// the jid is resolved to its contact name (contact store: full name, then push
+// name) and matching tokens are deleted. Mirrors messenger's CleanMentions,
+// which also only strips our own mention. Unresolvable names keep the text
+// unchanged.
+func (w *WhatsmeowClient) CleanMentions(text string, mentionedJIDs []string) string {
+	if strings.TrimSpace(text) == "" || len(mentionedJIDs) == 0 {
+		return text
+	}
+	own := w.ownJID()
+	if own == "" {
+		return text
+	}
+
+	names := make([]string, 0, len(mentionedJIDs))
+	for _, jidStr := range mentionedJIDs {
+		if jidStr != own {
+			continue
+		}
+		jid, err := types.ParseJID(jidStr)
+		if err != nil {
+			continue
+		}
+		if name := w.contactName(jid); name != "" {
+			names = append(names, name)
+		}
+	}
+	return cleanMentionsFromNames(text, names)
+}
+
+// cleanMentionsFromNames removes literal "@name" tokens from text. Pure and
+// testable; the client resolves jids to names before calling it.
+func cleanMentionsFromNames(text string, names []string) string {
+	if len(names) == 0 {
+		return text
+	}
+	for _, name := range names {
+		text = strings.ReplaceAll(text, "@"+name, "")
+	}
+	for strings.Contains(text, "  ") {
+		text = strings.ReplaceAll(text, "  ", " ")
+	}
+	return strings.TrimSpace(text)
+}
+
+// contactName resolves a jid to a display name using the whatsmeow contact
+// store (synced from the phone). Falls back to the push name, then "".
+func (w *WhatsmeowClient) contactName(jid types.JID) string {
+	if w.client == nil || w.client.Store == nil || w.client.Store.Contacts == nil {
+		return ""
+	}
+	info, err := w.client.Store.Contacts.GetContact(context.Background(), jid)
+	if err != nil || !info.Found {
+		return ""
+	}
+	if name := strings.TrimSpace(info.FullName); name != "" {
+		return name
+	}
+	return strings.TrimSpace(info.PushName)
 }
 
 // recordSent remembers outbound message IDs so incoming quotes can be

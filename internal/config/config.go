@@ -183,14 +183,15 @@ type BridgeConfig struct {
 	HealthWatch          HealthWatchConfig `yaml:"health_watch"`
 }
 
-// HealthWatchConfig controls the cross-platform health notifications: when
-// whatsapp dies/recovers, tell the messenger test thread; when messenger
-// dies/recovers, tell the whatsapp test jid. Runs inside the container so it
-// keeps working when the laptop (and the whatsapp tailnet route through it)
-// is down. No notification fires until the platform has been connected at
-// least once, and a dead state must persist for dead_after before it counts
-// (brief reconnect blips, including the intentional messenger cookie reload,
-// stay silent).
+// HealthWatchConfig controls the cross-platform health notifications: when a
+// platform dies/recovers, tell the other platforms' test channels — whatsapp
+// → messenger thread, messenger → whatsapp jid, discord → both, and
+// whatsapp/messenger deaths also copy to the discord channel when
+// discord_channel_id is set. Runs inside the container so it keeps working
+// when the laptop (and the whatsapp tailnet route through it) is down. No
+// notification fires until the platform has been connected at least once, and
+// a dead state must persist for dead_after before it counts (brief reconnect
+// blips, including the intentional messenger cookie reload, stay silent).
 type HealthWatchConfig struct {
 	Enabled           bool   `yaml:"enabled"`
 	Interval          string `yaml:"interval"`
@@ -198,6 +199,7 @@ type HealthWatchConfig struct {
 	MinNotifyInterval string `yaml:"min_notify_interval"`
 	MessengerThreadID string `yaml:"messenger_thread_id"`
 	WhatsAppJID       string `yaml:"whatsapp_jid"`
+	DiscordChannelID  string `yaml:"discord_channel_id"`
 }
 
 // NotifyConfig mirrors the murmur Vercel pollers' env surface. Copy-only for
