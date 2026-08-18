@@ -182,6 +182,11 @@ type BridgeConfig struct {
 	SecretEnv            string                     `yaml:"secret_env"`
 	HealthWatch          HealthWatchConfig          `yaml:"health_watch"`
 	Routes               map[string][]RouteChannel  `yaml:"routes"`
+	// AdminThreads is the per-platform set of threads/jids/channels allowed
+	// to run the admin commands (/threads, /allow, /block, /allowlist).
+	// Keyed by platform name (messenger/whatsapp/discord); an empty list
+	// means nobody can run them.
+	AdminThreads map[string][]string `yaml:"admin_threads"`
 }
 
 // RouteChannel is one delivery target in a route. Exactly one target field
@@ -721,6 +726,11 @@ func (c *Config) resolvePaths() error {
 	}
 	c.Messenger.AllowedThreadIDs = uniqueTrimmedStrings(c.Messenger.AllowedThreadIDs)
 	c.WhatsApp.AllowedJIDs = uniqueTrimmedStrings(c.WhatsApp.AllowedJIDs)
+	if c.Bridge.AdminThreads != nil {
+		for platform, ids := range c.Bridge.AdminThreads {
+			c.Bridge.AdminThreads[platform] = uniqueTrimmedStrings(ids)
+		}
+	}
 
 	c.WhatsApp.StoreDir = strings.TrimSpace(c.WhatsApp.StoreDir)
 	if c.WhatsApp.StoreDir == "" {
@@ -1383,6 +1393,21 @@ func (c Config) WhatsAppJIDAllowed(jid string) bool {
 	}
 	for _, allowed := range c.WhatsApp.AllowedJIDs {
 		if allowed == jid {
+			return true
+		}
+	}
+	return false
+}
+
+// BridgeAdminThread reports whether a thread/jid/channel on a platform is
+// allowed to run the admin commands. Empty list = nobody.
+func (c Config) BridgeAdminThread(platform string, id string) bool {
+	ids := c.Bridge.AdminThreads[strings.ToLower(strings.TrimSpace(platform))]
+	if len(ids) == 0 {
+		return false
+	}
+	for _, allowed := range ids {
+		if allowed == id {
 			return true
 		}
 	}

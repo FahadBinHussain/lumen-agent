@@ -277,6 +277,16 @@ bridge:
         thread_id: "984803114200952"
       - platform: whatsapp
         jid: "120363409684314037@g.us"
+  # admin_threads: per-platform threads allowed to run the admin commands
+  # (/threads /allow /block /allowlist). empty list = nobody. currently only
+  # the test channels — keep it that way unless a real thread needs it.
+  admin_threads:
+    messenger:
+      - "2637078310061988"
+    whatsapp:
+      - "8801911104251@s.whatsapp.net"
+    discord:
+      - "1537650032441032765"
 
 notify:
   # lumen's own notifications endpoint (murmur space default is dead/paused)

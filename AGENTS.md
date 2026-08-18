@@ -197,6 +197,24 @@ history now; replies "already compact enough" when nothing changed).
 Unrecognized `/...` prompts fall through to the agent. Reply format is
 plain text (no discord embeds).
 
+Admin commands (added 2026-08-18): `/threads [page]` lists every thread the
+platform account can reach (whatsapp = joined groups + tracked 1:1 chats,
+messenger = thread cache nudged by a fetch-tasks sync, discord = guilds +
+channels; capped at 25/page, newest-activity first), `/allow <id>` adds a
+thread/jid/channel to a RUNTIME allowlist overlay, `/block <id>` removes it,
+`/allowlist` shows config + overlay state. The overlay lives at
+`<session_dir>/bridge-allowlist.json` (loaded in `New()`, saved on every
+mutation, Neon-snapshotted via the persist toucher like bridge-sessions.json)
+and is merged with the config allowlists by `Service.threadAllowed()` — the
+effective gate for sends AND receives on messenger/whatsapp, so a newly
+allowed thread becomes usable without a deploy. Only threads listed in
+`bridge.admin_threads` (per-platform; empty = nobody) can run these; a
+denied thread gets a one-line "admin command" reply and never falls through
+to the agent. production.yaml: admin_threads = the three test channels
+(messenger 2637078310061988 / whatsapp 8801911104251@s.whatsapp.net /
+discord 1537650032441032765) — keep it that way unless a real thread needs
+admin.
+
 History: per `platform:thread` in memory, persisted to
 `<session_dir>/bridge-sessions.json` (symmetry with Discord: same
 `agent.CompactHistoryForStorage` compaction on every turn, same file-in-session-dir

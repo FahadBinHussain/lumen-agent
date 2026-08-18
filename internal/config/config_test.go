@@ -784,6 +784,35 @@ func routesBaselineConfig(t *testing.T) BridgeConfig {
 	return BridgeConfig{Routes: map[string][]RouteChannel{}}
 }
 
+func TestBridgeAdminThreadEmptyListDeniesAll(t *testing.T) {
+	cfg := Config{Bridge: BridgeConfig{AdminThreads: map[string][]string{}}}
+	if cfg.BridgeAdminThread("whatsapp", "123@g.us") {
+		t.Fatal("empty admin_threads must deny everyone")
+	}
+}
+
+func TestBridgeAdminThreadListedAndUnlisted(t *testing.T) {
+	cfg := Config{Bridge: BridgeConfig{AdminThreads: map[string][]string{
+		"messenger": {"2637078310061988", "  30738305889116993  "},
+		"whatsapp":  {"8801911104251@s.whatsapp.net"},
+	}}}
+	if !cfg.BridgeAdminThread("messenger", "2637078310061988") {
+		t.Fatal("listed thread must be admin")
+	}
+	if cfg.BridgeAdminThread("messenger", "953525124128433") {
+		t.Fatal("unlisted thread must not be admin")
+	}
+	if cfg.BridgeAdminThread("discord", "1537650032441032765") {
+		t.Fatal("platform with no admin list must deny")
+	}
+	if !cfg.BridgeAdminThread("whatsapp", "8801911104251@s.whatsapp.net") {
+		t.Fatal("listed jid must be admin")
+	}
+	if cfg.BridgeAdminThread("whatsapp", "999@g.us") {
+		t.Fatal("unlisted jid must not be admin")
+	}
+}
+
 func TestValidateRoutesAcceptsAllPlatforms(t *testing.T) {
 	b := routesBaselineConfig(t)
 	b.Routes = map[string][]RouteChannel{
