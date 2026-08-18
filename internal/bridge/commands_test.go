@@ -239,3 +239,36 @@ s := testBridgeService(t)
 		t.Fatal("non-restored thread must stay blocked")
 	}
 }
+
+func TestRunCommandBareNameWithoutSlash(t *testing.T) {
+	s := testBridgeService(t)
+	cfg := s.cfg
+	cfg.Bridge.AdminThreads = map[string][]string{"messenger": {"2637078310061988"}}
+	s.cfg = cfg
+
+	reply, ok := s.runCommand("messenger", "2637078310061988", "threads")
+	if !ok || !strings.Contains(reply, "messenger is not enabled") {
+		t.Fatalf("bare command name must dispatch, got %q (ok=%v)", reply, ok)
+	}
+
+	reply, ok = s.runCommand("messenger", "2637078310061988", "/threads")
+	if !ok || !strings.Contains(reply, "messenger is not enabled") {
+		t.Fatalf("slashed command must still dispatch, got %q (ok=%v)", reply, ok)
+	}
+}
+
+func TestRunCommandExactFormOnly(t *testing.T) {
+	s := testBridgeService(t)
+	if reply, ok := s.runCommand("messenger", "1", "compact the code"); ok {
+		t.Fatalf("multi-word prompt must fall through to the agent, got %q", reply)
+	}
+	if reply, ok := s.runCommand("messenger", "1", "status please"); ok {
+		t.Fatalf("command word inside a sentence must fall through, got %q", reply)
+	}
+	if reply, ok := s.runCommand("messenger", "1", "threads 2 3"); ok {
+		t.Fatalf("too many args must fall through, got %q", reply)
+	}
+	if _, ok := s.runCommand("messenger", "1", "allow"); ok {
+		t.Fatal("allow without an id must fall through")
+	}
+}
