@@ -11,19 +11,44 @@ import (
 	"time"
 
 	"element-orion/internal/agent"
+	"element-orion/internal/messenger"
 )
 
 // runCommand mirrors the discord slash command surface (/new /stop /status
 // /memory /compact) on the text platforms. Triggered by the same rules as the
-// agent (an /ai prefix, a reply to us, or a mention) — the prompt just starts
-// with "/". Returns the reply text and whether the command was recognized;
-// unrecognized "/..." prompts fall through to the agent.
+// agent (an /ai prefix, a reply to us, or a mention) — the command name may
+// keep its leading "/" or drop it (`/ai threads` and `/ai /threads` both
+// work). Returns the reply text and whether the command was recognized;
+// anything that isn't an exact command form falls through to the agent.
 func (s *Service) runCommand(platform, threadID, prompt string) (string, bool) {
 	fields := strings.Fields(strings.TrimSpace(prompt))
 	if len(fields) == 0 {
 		return "", false
 	}
 	cmd := strings.ToLower(strings.TrimPrefix(fields[0], "/"))
+	// exact forms only — a stray word in a longer prompt must never hijack
+	// the agent ("compact the code" stays an agent prompt).
+	switch cmd {
+	case "new", "stop", "status", "memory", "compact", "allowlist":
+		if len(fields) != 1 {
+			return "", false
+		}
+	case "threads":
+		if len(fields) > 2 {
+			return "", false
+		}
+	case "allow", "block":
+		if len(fields) < 2 {
+			return "", false
+		}
+	default:
+		return "", false
+	}
+	if cmd == "threads" || cmd == "allow" || cmd == "block" || cmd == "allowlist" {
+		if !s.cfg.BridgeAdminThread(platform, threadID) {
+			return "admin command — this thread is not in bridge.admin_threads.", true
+		}
+	}
 	switch cmd {
 	case "new":
 		return s.commandNew(platform, threadID), true
@@ -35,20 +60,14 @@ func (s *Service) runCommand(platform, threadID, prompt string) (string, bool) {
 		return s.commandMemory(platform, threadID), true
 	case "compact":
 		return s.commandCompact(platform, threadID), true
-	case "threads", "allow", "block", "allowlist":
-		if !s.cfg.BridgeAdminThread(platform, threadID) {
-			return "admin command — this thread is not in bridge.admin_threads.", true
-		}
-		switch cmd {
-		case "threads":
-			return s.commandThreads(platform, threadID, fields), true
-		case "allow":
-			return s.commandAllow(platform, fields), true
-		case "block":
-			return s.commandBlock(platform, fields), true
-		case "allowlist":
-			return s.commandAllowlist(platform), true
-		}
+	case "threads":
+		return s.commandThreads(platform, threadID, fields), true
+	case "allow":
+		return s.commandAllow(platform, fields), true
+	case "block":
+		return s.commandBlock(platform, fields), true
+	case "allowlist":
+		return s.commandAllowlist(platform), true
 	}
 	return "", false
 }
@@ -87,7 +106,17 @@ func (s *Service) commandThreads(platform, threadID string, fields []string) str
 			return "messenger is not enabled."
 		}
 		s.messenger.NudgeThreadSync(context.Background())
-		for _, t := range s.messenger.Threads() {
+		// the sync lands asynchronously via the mqtt publish response —
+		// wait briefly for the first batch so a fresh boot still lists.
+		var threads []messenger.ThreadInfo
+		for i := 0; i < 6; i++ {
+			threads = s.messenger.Threads()
+			if len(threads) > 0 {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		for _, t := range threads {
 			name := t.Name
 			if name == "" {
 				name = "(no name)"

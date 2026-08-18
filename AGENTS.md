@@ -183,9 +183,14 @@ is stripped; the rest becomes the prompt for the agent runner. No murmur `/ai`
 subcommands (models/image) — the fork uses the single `llm.model` config.
 
 Command surface (added 2026-08-18, symmetric with discord slash commands): a
-prompt that starts with `/` dispatches to the bridge command registry
+triggered prompt dispatches to the bridge command registry
 (`internal/bridge/commands.go`) instead of the agent — same trigger rules as
-the agent (`/ai stop`, reply-to-us `@us /memory`, mention, etc.). commands:
+the agent (`/ai threads`, reply-to-us `@us /memory`, mention, etc.). The
+command name may keep its leading "/" or drop it: `/ai threads` and
+`/ai /threads` both work (a leading "/" was originally required and `/ai
+threads` fell through to the agent — fixed 2026-08-18). Matching is exact
+form only: `/ai status`, `/ai /status` dispatch; "status please" or "compact
+the code" stay agent prompts. commands:
 `/new` (clear this thread's session history, persisted), `/stop` (cancel the
 in-flight agent run for this thread; runs are tracked per
 `platform:thread` key with a cancelable ctx + seq guard, canceled runs reply

@@ -291,7 +291,7 @@ func (s *Service) handleMessengerMessage(ctx context.Context, msg messenger.Inco
 		return
 	}
 
-	if strings.HasPrefix(prompt, "/") && s.handleCommand("messenger", threadID, "", prompt) {
+	if s.handleCommand("messenger", threadID, "", prompt) {
 		return
 	}
 
@@ -322,7 +322,7 @@ func (s *Service) handleWhatsAppMessage(ctx context.Context, msg whatsapp.Parsed
 		return
 	}
 
-	if strings.HasPrefix(prompt, "/") && s.handleCommand("whatsapp", chatJID, chatJID, prompt) {
+	if s.handleCommand("whatsapp", chatJID, chatJID, prompt) {
 		return
 	}
 
