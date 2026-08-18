@@ -930,7 +930,11 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 			s.audit.Write("error", state.ID, map[string]any{"op": "append_shared_memory_shard", "error": err.Error()})
 		}
 	} else if state.Key.GuildID == "" {
-		if err := agent.AppendToMemoryShard(s.cfg.App.MemoryDir, identityName, memoryPrompt, reply, time.Now()); err != nil {
+		memoryRoot := agent.ConfiguredDirectMessageMemoryRoot(s.cfg, state.Key.ChannelID)
+		if strings.TrimSpace(memoryRoot) == "" {
+			memoryRoot = s.cfg.App.MemoryDir
+		}
+		if err := agent.AppendToMemoryShard(memoryRoot, identityName, memoryPrompt, reply, time.Now()); err != nil {
 			s.audit.Write("error", state.ID, map[string]any{"op": "append_memory_shard", "error": err.Error()})
 		}
 	}
@@ -2051,6 +2055,10 @@ func (s *Service) memoryReport(key sessionKey) string {
 	memoryRoot := strings.TrimSpace(s.cfg.App.MemoryDir)
 	if sharedRoot := s.sharedMemoryRoot(key); sharedRoot != "" {
 		memoryRoot = sharedRoot
+	} else if key.GuildID == "" {
+		if dmRoot := agent.ConfiguredDirectMessageMemoryRoot(s.cfg, key.ChannelID); strings.TrimSpace(dmRoot) != "" {
+			memoryRoot = dmRoot
+		}
 	}
 
 	info := inspectMemoryRoot(s.cfg, memoryRoot, now)

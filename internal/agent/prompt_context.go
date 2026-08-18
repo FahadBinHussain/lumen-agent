@@ -597,11 +597,17 @@ func promptMemoryFilePathSummary(cfg config.Config, conversation ConversationCon
 	}
 
 	paths := []string{filepath.Join(memoryRoot, "MEMORY.md")}
+	shardRoot := memoryRoot
+	if conversation.IsDirectMessage {
+		if dmRoot := ConfiguredDirectMessageMemoryRoot(cfg, conversation.ChannelID); dmRoot != "" {
+			shardRoot = dmRoot
+		}
+	}
 	if conversation.IsDreamMode || cfg.App.LoadAllMemoryShards {
-		paths = append(paths, filepath.Join(memoryRoot, "*.md"))
+		paths = append(paths, filepath.Join(shardRoot, "*.md"))
 	} else {
 		for _, fileName := range memoryShardFileNames(conversation.Now) {
-			paths = append(paths, filepath.Join(memoryRoot, fileName))
+			paths = append(paths, filepath.Join(shardRoot, fileName))
 		}
 	}
 
@@ -710,9 +716,16 @@ func (r *Runner) workspacePromptSections(conversation ConversationContext) []pro
 	}
 
 	if conversation.IsDirectMessage {
-		for _, fileName := range memoryShardFileNamesForRoot(r.cfg, memoryRoot, conversation.Now) {
-			sectionName := filepath.ToSlash(filepath.Join("memory", fileName))
-			if section, ok := loadMemoryPromptSection(memoryRoot, fileName, sectionName); ok {
+		dmMemoryRoot := ConfiguredDirectMessageMemoryRoot(r.cfg, conversation.ChannelID)
+		sectionPrefix := "memory"
+		if dmMemoryRoot == "" {
+			dmMemoryRoot = memoryRoot
+		} else {
+			sectionPrefix = filepath.ToSlash(filepath.Join("guild-memory", "discord-dm", conversation.ChannelID))
+		}
+		for _, fileName := range memoryShardFileNamesForRoot(r.cfg, dmMemoryRoot, conversation.Now) {
+			sectionName := filepath.ToSlash(filepath.Join(sectionPrefix, fileName))
+			if section, ok := loadMemoryPromptSection(dmMemoryRoot, fileName, sectionName); ok {
 				sections = append(sections, section)
 			}
 		}
@@ -1006,4 +1019,16 @@ func configuredSharedConversationMemoryRoot(cfg config.Config, guildID string, c
 		return "", ""
 	}
 	return filepath.Join(cfg.App.SessionDir, "group-dm-memory", channelID), "group-dm-memory"
+}
+
+// ConfiguredDirectMessageMemoryRoot returns the per-DM memory root for a
+// Discord direct-message channel, keyed by DM channel ID (unique per partner,
+// mirroring group-dm-memory/<channel>). Returns "" when the session dir is
+// unset — callers should fall back to the global memory dir in that case.
+func ConfiguredDirectMessageMemoryRoot(cfg config.Config, channelID string) string {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" || strings.TrimSpace(cfg.App.SessionDir) == "" {
+		return ""
+	}
+	return filepath.Join(cfg.App.SessionDir, "guild-memory", "discord-dm", channelID)
 }
