@@ -88,6 +88,9 @@ type Service struct {
 	backgroundNotificationBatches map[string]*backgroundNotificationBatch
 	batchMu                    sync.Mutex
 
+	connMu    sync.RWMutex
+	connected bool
+
 	// persistenceToucher, when set, is called after state-changing disk
 	// writes (session persist, memory shard append) so external snapshot
 	// persistence (internal/persist) can sync right away instead of waiting
@@ -220,8 +223,43 @@ func New(cfg config.Config, runner *agent.Runner, audit *auditlog.Logger, sandbo
 
 	session.AddHandler(service.handleInteractionCreate)
 	session.AddHandler(service.handleMessageCreate)
+	session.AddHandler(func(_ *discordgo.Ready) {
+		service.setConnected(true)
+	})
+	session.AddHandler(func(_ *discordgo.Resumed) {
+		service.setConnected(true)
+	})
+	session.AddHandler(func(_ *discordgo.Disconnect) {
+		service.setConnected(false)
+	})
 
 	return service, nil
+}
+
+// setConnected tracks gateway connection state for the health watch
+// (bridge.health_watch polls IsConnected; discordgo reconnects on its own, so
+// a dead state here only lasts until the gateway reconnects).
+func (s *Service) setConnected(connected bool) {
+	s.connMu.Lock()
+	s.connected = connected
+	s.connMu.Unlock()
+}
+
+// IsConnected reports whether the Discord gateway session is currently open.
+func (s *Service) IsConnected() bool {
+	s.connMu.RLock()
+	defer s.connMu.RUnlock()
+	return s.connected
+}
+
+// SendPlainText posts a plain message to a channel, used by the bridge health
+// watch to deliver cross-platform alerts.
+func (s *Service) SendPlainText(channelID string, text string) error {
+	if s == nil || s.discord == nil {
+		return fmt.Errorf("discord session not initialized")
+	}
+	_, err := s.discord.ChannelMessageSend(channelID, text)
+	return err
 }
 
 // SetPersistenceToucher installs a callback fired after state-changing disk

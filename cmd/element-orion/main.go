@@ -159,6 +159,7 @@ func runServe(args []string) error {
 		if persistStore != nil {
 			bridgeService.SetPersistenceToucher(persistStore.Touch)
 		}
+		bridgeService.SetDiscord(service)
 	}
 
 	notifyService, err := buildNotify(&cfg)
