@@ -141,6 +141,40 @@ func TestSystemPromptLoadsGuildMemoryForSharedChannelSessions(t *testing.T) {
 	}
 }
 
+func TestSystemPromptLoadsPerDMMemoryShards(t *testing.T) {
+	workspace := t.TempDir()
+	sessionDir := filepath.Join(workspace, ".element-orion")
+	memoryRoot := filepath.Join(workspace, ".memory")
+	dmMemoryRoot := filepath.Join(sessionDir, "guild-memory", "discord-dm", "dm-1")
+	writeTestFile(t, memoryRoot, "MEMORY.md", "curated memory")
+	writeTestFile(t, dmMemoryRoot, "2026-03-12-PM.md", "dm current shard")
+	writeTestFile(t, dmMemoryRoot, "2026-03-12-AM.md", "dm previous shard")
+
+	runner := &Runner{cfg: config.Config{App: config.AppConfig{
+		WorkspaceRoot: workspace,
+		MemoryDir:     memoryRoot,
+		SessionDir:    sessionDir,
+	}}}
+	prompt := runner.systemPrompt(ConversationContext{
+		IsDirectMessage: true,
+		ChannelID:       "dm-1",
+		Now:             time.Date(2026, 3, 12, 15, 4, 0, 0, time.UTC),
+	})
+
+	for _, snippet := range []string{
+		"[BEGIN MEMORY.md]",
+		"curated memory",
+		"[BEGIN guild-memory/discord-dm/dm-1/2026-03-12-PM.md]",
+		"dm current shard",
+		"[BEGIN guild-memory/discord-dm/dm-1/2026-03-12-AM.md]",
+		"dm previous shard",
+	} {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("expected prompt to contain %q", snippet)
+		}
+	}
+}
+
 func TestSystemPromptLoadsAllGuildMemoryShardsWhenEnabled(t *testing.T) {
 	workspace := t.TempDir()
 	sessionDir := filepath.Join(workspace, ".element-orion")
