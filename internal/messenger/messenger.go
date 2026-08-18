@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +39,14 @@ type Incoming struct {
 
 type Handler func(ctx context.Context, msg Incoming)
 
+// ThreadInfo is one inbox thread the account has synced: its thread key and
+// the most recent name + activity seen for it.
+type ThreadInfo struct {
+	ThreadID     int64
+	Name         string
+	LastActivity time.Time
+}
+
 type Client struct {
 	client      *messagix.Client
 	uid         int64
@@ -47,6 +56,8 @@ type Client struct {
 	startTime   time.Time
 	seenMu      sync.Mutex
 	seen        map[string]time.Time
+	threadsMu   sync.Mutex
+	threads     map[int64]ThreadInfo
 
 	connMu    sync.Mutex
 	connected bool
@@ -89,6 +100,7 @@ func New(cookiesPath string, handler Handler) (*Client, error) {
 		cookiesPath: cookiesPath,
 		startTime:   time.Now(),
 		seen:        make(map[string]time.Time),
+		threads:     make(map[int64]ThreadInfo),
 	}, nil
 }
 
@@ -178,6 +190,20 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 			}()
 
 		case *messagix.Event_PublishResponse:
+			for _, th := range e.Table.LSDeleteThenInsertThread {
+				if th == nil || th.GetThreadKey() == 0 {
+					continue
+				}
+				info := ThreadInfo{
+					ThreadID: th.GetThreadKey(),
+					Name:     th.GetThreadName(),
+				}
+				if ts := th.LastActivityTimestampMs; ts > 0 {
+					info.LastActivity = time.UnixMilli(ts)
+				}
+				c.upsertThread(info)
+			}
+
 			upsertMessages, insertMessages := e.Table.WrapMessages()
 			for _, msg := range insertMessages {
 				if msg == nil || msg.LSInsertMessage == nil {
@@ -235,6 +261,51 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 			c.setConnected(true)
 			log.Printf("messenger: MQTT reconnected")
 		}
+	}
+}
+
+func (c *Client) upsertThread(info ThreadInfo) {
+	c.threadsMu.Lock()
+	defer c.threadsMu.Unlock()
+	cur, ok := c.threads[info.ThreadID]
+	if info.Name != "" {
+		cur.Name = info.Name
+	}
+	if !info.LastActivity.IsZero() {
+		cur.LastActivity = info.LastActivity
+	}
+	if !ok && cur.Name == "" && cur.LastActivity.IsZero() {
+		cur = info
+	}
+	cur.ThreadID = info.ThreadID
+	c.threads[info.ThreadID] = cur
+}
+
+// Threads returns the inbox threads synced so far, most recent first. The
+// cache fills from MQTT sync data; a container boot starts sparse until
+// traffic/sync arrives.
+func (c *Client) Threads() []ThreadInfo {
+	c.threadsMu.Lock()
+	defer c.threadsMu.Unlock()
+	out := make([]ThreadInfo, 0, len(c.threads))
+	for _, t := range c.threads {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].LastActivity.After(out[j].LastActivity)
+	})
+	return out
+}
+
+// NudgeThreadSync asks the server to push inbox thread metadata (sync group 1
+// = full thread info, matching mautrix-meta's connector).
+func (c *Client) NudgeThreadSync(ctx context.Context) {
+	if c.client == nil {
+		return
+	}
+	_, err := c.client.ExecuteTasks(ctx, &socket.FetchThreadsTask{SyncGroup: 1})
+	if err != nil {
+		log.Printf("messenger: thread sync nudge failed: %v", err)
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"element-orion/internal/agent"
 	"element-orion/internal/bnp"
 	"element-orion/internal/config"
+	"element-orion/internal/discordbot"
 	"element-orion/internal/llm"
 	"element-orion/internal/messenger"
 	"element-orion/internal/neon"
@@ -25,6 +26,7 @@ import (
 )
 
 const bridgeHistoryFile = "bridge-sessions.json"
+const bridgeAllowlistFile = "bridge-allowlist.json"
 
 type Service struct {
 	cfg       config.Config
@@ -37,6 +39,13 @@ type Service struct {
 
 	mu       sync.Mutex
 	sessions map[string][]llm.Message
+
+	// allowlist is the runtime overlay for send gates, keyed by platform
+	// ("messenger"/"whatsapp"/"discord"), persisted to bridge-allowlist.json
+	// in the session dir (Neon-backed via persist) and merged with the
+	// config allowlists by threadAllowed().
+	allowlist map[string][]string
+	allowPath string
 
 	// waEdits maps a route fanout's primary (messenger) message ID to the
 	// whatsapp message ID that mirrored it, keyed "messengerID|jid", so a
@@ -68,11 +77,13 @@ func (s *Service) SetPersistenceToucher(fn func()) {
 }
 
 // DiscordHealthClient is the slice of the Discord service the bridge needs:
-// gateway connection state and plain send/edit of a channel message.
+// gateway connection state, plain send/edit of a channel message, and
+// channel listing for the /threads admin command.
 type DiscordHealthClient interface {
 	IsConnected() bool
 	SendPlainText(channelID string, text string) (string, error)
 	EditPlainText(channelID string, messageID string, text string) error
+	ListChannels() ([]discordbot.ChannelInfo, error)
 }
 
 // SetDiscord wires the Discord service into the bridge so the health watch
@@ -86,12 +97,15 @@ func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
 		cfg:         cfg,
 		runner:      runner,
 		sessions:    make(map[string][]llm.Message),
+		allowlist:   make(map[string][]string),
+		allowPath:   filepath.Join(cfg.App.SessionDir, bridgeAllowlistFile),
 		waEdits:     make(map[string]string),
 		dcEdits:     make(map[string]string),
 		runCancels:  make(map[string]runCancel),
 		historyPath: filepath.Join(cfg.App.SessionDir, bridgeHistoryFile),
 	}
 	s.loadHistory()
+	s.loadAllowlist()
 
 	if cfg.Messenger.Enabled {
 		client, err := messenger.New(cfg.Messenger.CookiesPath, s.handleMessengerMessage)
@@ -257,7 +271,7 @@ func (s *Service) saveWhatsAppSession(ctx context.Context) {
 
 func (s *Service) handleMessengerMessage(ctx context.Context, msg messenger.Incoming) {
 	threadID := strconv.FormatInt(msg.ThreadID, 10)
-	if !s.cfg.MessengerThreadAllowed(threadID) {
+	if !s.threadAllowed("messenger", threadID) {
 		log.Printf("bridge: messenger thread %s not in allowlist, skipping", threadID)
 		return
 	}
@@ -303,7 +317,7 @@ func (s *Service) handleWhatsAppMessage(ctx context.Context, msg whatsapp.Parsed
 	}
 
 	chatJID := msg.Chat.String()
-	if !s.cfg.WhatsAppJIDAllowed(chatJID) {
+	if !s.threadAllowed("whatsapp", chatJID) {
 		log.Printf("bridge: whatsapp message from %s in chat %s dropped (not in whatsapp.allowed_jids)", msg.SenderJID, chatJID)
 		return
 	}
@@ -470,6 +484,87 @@ func (s *Service) loadHistory() {
 	log.Printf("bridge: restored %d session histories from %s", len(s.sessions), s.historyPath)
 }
 
+// loadAllowlist restores the runtime allowlist overlay (threads allowed via
+// /allow) from the session dir.
+func (s *Service) loadAllowlist() {
+	data, err := os.ReadFile(s.allowPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("bridge: failed to read allowlist file %s: %v", s.allowPath, err)
+		}
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := json.Unmarshal(data, &s.allowlist); err != nil {
+		log.Printf("bridge: failed to parse allowlist file %s: %v (starting empty)", s.allowPath, err)
+		s.allowlist = make(map[string][]string)
+		return
+	}
+	total := 0
+	for _, ids := range s.allowlist {
+		total += len(ids)
+	}
+	log.Printf("bridge: restored %d runtime allowlist entries from %s", total, s.allowPath)
+}
+
+// saveAllowlist persists the runtime allowlist overlay (best-effort, same
+// pattern as saveHistory; the persist toucher syncs it to Neon).
+func (s *Service) saveAllowlist() {
+	s.mu.Lock()
+	data, err := json.Marshal(s.allowlist)
+	s.mu.Unlock()
+	if err != nil {
+		log.Printf("bridge: marshal allowlist failed: %v", err)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(s.allowPath), 0o755); err != nil {
+		log.Printf("bridge: mkdir for allowlist file failed: %v", err)
+		return
+	}
+	if err := os.WriteFile(s.allowPath, data, 0o644); err != nil {
+		log.Printf("bridge: write allowlist file failed: %v", err)
+		return
+	}
+	if s.toucher != nil {
+		s.toucher()
+	}
+}
+
+// threadAllowed is the effective send gate for a platform thread: the
+// config allowlist OR the runtime overlay (added via /allow). Empty config
+// list still means allow all.
+func (s *Service) threadAllowed(platform string, id string) bool {
+	switch platform {
+	case "whatsapp":
+		if !s.cfg.WhatsAppJIDAllowed(id) {
+			s.mu.Lock()
+			_, ok := contains(s.allowlist["whatsapp"], id)
+			s.mu.Unlock()
+			return ok
+		}
+		return true
+	case "messenger":
+		if !s.cfg.MessengerThreadAllowed(id) {
+			s.mu.Lock()
+			_, ok := contains(s.allowlist["messenger"], id)
+			s.mu.Unlock()
+			return ok
+		}
+		return true
+	}
+	return true
+}
+
+func contains(list []string, id string) (int, bool) {
+	for i, v := range list {
+		if v == id {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
 // saveHistory writes the current sessions to the session dir (best-effort —
 // a failed write never breaks the turn; the persist ticker or toucher syncs it).
 func (s *Service) saveHistory() {
@@ -500,7 +595,7 @@ func (s *Service) send(platform string, threadID string, jid string, text string
 			log.Printf("bridge: messenger not enabled, cannot send to %s", threadID)
 			return ""
 		}
-		if !s.cfg.MessengerThreadAllowed(threadID) {
+		if !s.threadAllowed("messenger", threadID) {
 			log.Printf("bridge: send to messenger thread %s blocked (not in messenger.allowed_thread_ids)", threadID)
 			return ""
 		}
@@ -515,7 +610,7 @@ func (s *Service) send(platform string, threadID string, jid string, text string
 			log.Printf("bridge: whatsapp not enabled, cannot send to %s", jid)
 			return ""
 		}
-		if !s.cfg.WhatsAppJIDAllowed(jid) {
+		if !s.threadAllowed("whatsapp", jid) {
 			log.Printf("bridge: send to whatsapp jid %s blocked (not in whatsapp.allowed_jids)", jid)
 			return ""
 		}
@@ -533,7 +628,7 @@ func (s *Service) editMessage(threadID string, messageID string, text string) er
 	if s.messenger == nil {
 		return fmt.Errorf("messenger not enabled")
 	}
-	if !s.cfg.MessengerThreadAllowed(threadID) {
+	if !s.threadAllowed("messenger", threadID) {
 		return fmt.Errorf("thread %s not in messenger.allowed_thread_ids", threadID)
 	}
 	return s.messenger.EditMessage(context.Background(), messageID, text)
@@ -580,7 +675,7 @@ func (s *Service) SendMessage(ctx context.Context, threadID int64, text string) 
 	if s.messenger == nil {
 		return "", fmt.Errorf("messenger not enabled")
 	}
-	if !s.cfg.MessengerThreadAllowed(strconv.FormatInt(threadID, 10)) {
+	if !s.threadAllowed("messenger", strconv.FormatInt(threadID, 10)) {
 		return "", fmt.Errorf("thread %d not in messenger.allowed_thread_ids", threadID)
 	}
 	return s.messenger.SendText(ctx, threadID, text), nil
@@ -593,7 +688,7 @@ func (s *Service) EditMessage(ctx context.Context, threadID int64, messageID str
 		log.Printf("bnp: messenger not enabled, cannot edit message %s", messageID)
 		return fmt.Errorf("messenger not enabled")
 	}
-	if !s.cfg.MessengerThreadAllowed(strconv.FormatInt(threadID, 10)) {
+	if !s.threadAllowed("messenger", strconv.FormatInt(threadID, 10)) {
 		return fmt.Errorf("thread %d not in messenger.allowed_thread_ids", threadID)
 	}
 	return s.messenger.EditMessage(ctx, messageID, text)
@@ -606,7 +701,7 @@ func (s *Service) SendWhatsApp(ctx context.Context, jid string, text string) (st
 	if s.whatsapp == nil {
 		return "", fmt.Errorf("whatsapp not enabled")
 	}
-	if !s.cfg.WhatsAppJIDAllowed(jid) {
+	if !s.threadAllowed("whatsapp", jid) {
 		return "", fmt.Errorf("jid %s not in whatsapp.allowed_jids", jid)
 	}
 	return s.whatsapp.SendText(ctx, jid, text)

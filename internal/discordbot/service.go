@@ -277,6 +277,46 @@ func (s *Service) EditPlainText(channelID string, messageID string, text string)
 	return err
 }
 
+// ChannelInfo is one channel the bot can see, with its guild context.
+type ChannelInfo struct {
+	ID        string
+	Name      string
+	GuildID   string
+	GuildName string
+}
+
+// ListChannels returns every guild channel + DM channel the session can see,
+// used by the bridge /threads admin command.
+func (s *Service) ListChannels() ([]ChannelInfo, error) {
+	if s == nil || s.discord == nil {
+		return nil, fmt.Errorf("discord session not initialized")
+	}
+	var out []ChannelInfo
+	guildNames := map[string]string{}
+	guilds, err := s.discord.UserGuilds(200, "", "", false)
+	if err != nil {
+		return nil, fmt.Errorf("list guilds: %w", err)
+	}
+	for _, g := range guilds {
+		guildNames[g.ID] = g.Name
+		channels, err := s.discord.GuildChannels(g.ID)
+		if err != nil {
+			continue
+		}
+		for _, ch := range channels {
+			out = append(out, ChannelInfo{ID: ch.ID, Name: ch.Name, GuildID: g.ID, GuildName: g.Name})
+		}
+	}
+	for _, ch := range s.discord.State.PrivateChannels {
+		name := ch.Name
+		if name == "" && len(ch.Recipients) > 0 {
+			name = ch.Recipients[0].Username
+		}
+		out = append(out, ChannelInfo{ID: ch.ID, Name: name, GuildName: "DM"})
+	}
+	return out, nil
+}
+
 // SetPersistenceToucher installs a callback fired after state-changing disk
 // writes so external snapshot persistence can sync immediately (no-op when
 // nil).

@@ -21,9 +21,11 @@ func testBridgeService(t *testing.T) *Service {
 	cfg.App.SessionDir = dir
 	cfg.App.MemoryDir = filepath.Join(dir, "memory")
 	return &Service{
-		cfg:        cfg,
-		sessions:   map[string][]llm.Message{},
-		runCancels: map[string]runCancel{},
+		cfg:         cfg,
+		sessions:    map[string][]llm.Message{},
+		allowlist:   map[string][]string{},
+		allowPath:   filepath.Join(dir, "bridge-allowlist.json"),
+		runCancels:  map[string]runCancel{},
 		historyPath: filepath.Join(dir, "bridge-sessions.json"),
 	}
 }
@@ -143,5 +145,97 @@ func TestRunCommandMemory(t *testing.T) {
 	reply, ok = s.runCommand("whatsapp", "999@g.us", "/memory")
 	if !ok || !strings.Contains(reply, "no memory shards") {
 		t.Fatalf("expected empty memory reply, got %q (ok=%v)", reply, ok)
+	}
+}
+func TestAdminCommandsNeedAdminThread(t *testing.T) {
+	s := testBridgeService(t)
+	cfg := config.Config{}
+	cfg.Bridge.AdminThreads = map[string][]string{"whatsapp": {"123@g.us"}}
+	s.cfg = cfg
+
+	reply, ok := s.runCommand("whatsapp", "999@g.us", "/threads")
+	if !ok || !strings.Contains(reply, "admin command") {
+		t.Fatalf("non-admin thread must be denied, got %q (ok=%v)", reply, ok)
+	}
+
+	reply, ok = s.runCommand("whatsapp", "123@g.us", "/threads")
+	if !ok {
+		t.Fatalf("admin thread must be allowed /threads, got %q", reply)
+	}
+	if s.whatsapp == nil {
+		if !strings.Contains(reply, "whatsapp is not enabled") {
+			t.Fatalf("expected not-enabled reply, got %q", reply)
+		}
+	}
+}
+
+func TestAllowBlockAllowlistOverlay(t *testing.T) {
+	s := testBridgeService(t)
+	cfg := config.Config{}
+	cfg.Messenger.AllowedThreadIDs = []string{"100"}
+	cfg.Bridge.AdminThreads = map[string][]string{"messenger": {"2637078310061988"}}
+	s.cfg = cfg
+
+	reply, ok := s.runCommand("messenger", "2637078310061988", "/allow 984803114200952")
+	if !ok || !strings.Contains(reply, "allowed 984803114200952") {
+		t.Fatalf("expected allow reply, got %q (ok=%v)", reply, ok)
+	}
+	if !s.threadAllowed("messenger", "984803114200952") {
+		t.Fatal("thread must be allowed after /allow")
+	}
+	if !s.threadAllowed("messenger", "100") {
+		t.Fatal("config allowlist must still apply")
+	}
+	if s.threadAllowed("messenger", "200") {
+		t.Fatal("unlisted thread must stay blocked")
+	}
+
+	data, err := os.ReadFile(s.allowPath)
+	if err != nil {
+		t.Fatalf("allowlist file must be persisted: %v", err)
+	}
+	if !strings.Contains(string(data), "984803114200952") {
+		t.Fatalf("allowlist file missing entry: %s", data)
+	}
+
+	reply, ok = s.runCommand("messenger", "2637078310061988", "/allow abc")
+	if !ok || !strings.Contains(reply, "numeric") {
+		t.Fatalf("non-numeric messenger id must be rejected, got %q", reply)
+	}
+	if s.threadAllowed("messenger", "abc") {
+		t.Fatal("invalid id must not be allowed")
+	}
+
+	reply, ok = s.runCommand("messenger", "2637078310061988", "/block 984803114200952")
+	if !ok || !strings.Contains(reply, "removed 984803114200952") {
+		t.Fatalf("expected block reply, got %q (ok=%v)", reply, ok)
+	}
+	if s.threadAllowed("messenger", "984803114200952") {
+		t.Fatal("thread must be blocked after /block")
+	}
+
+	reply, ok = s.runCommand("messenger", "2637078310061988", "/allowlist")
+	if !ok || !strings.Contains(reply, "config allowlist (1)") || !strings.Contains(reply, "runtime overlay: empty") {
+		t.Fatalf("expected allowlist report, got %q", reply)
+	}
+}
+
+func TestAllowlistOverlayRestoresFromFile(t *testing.T) {
+	dir := t.TempDir()
+	allowPath := filepath.Join(dir, "bridge-allowlist.json")
+	if err := os.WriteFile(allowPath, []byte(`{"whatsapp":["123@g.us"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+s := testBridgeService(t)
+	s.allowPath = allowPath
+	cfg := s.cfg
+	cfg.WhatsApp.AllowedJIDs = []string{"other@g.us"}
+	s.cfg = cfg
+	s.loadAllowlist()
+	if !s.threadAllowed("whatsapp", "123@g.us") {
+		t.Fatal("restored overlay entry must allow the thread")
+	}
+	if s.threadAllowed("whatsapp", "999@g.us") {
+		t.Fatal("non-restored thread must stay blocked")
 	}
 }
