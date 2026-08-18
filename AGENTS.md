@@ -66,7 +66,13 @@
   nextStartTime/nextEndTime; `GET /v1/logs/values` lists label values; WebSocket
   subscribe (`/v1/logs/subscribe`) streams live. This surfaced the 2026-08-17
   TS_AUTHKEY crash: `backend error: invalid key: API key k2bx6Qw2KB11CNTRL not
-  valid` -> `Exited with status 1` (see Deploy section).
+  valid` -> `Exited with status 1` (see Deploy section). QUIRK (2026-08-17,
+  since ~16:00): app-level lines (log.Printf + top-level zerolog info like
+  "WhatsApp connected"/"health-watch: ... armed") intermittently stop showing
+  in the API while platform sub-logger lines (messagix pings, whatsmeow iq
+  debug) keep flowing — treat log-API silence as a pipeline quirk, verify a
+  boot via `/api/health` + fresh tailscale magicsock contacts + keepalive
+  lines instead of expecting the boot log lines.
 - Config section `persistence:` (enabled, database_url, database_url_env
   default DATABASE_URL, interval, exclude). Enabled in production.yaml; DSN
   comes from the DATABASE_URL Render env var. Validation fails startup when
