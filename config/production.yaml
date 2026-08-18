@@ -277,6 +277,13 @@ bridge:
         thread_id: "984803114200952"
       - platform: whatsapp
         jid: "120363409684314037@g.us"
+    # temporary test route for the in-place whatsapp edit verification
+    # (2026-08-18) — remove after the test.
+    test:
+      - platform: messenger
+        thread_id: "2637078310061988"
+      - platform: whatsapp
+        jid: "8801911104251@s.whatsapp.net"
 
 notify:
   # lumen's own notifications endpoint (murmur space default is dead/paused)
