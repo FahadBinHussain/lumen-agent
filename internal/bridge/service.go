@@ -182,6 +182,7 @@ func (s *Service) Run(ctx context.Context) error {
 				return
 			}
 			bnpWorker := bnp.NewWorker(s, nil)
+			bnpWorker.SetWhatsAppSender(s)
 			bnpWorker.Run(ctx)
 		}()
 	}
@@ -557,6 +558,19 @@ func (s *Service) EditMessage(ctx context.Context, threadID int64, messageID str
 		return fmt.Errorf("thread %d not in messenger.allowed_thread_ids", threadID)
 	}
 	return s.messenger.EditMessage(ctx, messageID, text)
+}
+
+// SendWhatsApp implements bnp.WhatsAppSender: mirrors an outbox item to a
+// WhatsApp chat. Best-effort — the worker logs failures and the messenger
+// ack contract stays unchanged.
+func (s *Service) SendWhatsApp(ctx context.Context, jid string, text string) error {
+	if s.whatsapp == nil {
+		return fmt.Errorf("whatsapp not enabled")
+	}
+	if !s.cfg.WhatsAppJIDAllowed(jid) {
+		return fmt.Errorf("jid %s not in whatsapp.allowed_jids", jid)
+	}
+	return s.whatsapp.SendText(ctx, jid, text)
 }
 
 func cloneMessages(messages []llm.Message) []llm.Message {

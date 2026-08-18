@@ -20,21 +20,29 @@ type MessengerSender interface {
 	EditMessage(ctx context.Context, threadID int64, messageID string, text string) error
 }
 
+// WhatsAppSender is an optional second delivery channel for outbox items.
+// When configured, the worker mirrors every new send to this channel.
+type WhatsAppSender interface {
+	SendWhatsApp(ctx context.Context, jid string, text string) error
+}
+
 type Settings struct {
-	OutboxURL   string
-	Token       string
-	ThreadID    string
-	PollSeconds int
-	ClaimLimit  int
-	Timeout     int
+	OutboxURL        string
+	Token            string
+	ThreadID         string
+	WhatsAppThreadID string
+	PollSeconds      int
+	ClaimLimit       int
+	Timeout          int
 }
 
 func LoadSettings() *Settings {
 	s := &Settings{
-		OutboxURL:   os.Getenv("BNP_MESSENGER_OUTBOX_URL"),
-		Token:       os.Getenv("BNP_MESSENGER_OUTBOX_TOKEN"),
-		ThreadID:    os.Getenv("BNP_MESSENGER_THREAD_ID"),
-		PollSeconds: 30,
+		OutboxURL:        os.Getenv("BNP_MESSENGER_OUTBOX_URL"),
+		Token:            os.Getenv("BNP_MESSENGER_OUTBOX_TOKEN"),
+		ThreadID:         os.Getenv("BNP_MESSENGER_THREAD_ID"),
+		WhatsAppThreadID: os.Getenv("BNP_WHATSAPP_THREAD_ID"),
+		PollSeconds:      30,
 		ClaimLimit:  2,
 		Timeout:     30,
 	}
@@ -70,6 +78,7 @@ type Item struct {
 
 type Worker struct {
 	client     MessengerSender
+	waSender   WhatsAppSender
 	settings   *Settings
 	httpClient *http.Client
 }
@@ -85,12 +94,21 @@ func NewWorker(sender MessengerSender, s *Settings) *Worker {
 	}
 }
 
+// SetWhatsAppSender wires the optional mirror channel. Safe to call after
+// NewWorker; the worker only uses it when BNP_WHATSAPP_THREAD_ID is set.
+func (w *Worker) SetWhatsAppSender(sender WhatsAppSender) {
+	w.waSender = sender
+}
+
 func (w *Worker) Run(ctx context.Context) {
 	if !w.settings.Enabled() {
 		log.Printf("bnp: worker disabled (BNP_MESSENGER_OUTBOX_URL/TOKEN/THREAD_ID must be set)")
 		return
 	}
 	log.Printf("bnp: messenger notifications enabled for thread %s", w.settings.ThreadID)
+	if w.settings.WhatsAppThreadID != "" && w.waSender != nil {
+		log.Printf("bnp: whatsapp mirror enabled for jid %s", w.settings.WhatsAppThreadID)
+	}
 	ticker := time.NewTicker(time.Duration(w.settings.PollSeconds) * time.Second)
 	defer ticker.Stop()
 	for {
@@ -172,6 +190,11 @@ func (w *Worker) sendItem(ctx context.Context, item Item) {
 	if msgID == "" {
 		w.ackItem(ctx, item.ID, "failed", "", "", "send returned empty message ID")
 		return
+	}
+	if w.settings.WhatsAppThreadID != "" && w.waSender != nil {
+		if err := w.waSender.SendWhatsApp(ctx, w.settings.WhatsAppThreadID, item.Message); err != nil {
+			log.Printf("bnp: whatsapp mirror send failed: %v", err)
+		}
 	}
 	w.ackItem(ctx, item.ID, "sent", msgID, "send", "")
 }
