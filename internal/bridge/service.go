@@ -386,18 +386,22 @@ func (s *Service) agentRun(ctx context.Context, platform string, threadID string
 		s.whatsapp.StartTyping(ctx, jid)
 	}
 
-	// murmur-style formatting: messenger shows a "thinking." animation while
-	// the model works, then the final reply is edited into the same message
-	// as "[model]\nresponse". whatsapp skips the animation and uses a single
-	// "[model] response" line. The tag uses the catalog's short name (like
-	// murmur's model alias), falling back to the full model id.
+	// murmur-style formatting: messenger and whatsapp show a "thinking."
+	// animation while the model works, then the final reply is edited into
+	// the same message as "[model] response". messenger edits are capped by
+	// Meta, so its animation stays short (4 edits); whatsapp protocol edits
+	// have no practical cap (20-min edit window), so its animation runs
+	// smooth and long until the reply lands. The tag uses the catalog's
+	// short name (like murmur's model alias), falling back to the full
+	// model id.
 	modelName := s.cfg.ResolveLLMModel()
 	if entry, ok := s.cfg.LLM.ActiveModelEntry(); ok && strings.TrimSpace(entry.Name) != "" {
 		modelName = entry.Name
 	}
 	var msgID string
 	var stopThinking chan struct{}
-	if platform == "messenger" {
+	switch platform {
+	case "messenger":
 		msgID = s.send(platform, threadID, jid, "thinking.")
 		if msgID != "" {
 			stopThinking = make(chan struct{})
@@ -411,6 +415,32 @@ func (s *Service) agentRun(ctx context.Context, platform string, threadID string
 					case <-time.After(500 * time.Millisecond):
 						i = (i + 1) % len(dots)
 						s.editMessage(threadID, msgID, dots[i])
+					}
+				}
+			}()
+		}
+	case "whatsapp":
+		if s.whatsapp != nil {
+			id, err := s.whatsapp.SendText(ctx, jid, "thinking.")
+			if err != nil {
+				log.Printf("bridge: whatsapp thinking message failed: %v", err)
+				break
+			}
+			msgID = id
+			stopThinking = make(chan struct{})
+			go func() {
+				frames := []string{"thinking", "thinking.", "thinking..", "thinking...", "thinking...."}
+				i := 0
+				for {
+					select {
+					case <-stopThinking:
+						return
+					case <-time.After(400 * time.Millisecond):
+						i = (i + 1) % len(frames)
+						if err := s.whatsapp.EditText(ctx, jid, msgID, frames[i]); err != nil {
+							log.Printf("bridge: whatsapp thinking edit failed: %v", err)
+							return
+						}
 					}
 				}
 			}()
@@ -635,11 +665,19 @@ func (s *Service) editMessage(threadID string, messageID string, text string) er
 }
 
 // sendReply delivers a formatted message the murmur way: edit the pending
-// thinking message on messenger when one exists, otherwise send a new one.
+// thinking message in place on messenger (Meta edit cap) and whatsapp
+// (protocol edits, 20-min window) when one exists, otherwise send a new one.
 func (s *Service) sendReply(platform string, threadID string, jid string, msgID string, text string) {
 	if platform == "messenger" && msgID != "" {
 		if err := s.editMessage(threadID, msgID, text); err != nil {
 			log.Printf("bridge: edit reply in %s failed: %v", threadID, err)
+			s.send(platform, threadID, jid, text)
+		}
+		return
+	}
+	if platform == "whatsapp" && msgID != "" && s.whatsapp != nil {
+		if err := s.whatsapp.EditText(context.Background(), jid, msgID, text); err != nil {
+			log.Printf("bridge: whatsapp edit reply in %s failed: %v", jid, err)
 			s.send(platform, threadID, jid, text)
 		}
 		return
