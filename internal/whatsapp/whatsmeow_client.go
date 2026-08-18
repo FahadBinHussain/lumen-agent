@@ -36,6 +36,17 @@ type WhatsmeowClient struct {
 
 	sentMu  sync.Mutex
 	sentIDs map[string]time.Time
+
+	chatsMu sync.Mutex
+	chats   map[string]time.Time
+}
+
+// ThreadInfo is one chat the account can reach: a group (with its name) or a
+// 1:1 chat we have exchanged messages with.
+type ThreadInfo struct {
+	JID          string
+	Name         string
+	LastActivity time.Time
 }
 
 func NewWhatsmeowClient(dbPath string, proxyAddr string, logger zerolog.Logger, handler MessageHandler) (*WhatsmeowClient, error) {
@@ -85,6 +96,7 @@ func NewWhatsmeowClient(dbPath string, proxyAddr string, logger zerolog.Logger, 
 		logger:      logger,
 		handler:     handler,
 		sentIDs:     map[string]time.Time{},
+		chats:       map[string]time.Time{},
 	}
 
 	if proxyAddr != "" {
@@ -164,10 +176,89 @@ func (w *WhatsmeowClient) QRRef() string {
 	return w.qrRef
 }
 
+// noteChat records a chat we have seen activity in (any direction), used by
+// the /threads listing for 1:1 chats.
+func (w *WhatsmeowClient) noteChat(jid types.JID, ts time.Time) {
+	w.chatsMu.Lock()
+	defer w.chatsMu.Unlock()
+	if w.chats == nil {
+		w.chats = map[string]time.Time{}
+	}
+	key := jid.String()
+	cur, ok := w.chats[key]
+	if !ok || ts.After(cur) {
+		w.chats[key] = ts
+	}
+}
+
+// Threads lists the chats this account can reach: joined groups (with their
+// names, live from the server) plus 1:1 chats with recent activity (names
+// resolved from the contact store when available).
+func (w *WhatsmeowClient) Threads(ctx context.Context) ([]ThreadInfo, error) {
+	if w.client == nil {
+		return nil, fmt.Errorf("whatsapp client not initialized")
+	}
+	var out []ThreadInfo
+
+	if groups, err := w.client.GetJoinedGroups(ctx); err == nil {
+		for _, g := range groups {
+			name := ""
+			if g.GroupName.Name != "" {
+				name = g.GroupName.Name
+			}
+			out = append(out, ThreadInfo{JID: g.JID.String(), Name: name})
+		}
+	} else {
+		w.logger.Warn().Err(err).Msg("failed to list joined whatsapp groups")
+	}
+
+	contacts := map[types.JID]types.ContactInfo{}
+	if w.client.Store != nil && w.client.Store.Contacts != nil {
+		if all, err := w.client.Store.Contacts.GetAllContacts(ctx); err == nil {
+			contacts = all
+		}
+	}
+
+	w.chatsMu.Lock()
+	chats := make([]struct {
+		jid string
+		ts  time.Time
+	}, 0, len(w.chats))
+	for jid, ts := range w.chats {
+		chats = append(chats, struct {
+			jid string
+			ts  time.Time
+		}{jid, ts})
+	}
+	w.chatsMu.Unlock()
+
+	for _, ch := range chats {
+		jid, err := types.ParseJID(ch.jid)
+		if err != nil {
+			continue
+		}
+		if jid.Server != types.DefaultUserServer {
+			continue
+		}
+		name := ""
+		if c, ok := contacts[jid.ToNonAD()]; ok {
+			name = c.FullName
+			if name == "" {
+				name = c.PushName
+			}
+		}
+		out = append(out, ThreadInfo{JID: ch.jid, Name: name, LastActivity: ch.ts})
+	}
+	return out, nil
+}
+
 func (w *WhatsmeowClient) handleMessage(evt *events.Message) {
 	if evt.Info.IsFromMe {
 		return
 	}
+
+	chat := w.resolvePN(context.Background(), evt.Info.Chat)
+	w.noteChat(chat, evt.Info.Timestamp)
 
 	text := evt.Message.GetConversation()
 	if text == "" {
@@ -179,8 +270,6 @@ func (w *WhatsmeowClient) handleMessage(evt *events.Message) {
 	if text == "" {
 		return
 	}
-
-	chat := w.resolvePN(context.Background(), evt.Info.Chat)
 
 	chatJID := ChatJID{
 		User:   chat.User,
@@ -326,6 +415,7 @@ func (w *WhatsmeowClient) SendText(ctx context.Context, to string, text string) 
 		return "", fmt.Errorf("send message: %w", err)
 	}
 	w.recordSent(src.ID)
+	w.noteChat(jid, time.Now())
 
 	w.logger.Info().Str("to", to).Str("text", truncate(text, 50)).Msg("WhatsApp message sent via whatsmeow")
 	return string(src.ID), nil

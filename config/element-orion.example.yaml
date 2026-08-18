@@ -144,6 +144,9 @@ bridge:
   notifications_path: /api/automation/notifications
   secret: ""
   secret_env: ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET
+  # threads allowed to run the admin commands (/threads /allow /block
+  # /allowlist). empty list = nobody.
+  admin_threads: {}
 
 gifs:
   enabled: false

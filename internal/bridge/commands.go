@@ -35,8 +35,181 @@ func (s *Service) runCommand(platform, threadID, prompt string) (string, bool) {
 		return s.commandMemory(platform, threadID), true
 	case "compact":
 		return s.commandCompact(platform, threadID), true
+	case "threads", "allow", "block", "allowlist":
+		if !s.cfg.BridgeAdminThread(platform, threadID) {
+			return "admin command — this thread is not in bridge.admin_threads.", true
+		}
+		switch cmd {
+		case "threads":
+			return s.commandThreads(platform, threadID, fields), true
+		case "allow":
+			return s.commandAllow(platform, fields), true
+		case "block":
+			return s.commandBlock(platform, fields), true
+		case "allowlist":
+			return s.commandAllowlist(platform), true
+		}
 	}
 	return "", false
+}
+
+const threadsPageSize = 25
+
+// commandThreads lists the threads this platform's account can reach, newest
+// activity first. Optional page argument (/threads 2).
+func (s *Service) commandThreads(platform, threadID string, fields []string) string {
+	page := 1
+	if len(fields) > 1 {
+		if n, err := strconv.Atoi(fields[1]); err == nil && n > 0 {
+			page = n
+		}
+	}
+
+	var lines []string
+	switch platform {
+	case "whatsapp":
+		if s.whatsapp == nil {
+			return "whatsapp is not enabled."
+		}
+		threads, err := s.whatsapp.Threads(context.Background())
+		if err != nil {
+			return fmt.Sprintf("failed to list whatsapp chats: %v", err)
+		}
+		for _, t := range threads {
+			name := t.Name
+			if name == "" {
+				name = "(no name)"
+			}
+			lines = append(lines, fmt.Sprintf("%s — %s", t.JID, name))
+		}
+	case "messenger":
+		if s.messenger == nil {
+			return "messenger is not enabled."
+		}
+		s.messenger.NudgeThreadSync(context.Background())
+		for _, t := range s.messenger.Threads() {
+			name := t.Name
+			if name == "" {
+				name = "(no name)"
+			}
+			lines = append(lines, fmt.Sprintf("%d — %s", t.ThreadID, name))
+		}
+	case "discord":
+		if s.discord == nil {
+			return "discord is not wired."
+		}
+		channels, err := s.discord.ListChannels()
+		if err != nil {
+			return fmt.Sprintf("failed to list discord channels: %v", err)
+		}
+		for _, ch := range channels {
+			lines = append(lines, fmt.Sprintf("%s — %s", ch.ID, ch.Name+" ("+ch.GuildName+")"))
+		}
+	default:
+		return "unknown platform."
+	}
+
+	if len(lines) == 0 {
+		return "no threads found yet. messenger and whatsapp lists fill from traffic/sync; run again in a bit."
+	}
+
+	start := (page - 1) * threadsPageSize
+	if start >= len(lines) {
+		return fmt.Sprintf("page %d is past the end (%d threads).", page, len(lines))
+	}
+	end := start + threadsPageSize
+	if end > len(lines) {
+		end = len(lines)
+	}
+	header := fmt.Sprintf("%d threads (page %d of %d):\n", len(lines), page, (len(lines)+threadsPageSize-1)/threadsPageSize)
+	return header + strings.Join(lines[start:end], "\n")
+}
+
+// commandAllow adds a thread to the runtime allowlist overlay, persisted to
+// bridge-allowlist.json. The id format is validated per platform.
+func (s *Service) commandAllow(platform string, fields []string) string {
+	if len(fields) < 2 {
+		return "usage: /allow <thread id>"
+	}
+	id := strings.TrimSpace(fields[1])
+	if id == "" {
+		return "usage: /allow <thread id>"
+	}
+	switch platform {
+	case "messenger":
+		if _, err := strconv.ParseInt(id, 10, 64); err != nil {
+			return "messenger thread ids are numeric, e.g. /allow 984803114200952"
+		}
+	case "whatsapp":
+		if !strings.Contains(id, "@") {
+			return "whatsapp ids are JIDs, e.g. /allow 8801711472629@s.whatsapp.net or a @g.us group"
+		}
+	case "discord":
+		if _, err := strconv.ParseInt(id, 10, 64); err != nil {
+			return "discord channel ids are numeric snowflakes, e.g. /allow 1537650032441032765"
+		}
+	}
+
+	s.mu.Lock()
+	if _, ok := contains(s.allowlist[platform], id); !ok {
+		s.allowlist[platform] = append(s.allowlist[platform], id)
+	}
+	s.mu.Unlock()
+	s.saveAllowlist()
+	return fmt.Sprintf("allowed %s on %s (runtime overlay, survives deploys).", id, platform)
+}
+
+// commandBlock removes a thread from the runtime allowlist overlay.
+func (s *Service) commandBlock(platform string, fields []string) string {
+	if len(fields) < 2 {
+		return "usage: /block <thread id>"
+	}
+	id := strings.TrimSpace(fields[1])
+	if id == "" {
+		return "usage: /block <thread id>"
+	}
+	s.mu.Lock()
+	if idx, ok := contains(s.allowlist[platform], id); ok {
+		s.allowlist[platform] = append(s.allowlist[platform][:idx], s.allowlist[platform][idx+1:]...)
+	}
+	s.mu.Unlock()
+	s.saveAllowlist()
+	return fmt.Sprintf("removed %s from the runtime allowlist on %s.", id, platform)
+}
+
+// commandAllowlist shows the effective send gate for this platform: config
+// allowlist + runtime overlay additions.
+func (s *Service) commandAllowlist(platform string) string {
+	var cfgIDs []string
+	switch platform {
+	case "messenger":
+		cfgIDs = s.cfg.Messenger.AllowedThreadIDs
+	case "whatsapp":
+		cfgIDs = s.cfg.WhatsApp.AllowedJIDs
+	}
+
+	s.mu.Lock()
+	runtimeIDs := append([]string(nil), s.allowlist[platform]...)
+	s.mu.Unlock()
+
+	var b strings.Builder
+	if len(cfgIDs) == 0 {
+		b.WriteString("config allowlist: empty (all threads allowed)\n")
+	} else {
+		fmt.Fprintf(&b, "config allowlist (%d):\n", len(cfgIDs))
+		for _, id := range cfgIDs {
+			b.WriteString("  " + id + "\n")
+		}
+	}
+	if len(runtimeIDs) == 0 {
+		b.WriteString("runtime overlay: empty\n")
+	} else {
+		fmt.Fprintf(&b, "runtime overlay (%d):\n", len(runtimeIDs))
+		for _, id := range runtimeIDs {
+			b.WriteString("  + " + id + "\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // handleCommand runs a command and sends the reply through the normal

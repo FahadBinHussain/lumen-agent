@@ -3,6 +3,8 @@ package bridge
 import (
 	"testing"
 	"time"
+
+	"element-orion/internal/discordbot"
 )
 
 func TestCheckHealthTransitions(t *testing.T) {
@@ -95,6 +97,9 @@ func (f *fakeDiscordHealthClient) SendPlainText(channelID string, text string) (
 }
 func (f *fakeDiscordHealthClient) EditPlainText(channelID string, messageID string, text string) error {
 	return nil
+}
+func (f *fakeDiscordHealthClient) ListChannels() ([]discordbot.ChannelInfo, error) {
+	return nil, nil
 }
 
 func TestPlatformAliveDiscord(t *testing.T) {
