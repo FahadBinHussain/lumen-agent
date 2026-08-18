@@ -308,10 +308,11 @@ func (w *WhatsmeowClient) Disconnect() {
 	}
 }
 
-func (w *WhatsmeowClient) SendText(ctx context.Context, to string, text string) error {
+// SendText sends plain text to one chat and returns the whatsapp message ID.
+func (w *WhatsmeowClient) SendText(ctx context.Context, to string, text string) (string, error) {
 	jid, err := types.ParseJID(to)
 	if err != nil {
-		return fmt.Errorf("parse JID: %w", err)
+		return "", fmt.Errorf("parse JID: %w", err)
 	}
 
 	jid = w.resolvePN(ctx, jid)
@@ -322,11 +323,35 @@ func (w *WhatsmeowClient) SendText(ctx context.Context, to string, text string) 
 
 	src, err := w.client.SendMessage(ctx, jid, msg)
 	if err != nil {
-		return fmt.Errorf("send message: %w", err)
+		return "", fmt.Errorf("send message: %w", err)
 	}
 	w.recordSent(src.ID)
 
 	w.logger.Info().Str("to", to).Str("text", truncate(text, 50)).Msg("WhatsApp message sent via whatsmeow")
+	return string(src.ID), nil
+}
+
+// EditText replaces an earlier message we sent to the same chat in place
+// (whatsmeow BuildEdit protocol edit, subject to the server edit window).
+// The message ID must be a whatsapp message ID we got back from SendText.
+func (w *WhatsmeowClient) EditText(ctx context.Context, to string, messageID string, text string) error {
+	jid, err := types.ParseJID(to)
+	if err != nil {
+		return fmt.Errorf("parse JID: %w", err)
+	}
+
+	jid = w.resolvePN(ctx, jid)
+
+	msg := w.client.BuildEdit(jid, types.MessageID(messageID), &waE2E.Message{
+		Conversation: &text,
+	})
+
+	_, err = w.client.SendMessage(ctx, jid, msg)
+	if err != nil {
+		return fmt.Errorf("send edit: %w", err)
+	}
+
+	w.logger.Info().Str("to", to).Str("id", messageID).Str("text", truncate(text, 50)).Msg("WhatsApp message edited via whatsmeow")
 	return nil
 }
 

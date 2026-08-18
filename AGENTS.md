@@ -245,10 +245,14 @@ restored on boot). The old blunt 100-message cap is gone (2026-08-14).
     PRIMARY (its message ID feeds the ack contract, its failure fails the
     item), every other channel is best-effort (logged, never fails the ack);
     edits (edit_pending items) replace the primary messenger message AND
-    mirror the edited text to every other channel as a fresh message
-    (messenger is the only channel with an edit API — 2026-08-18 fix, the
-    whatsapp group was showing stale "detected" text while messenger had the
-    edited "published" text). the notifications
+    update every other channel: whatsapp edits IN PLACE when the mirror's
+    message ID was recorded (whatsmeow BuildEdit, 20-min edit window;
+    mapping keyed "messengerID|jid" consumed on first edit, dropped when the
+    window is missed) and falls back to a fresh-message mirror otherwise;
+    discord always gets a fresh mirror (no edit API). the original bug: the
+    whatsapp group kept stale "detected" text while messenger had the edited
+    "published" text (2026-08-18, commit 0e5a88a fresh-mirror, then commit
+    TBD in-place edits via whatsmewo BuildEdit). the notifications
     endpoint also accepts an optional `route` body field to fan out instead
     of single platform/threadId (unknown route = 400). adding a channel =
     edit `bridge.routes` in production.yaml + deploy, no code. current bnp
