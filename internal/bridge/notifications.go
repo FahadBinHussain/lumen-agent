@@ -112,19 +112,10 @@ func (s *Service) handleAutomationNotification(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	platform := strings.TrimSpace(strings.ToLower(req.Platform))
-	if platform == "" {
-		platform = "messenger"
-	}
-	threadID := strings.TrimSpace(req.ThreadID)
-	if threadID == "" {
-		http.Error(w, "threadId is required", http.StatusBadRequest)
-		return
-	}
-
 	// route mode: fan out to every channel of a configured route instead of
-	// a single platform/threadId. best-effort after validation, same murmur
-	// 200 contract so pollers keep working.
+	// a single platform/threadId. checked before the threadId requirement
+	// (routes carry their own targets). best-effort after validation, same
+	// murmur 200 contract so pollers keep working.
 	route := strings.TrimSpace(req.Route)
 	if route != "" {
 		if _, ok := s.cfg.Bridge.Routes[route]; !ok {
@@ -141,6 +132,16 @@ func (s *Service) handleAutomationNotification(w http.ResponseWriter, r *http.Re
 			"id":     notifID,
 			"status": "sent",
 		})
+		return
+	}
+
+	platform := strings.TrimSpace(strings.ToLower(req.Platform))
+	if platform == "" {
+		platform = "messenger"
+	}
+	threadID := strings.TrimSpace(req.ThreadID)
+	if threadID == "" {
+		http.Error(w, "threadId is required", http.StatusBadRequest)
 		return
 	}
 
