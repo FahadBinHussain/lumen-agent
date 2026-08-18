@@ -182,6 +182,21 @@ stay silent on both. The `/ai` prefix
 is stripped; the rest becomes the prompt for the agent runner. No murmur `/ai`
 subcommands (models/image) — the fork uses the single `llm.model` config.
 
+Command surface (added 2026-08-18, symmetric with discord slash commands): a
+prompt that starts with `/` dispatches to the bridge command registry
+(`internal/bridge/commands.go`) instead of the agent — same trigger rules as
+the agent (`/ai stop`, reply-to-us `@us /memory`, mention, etc.). commands:
+`/new` (clear this thread's session history, persisted), `/stop` (cancel the
+in-flight agent run for this thread; runs are tracked per
+`platform:thread` key with a cancelable ctx + seq guard, canceled runs reply
+silently instead of "[chat error] context canceled"), `/status` (model,
+history length, active run, whatsapp/messenger/discord connectivity),
+`/memory` (list the `guild-memory/<platform>/<thread>/` shards for this
+thread), `/compact` (force `CompactHistoryForStorage` on this thread's
+history now; replies "already compact enough" when nothing changed).
+Unrecognized `/...` prompts fall through to the agent. Reply format is
+plain text (no discord embeds).
+
 History: per `platform:thread` in memory, persisted to
 `<session_dir>/bridge-sessions.json` (symmetry with Discord: same
 `agent.CompactHistoryForStorage` compaction on every turn, same file-in-session-dir

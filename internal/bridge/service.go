@@ -38,6 +38,9 @@ type Service struct {
 	mu       sync.Mutex
 	sessions map[string][]llm.Message
 
+	runCancels map[string]runCancel
+	runSeq     int64
+
 	historyPath string
 	toucher     func()
 
@@ -71,6 +74,7 @@ func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
 		cfg:         cfg,
 		runner:      runner,
 		sessions:    make(map[string][]llm.Message),
+		runCancels:  make(map[string]runCancel),
 		historyPath: filepath.Join(cfg.App.SessionDir, bridgeHistoryFile),
 	}
 	s.loadHistory()
@@ -259,6 +263,10 @@ func (s *Service) handleMessengerMessage(ctx context.Context, msg messenger.Inco
 		return
 	}
 
+	if strings.HasPrefix(prompt, "/") && s.handleCommand("messenger", threadID, "", prompt) {
+		return
+	}
+
 	log.Printf("bridge: messenger message from %d in thread %s", msg.SenderID, threadID)
 	s.agentRun(ctx, "messenger", threadID, "", prompt)
 }
@@ -285,6 +293,11 @@ func (s *Service) handleWhatsAppMessage(ctx context.Context, msg whatsapp.Parsed
 		log.Printf("bridge: whatsapp message from %s in chat %s dropped (not in whatsapp.allowed_jids)", msg.SenderJID, chatJID)
 		return
 	}
+
+	if strings.HasPrefix(prompt, "/") && s.handleCommand("whatsapp", chatJID, chatJID, prompt) {
+		return
+	}
+
 	log.Printf("bridge: whatsapp message from %s in chat %s", msg.SenderJID, chatJID)
 	s.agentRun(ctx, "whatsapp", chatJID, chatJID, prompt)
 }
@@ -317,6 +330,14 @@ func whatsappTriggerPrompt(msg whatsapp.ParsedMessage) string {
 
 func (s *Service) agentRun(ctx context.Context, platform string, threadID string, jid string, prompt string) {
 	key := platform + ":" + threadID
+
+	runCtx, cancel := context.WithCancel(ctx)
+	s.mu.Lock()
+	s.runSeq++
+	seq := s.runSeq
+	s.runCancels[key] = runCancel{cancel: cancel, seq: seq}
+	s.mu.Unlock()
+	defer s.clearRunCancel(key, seq)
 
 	s.mu.Lock()
 	history := cloneMessages(s.sessions[key])
@@ -368,12 +389,16 @@ func (s *Service) agentRun(ctx context.Context, platform string, threadID string
 		}
 	}
 
-	newHistory, err := s.runner.Run(ctx, history, prompt, conversation, emit)
+	newHistory, err := s.runner.Run(runCtx, history, prompt, conversation, emit)
 	if stopThinking != nil {
 		close(stopThinking)
 	}
 
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Printf("bridge: agent run stopped (%s %s)", platform, threadID)
+			return
+		}
 		log.Printf("bridge: agent run failed (%s %s): %v", platform, threadID, err)
 		s.sendReply(platform, threadID, jid, msgID, "[chat error] "+err.Error())
 		return
