@@ -893,6 +893,10 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 	state.lockRun()
 	defer state.unlockRun()
 
+	// fork: thinking placeholder anim + final in-place edit (2026-08-18).
+	// declared before the recover defer so the panic path can clean it up.
+	var anim *thinkingAnim
+
 	defer func() {
 		if r := recover(); r != nil {
 			s.audit.Write("panic", state.ID, map[string]any{
@@ -901,7 +905,7 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 				"kind":  string(prompt.Kind),
 			})
 			if prompt.Kind != promptKindHeartbeat && prompt.Kind != promptKindDream {
-				_ = s.sendReply(prompt, errorReplyText)
+				_ = s.sendReplyWithAnim(prompt, anim, errorReplyText)
 			}
 		}
 	}()
@@ -911,6 +915,9 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 		stopTyping = s.startTyping(prompt.ChannelID)
 	}
 	defer stopTyping()
+
+	// fork: thinking placeholder anim + final in-place edit (2026-08-18).
+	anim = s.startThinking(prompt)
 
 	s.audit.Write("turn_start", state.ID, map[string]any{
 		"kind":       string(prompt.Kind),
@@ -946,8 +953,12 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 
 	if errors.Is(state.Context.Err(), context.Canceled) {
 		if s.sessionStillActive(state) {
-			if sendErr := s.sendReply(prompt, cancelReplyText); sendErr != nil {
+			if sendErr := s.sendReplyWithAnim(prompt, anim, cancelReplyText); sendErr != nil {
 				s.audit.Write("error", state.ID, map[string]any{"op": "send_cancel_reply", "error": sendErr.Error()})
+			}
+		} else {
+			if anim != nil {
+				anim.discard(s)
 			}
 		}
 		return
@@ -969,7 +980,7 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 			return
 		}
 		replyText := formatRunErrorForDiscord(err)
-		if sendErr := s.sendReply(prompt, replyText); sendErr != nil {
+		if sendErr := s.sendReplyWithAnim(prompt, anim, replyText); sendErr != nil {
 			s.audit.Write("error", state.ID, map[string]any{"op": "send_error_reply", "error": sendErr.Error()})
 		}
 		return
@@ -1002,7 +1013,12 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 		if silentReason != "" {
 			s.audit.Write("silent_reply", state.ID, map[string]any{"silent_reason": silentReason})
 		}
-		// fork: upstream posted a hardcoded "Done." fallback here; send nothing instead (2026-08-14).
+		// fork: upstream posted a hardcoded "Done." fallback here; send
+		// nothing instead (2026-08-14), and clear the thinking placeholder
+		// so silent turns don't leave a stray "thinking..." (2026-08-18).
+		if anim != nil {
+			anim.discard(s)
+		}
 		return
 	}
 
@@ -1033,7 +1049,7 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 	}
 	s.touchPersistence()
 
-	if sendErr := s.sendReply(prompt, reply); sendErr != nil {
+	if sendErr := s.sendReplyWithAnim(prompt, anim, reply); sendErr != nil {
 		s.audit.Write("error", state.ID, map[string]any{"op": "send_reply", "error": sendErr.Error()})
 	}
 }
