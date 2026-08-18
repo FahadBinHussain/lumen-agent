@@ -215,6 +215,8 @@ restored on boot). The old blunt 100-message cap is gone (2026-08-14).
     uses the single `llm.model` config.
 - Pre-existing test failures on this machine (NOT caused by the merge, verified):
   - `internal/discordbot` heartbeat test hardcodes Linux path `/workspace/lumen/...`
+  - `internal/agent` `TestSystemPromptIncludesSharedChannelSilenceGuidance`
+    expects an upstream silence-guidance string the fork prompt no longer contains
   - `internal/skills` test expects `.claude` workspace skills fixtures
   - `internal/tools` exec test needs `/bin/zsh`
   - Passing packages: config, eventwebhook, bridge, dashboard, heartbeatstate,
@@ -346,6 +348,18 @@ construction. Per-platform persistence:
   the exchange to the same shared memory root via
   `agent.SharedConversationMemoryRoot` + `AppendToMemoryShard`, symmetric with
   Discord's guild-channel path. ✓
+- **Discord DM memory isolation (2026-08-17, commit TBD)**: upstream 1:1 DMs
+  read AND wrote the GLOBAL `memory/` dir (MEMORY.md + shards) — fine with a
+  single `allowed_dm_user_ids` partner, but with DMs open to everyone every DM
+  partner shared one memory bucket (cross-DM bleed). Now 1:1 DM shards live at
+  `<session_dir>/guild-memory/discord-dm/<dm-channel-id>/` — read side
+  `workspacePromptSections` (IsDirectMessage branch), write side the
+  `state.Key.GuildID == ""` branch of `appendMemoryShard` (falls back to
+  global MemoryDir when SessionDir is unset), `/memory` report shows the same
+  root. Global `MEMORY.md` stays loaded in DMs (agent-curated long-term memory
+  is still global). Group DMs were already isolated via `group-dm-memory/`.
+  Old global DM shards are orphaned (not read anymore) — copy them manually
+  if needed. Same root taxonomy as bridge threads (`guild-memory/<platform>/<thread>`).
 - **Shard speaker label**: `AppendToMemoryShard` now takes the assistant label
   (identity name from IDENTITY.md via `agent.IdentityDisplayName`), so shards
   say "**Kite:**" not "**Element Orion:**" on all platforms. ✓
