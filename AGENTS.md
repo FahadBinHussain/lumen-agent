@@ -244,7 +244,11 @@ restored on boot). The old blunt 100-message cap is gone (2026-08-14).
     sends outbox items to its route's channels: the messenger channel is the
     PRIMARY (its message ID feeds the ack contract, its failure fails the
     item), every other channel is best-effort (logged, never fails the ack);
-    edits only touch the primary messenger message. the notifications
+    edits (edit_pending items) replace the primary messenger message AND
+    mirror the edited text to every other channel as a fresh message
+    (messenger is the only channel with an edit API — 2026-08-18 fix, the
+    whatsapp group was showing stale "detected" text while messenger had the
+    edited "published" text). the notifications
     endpoint also accepts an optional `route` body field to fan out instead
     of single platform/threadId (unknown route = 400). adding a channel =
     edit `bridge.routes` in production.yaml + deploy, no code. current bnp
