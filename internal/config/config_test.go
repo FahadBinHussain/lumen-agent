@@ -157,7 +157,11 @@ func TestValidateEventWebhookRequiresHeartbeat(t *testing.T) {
 	cfg.App.WorkspaceRoot = workspaceDir
 	cfg.App.SessionDir = sessionDir
 	cfg.Discord.BotToken = "token"
+	cfg.Discord.TokenMode = "bot"
 	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
+	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
 	cfg.EventWebhook.Enabled = true
 	cfg.EventWebhook.DefaultMode = "now"
 	cfg.Heartbeat.Every = ""
@@ -181,7 +185,11 @@ func TestValidateEventWebhookRejectsInvalidDefaultMode(t *testing.T) {
 	cfg.App.WorkspaceRoot = workspaceDir
 	cfg.App.SessionDir = sessionDir
 	cfg.Discord.BotToken = "token"
+	cfg.Discord.TokenMode = "bot"
 	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
+	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
 	cfg.EventWebhook.Enabled = true
 	cfg.EventWebhook.DefaultMode = "later"
 	cfg.Heartbeat.Target.ChannelID = "channel-1"
@@ -291,7 +299,11 @@ func TestValidateRejectsUnknownLLMAPIType(t *testing.T) {
 	cfg.App.SessionDir = t.TempDir()
 	cfg.App.MemoryDir = t.TempDir()
 	cfg.Discord.BotToken = "token"
+	cfg.Discord.TokenMode = "bot"
 	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
+	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
 	cfg.LLM.APIType = "mystery"
 
 	err := cfg.validate()
@@ -309,7 +321,11 @@ func TestValidateRejectsUnknownLLMReasoningEffort(t *testing.T) {
 	cfg.App.SessionDir = t.TempDir()
 	cfg.App.MemoryDir = t.TempDir()
 	cfg.Discord.BotToken = "token"
+	cfg.Discord.TokenMode = "bot"
 	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
+	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
 	cfg.LLM.ReasoningEffort = "turbo"
 
 	err := cfg.validate()
@@ -327,7 +343,11 @@ func TestValidateRejectsInvalidMaxThinkingToken(t *testing.T) {
 	cfg.App.SessionDir = t.TempDir()
 	cfg.App.MemoryDir = t.TempDir()
 	cfg.Discord.BotToken = "token"
+	cfg.Discord.TokenMode = "bot"
 	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
+	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
 	cfg.LLM.MaxThinkingToken = "abc"
 
 	err := cfg.validate()
@@ -345,7 +365,11 @@ func TestValidateDreamModeRequiresSleepHoursWhenEnabled(t *testing.T) {
 	cfg.App.SessionDir = t.TempDir()
 	cfg.App.MemoryDir = t.TempDir()
 	cfg.Discord.BotToken = "token"
+	cfg.Discord.TokenMode = "bot"
 	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
+	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
 	cfg.DreamMode.Enabled = true
 	cfg.DreamMode.Every = "6h"
 	cfg.DreamMode.SleepHours = HeartbeatActiveHoursConfig{}
@@ -365,7 +389,11 @@ func TestValidateRejectsContextWindowNotAboveMaxTokens(t *testing.T) {
 	cfg.App.SessionDir = t.TempDir()
 	cfg.App.MemoryDir = t.TempDir()
 	cfg.Discord.BotToken = "token"
+	cfg.Discord.TokenMode = "bot"
 	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
+	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
 	cfg.LLM.ContextWindowTokens = cfg.LLM.MaxTokens
 
 	err := cfg.validate()
@@ -383,7 +411,11 @@ func TestValidateRejectsUnknownGuildSessionScope(t *testing.T) {
 	cfg.App.SessionDir = t.TempDir()
 	cfg.App.MemoryDir = t.TempDir()
 	cfg.Discord.BotToken = "token"
+	cfg.Discord.TokenMode = "bot"
 	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
+	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
 	cfg.Discord.GuildSessionScope = "guild"
 
 	err := cfg.validate()
@@ -401,7 +433,11 @@ func TestValidateDashboardRejectsRelativePath(t *testing.T) {
 	cfg.App.SessionDir = t.TempDir()
 	cfg.App.MemoryDir = t.TempDir()
 	cfg.Discord.BotToken = "token"
+	cfg.Discord.TokenMode = "bot"
 	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
+	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
 	cfg.Dashboard.Enabled = true
 	cfg.Dashboard.Path = "dashboard"
 
@@ -517,7 +553,11 @@ func TestValidateRejectsInvalidRetryAttempts(t *testing.T) {
 	cfg.App.SessionDir = t.TempDir()
 	cfg.App.MemoryDir = t.TempDir()
 	cfg.Discord.BotToken = "token"
+	cfg.Discord.TokenMode = "bot"
 	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
+	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
 	cfg.LLM.RequestMaxAttempts = 0
 
 	err := cfg.validate()
@@ -550,6 +590,7 @@ func TestResolveGIFAPIKeyFromEnv(t *testing.T) {
 func TestDMAllowedForUserUsesAllowlistWhenPresent(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
 	cfg.Discord.AllowedDMUserIDs = []string{"user-1"}
 
 	if !cfg.DMAllowedForUser("user-1") {
@@ -678,6 +719,9 @@ func TestPersistenceExcludeDefaultsAddedOnResolve(t *testing.T) {
 	cfg.App.SessionDir = t.TempDir()
 	cfg.App.MemoryDir = t.TempDir()
 	cfg.Discord.BotToken = "token"
+	cfg.Discord.TokenMode = "bot"
+	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
 	cfg.LLM.BaseURL = "http://x"
 	cfg.LLM.Model = "m"
 	cfg.LLM.MaxTokens = 100
@@ -693,6 +737,7 @@ func TestPersistenceExcludeDefaultsAddedOnResolve(t *testing.T) {
 	cfg.App.MaxAgentLoops = 12
 	cfg.App.MaxToolCallsPerTurn = 10
 	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
 
 	if err := cfg.resolvePaths(); err != nil {
 		t.Fatalf("resolvePaths returned error: %v", err)
@@ -735,6 +780,55 @@ func TestWhatsAppJIDAllowedEmptyListAllowsAll(t *testing.T) {
 	}
 }
 
+func routesBaselineConfig(t *testing.T) BridgeConfig {
+	return BridgeConfig{Routes: map[string][]RouteChannel{}}
+}
+
+func TestValidateRoutesAcceptsAllPlatforms(t *testing.T) {
+	b := routesBaselineConfig(t)
+	b.Routes = map[string][]RouteChannel{
+		"bnp": {
+			{Platform: "messenger", ThreadID: "984803114200952"},
+			{Platform: "whatsapp", JID: "120363409684314037@g.us"},
+			{Platform: "discord", ChannelID: "1537650032441032765"},
+		},
+	}
+	if err := b.validateRoutes(); err != nil {
+		t.Fatalf("valid routes rejected: %v", err)
+	}
+}
+
+func TestValidateRoutesRejectsUnknownPlatform(t *testing.T) {
+	b := routesBaselineConfig(t)
+	b.Routes = map[string][]RouteChannel{
+		"bnp": {{Platform: "telegram", ThreadID: "1"}},
+	}
+	err := b.validateRoutes()
+	if err == nil || !strings.Contains(err.Error(), "platform must be messenger, whatsapp, or discord") {
+		t.Fatalf("expected unknown platform error, got: %v", err)
+	}
+}
+
+func TestValidateRoutesRejectsMissingTargetField(t *testing.T) {
+	b := routesBaselineConfig(t)
+	b.Routes = map[string][]RouteChannel{
+		"bnp": {{Platform: "whatsapp"}},
+	}
+	err := b.validateRoutes()
+	if err == nil || !strings.Contains(err.Error(), "whatsapp channel needs jid") {
+		t.Fatalf("expected missing jid error, got: %v", err)
+	}
+}
+
+func TestValidateRoutesRejectsEmptyChannelList(t *testing.T) {
+	b := routesBaselineConfig(t)
+	b.Routes = map[string][]RouteChannel{"bnp": {}}
+	err := b.validateRoutes()
+	if err == nil || !strings.Contains(err.Error(), "must list at least one channel") {
+		t.Fatalf("expected empty route error, got: %v", err)
+	}
+}
+
 func TestWhatsAppJIDAllowedListedAndUnlisted(t *testing.T) {
 	cfg := Config{WhatsApp: WhatsAppConfig{AllowedJIDs: []string{"8801711472629@s.whatsapp.net"}}}
 	if !cfg.WhatsAppJIDAllowed("8801711472629@s.whatsapp.net") {
@@ -744,3 +838,8 @@ func TestWhatsAppJIDAllowedListedAndUnlisted(t *testing.T) {
 		t.Fatal("unlisted jid must be blocked")
 	}
 }
+
+
+
+
+
