@@ -32,6 +32,9 @@ type WhatsmeowClient struct {
 	qrCode      string
 	qrRef       string
 	reconnecting bool
+
+	sentMu  sync.Mutex
+	sentIDs map[string]time.Time
 }
 
 func NewWhatsmeowClient(dbPath string, proxyAddr string, logger zerolog.Logger, handler MessageHandler) (*WhatsmeowClient, error) {
@@ -80,6 +83,7 @@ func NewWhatsmeowClient(dbPath string, proxyAddr string, logger zerolog.Logger, 
 		deviceStore: deviceStore,
 		logger:      logger,
 		handler:     handler,
+		sentIDs:     map[string]time.Time{},
 	}
 
 	if proxyAddr != "" {
@@ -182,14 +186,39 @@ func (w *WhatsmeowClient) handleMessage(evt *events.Message) {
 		Server: chat.Server,
 	}
 
+	var replyToID, replyToSender string
+	var isReplyToUs, mentionsMe bool
+	if ext := evt.Message.GetExtendedTextMessage(); ext != nil {
+		if ctx := ext.GetContextInfo(); ctx != nil {
+			replyToID = ctx.GetStanzaID()
+			replyToSender = ctx.GetParticipant()
+			if replyToID != "" && ctx.GetQuotedMessage() != nil && w.isRecentSent(replyToID) {
+				isReplyToUs = true
+			}
+			if own := w.ownJID(); own != "" {
+				for _, jid := range ctx.GetMentionedJID() {
+					if jid == own {
+						mentionsMe = true
+						break
+					}
+				}
+			}
+		}
+	}
+
 	msg := ParsedMessage{
-		Chat:      chatJID,
-		ID:        evt.Info.ID,
-		SenderJID: evt.Info.Sender.User + "@s.whatsapp.net",
-		Timestamp: evt.Info.Timestamp,
-		FromMe:    evt.Info.IsFromMe,
-		Text:      text,
-		PushName:  evt.Info.PushName,
+		Chat:             chatJID,
+		ID:               evt.Info.ID,
+		SenderJID:        evt.Info.Sender.User + "@s.whatsapp.net",
+		Timestamp:        evt.Info.Timestamp,
+		FromMe:           evt.Info.IsFromMe,
+		Text:             text,
+		PushName:         evt.Info.PushName,
+		ReplyToID:        replyToID,
+		ReplyToSenderJID: replyToSender,
+		IsReplyToUs:      isReplyToUs,
+		MentionsMe:       mentionsMe,
+		IsGroup:          evt.Info.IsGroup,
 	}
 
 	w.logger.Info().
@@ -288,13 +317,50 @@ func (w *WhatsmeowClient) SendText(ctx context.Context, to string, text string) 
 		Conversation: &text,
 	}
 
-	_, err = w.client.SendMessage(ctx, jid, msg)
+	src, err := w.client.SendMessage(ctx, jid, msg)
 	if err != nil {
 		return fmt.Errorf("send message: %w", err)
 	}
+	w.recordSent(src.ID)
 
 	w.logger.Info().Str("to", to).Str("text", truncate(text, 50)).Msg("WhatsApp message sent via whatsmeow")
 	return nil
+}
+
+// ownJID returns our own phone-number JID as a string, or "" before login.
+func (w *WhatsmeowClient) ownJID() string {
+	w.sentMu.Lock()
+	defer w.sentMu.Unlock()
+	if w.client == nil || w.client.Store == nil || w.client.Store.ID == nil {
+		return ""
+	}
+	return types.NewJID(w.client.Store.ID.User, types.DefaultUserServer).String()
+}
+
+// recordSent remembers outbound message IDs so incoming quotes can be
+// recognized as replies to us.
+func (w *WhatsmeowClient) recordSent(id string) {
+	if id == "" {
+		return
+	}
+	w.sentMu.Lock()
+	defer w.sentMu.Unlock()
+	w.sentIDs[id] = time.Now()
+	if len(w.sentIDs) > 500 {
+		cutoff := time.Now().Add(-24 * time.Hour)
+		for k, v := range w.sentIDs {
+			if v.Before(cutoff) {
+				delete(w.sentIDs, k)
+			}
+		}
+	}
+}
+
+func (w *WhatsmeowClient) isRecentSent(id string) bool {
+	w.sentMu.Lock()
+	defer w.sentMu.Unlock()
+	_, ok := w.sentIDs[id]
+	return ok
 }
 
 func (w *WhatsmeowClient) IsConnected() bool {
