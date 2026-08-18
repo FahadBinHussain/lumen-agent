@@ -42,6 +42,7 @@ func (s *Service) serveHTTP(ctx context.Context) error {
 	mux.HandleFunc("/api/whatsapp/qr", s.handleWhatsAppQR)
 	mux.HandleFunc("/api/whatsapp/pair", s.handleWhatsAppPair)
 	mux.HandleFunc("/api/whatsapp/session/upload", s.handleWhatsAppSessionUpload)
+	mux.HandleFunc("/api/whatsapp/groups", s.handleWhatsAppGroups)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
@@ -287,6 +288,43 @@ func (s *Service) authenticated(r *http.Request) bool {
 		provided = strings.TrimSpace(provided[7:])
 	}
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(secret)) == 1
+}
+
+// handleWhatsAppGroups lists the groups the whatsapp device has joined.
+// Secret-gated like the session upload endpoint.
+func (s *Service) handleWhatsAppGroups(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authenticated(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if s.whatsapp == nil {
+		http.Error(w, "whatsapp not enabled", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	groups, err := s.whatsapp.Groups(ctx)
+	if err != nil {
+		log.Printf("bridge: list whatsapp groups failed: %v", err)
+		http.Error(w, "list groups failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	out := make([]map[string]interface{}, 0, len(groups))
+	for _, g := range groups {
+		if g == nil {
+			continue
+		}
+		out = append(out, map[string]interface{}{
+			"id":   g.JID.String(),
+			"name": g.GroupName,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"groups": out})
 }
 
 // handleWhatsAppSessionUpload receives a raw whatsmeow.db from an external

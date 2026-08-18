@@ -458,6 +458,12 @@ func (w *WhatsmeowClient) IsLoggedIn() bool {
 	return w.client.Store.ID != nil
 }
 
+// Groups lists the groups the device has joined (active server call, not a
+// store lookup — works even when the group was just added).
+func (w *WhatsmeowClient) Groups(ctx context.Context) ([]*types.GroupInfo, error) {
+	return w.client.GetJoinedGroups(ctx)
+}
+
 func (w *WhatsmeowClient) SaveSession(ctx context.Context, dbPath string, save func(ctx context.Context, sessionData, wacliData []byte) error) error {
 	if !w.IsLoggedIn() {
 		return nil

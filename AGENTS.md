@@ -43,6 +43,27 @@
   don't rely on it).
 - Excludes (config + defaulted): sandboxes, whatsapp, incoming-attachments,
   logs. whatsapp.db is already backed up separately via internal/neon.
+- **STATE RESET procedure (learned 2026-08-18)**: to wipe conversational state
+  (sessions, memory shards, heartbeat) while keeping the soul files AND a
+  bootable container: (1) `POST /v1/services/<id>/suspend` (NOT /stop or
+  /pause — both 404; /resume brings it back), (2) `DELETE FROM
+  lumen_snapshots WHERE path NOT LIKE '@workspace/%'` via the Neon-under-Proton
+  relay, (3) `/resume` (or a fresh deploy). NEVER delete rows while the
+  container is running: its 1-minute catch-all sync re-uploads the local dir,
+  so a later restore brings EVERYTHING back (bit us: first reset attempt
+  "worked" then silently resurrected all 8 rows). **messenger-cookies.json is
+  NOT optional state**: `bridge.New` → `messenger.New` errors when the file is
+  missing and main exits 1 → deploy `update_failed` / 503 crash loop. It is an
+  account linkage like whatsapp_sessions — keep the row, or rebuild it from
+  the agent-browser vault
+  (`%APPDATA%\mainframe\accounts\agent-browser\cookies\fahadbinhussain001@gmail.com.cookies.json`,
+  REQUIRED_COOKIES = `c_user`/`xs`/`datr` → plain `{name:value}` JSON, 163
+  bytes) and `INSERT INTO lumen_snapshots (path, data, sha256) VALUES
+  ('messenger-cookies.json', decode('<hex>','hex'), '<sha256-hex>')` (schema:
+  path text PK, data bytea, sha256 text, updated_at timestamptz). Verify a
+  wipe via `/api/health` + deploy status (deploy list wraps objects as
+  `{deploy:{...}, cursor:...}`; statuses: build_in_progress →
+  update_in_progress → live, or update_failed on instance exit 1).
 - **GOTCHA (fixed 2026-08-14, commit 2f8ac45):** `Restore()` originally used
   `len(os.ReadDir(...)) > 0` as its "dir already has state" check — but
   `main.go` creates `<session_dir>/memory` and auditlog creates `logs/`
@@ -105,7 +126,9 @@
 This fork now runs all three platforms from one binary: the upstream Element Orion
 Discord agent runtime, plus Messenger and WhatsApp channels ported from the murmur
 repo (`C:\Users\Admin\Downloads\murmur`). **The murmur repo stays untouched** —
-it is a read-only source for this port (its HF Space keeps running during cutover).
+it is a read-only source for this port. **The murmur HF space
+(`fahadbinhussain/murmur`) is PAUSED since 2026-08-15 and must NEVER be deleted
+(user rule) — it stays dead but intact as fallback.**
 
 Port layout:
 - `internal/messenger/` — messagix (Meta MQTT) client: cookies load, login, event
@@ -204,10 +227,10 @@ restored on boot). The old blunt 100-message cap is gone (2026-08-14).
     `/api/automation/notifications` handler — `/api/cookies/upload` is NOT
     gated (it's ops-critical for the browserless cookie refresher and stays
     mounted whenever messenger.enabled is true). bnp_enabled=false skips the
-    BNP worker goroutine. both are currently FALSE so lumen stays quiet while
-    murmur's live notifiers (steam-updates/free-games cron jobs, neon usage,
-    BNP worker) keep running — re-enable per-notifier only when lumen
-    actually takes over that flow.
+    BNP worker goroutine. production.yaml (Render) has notifications_enabled
+    + bnp_enabled = true since commit 099a6e1 — the BNP worker and
+    notifications endpoint ARE live on lumen; local lumen.yaml keeps them
+    off.
   - notify pollers COPY (added 2026-08-14): `internal/notify` is a copy-only
     port of the three murmur-side feeds so lumen can become self-contained in
     an HF space: `steam_updates` (Steam GetNewsForApp Community Announcements,
