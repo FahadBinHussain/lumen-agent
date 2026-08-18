@@ -221,6 +221,16 @@ restored on boot). The old blunt 100-message cap is gone (2026-08-14).
     cycle; `Service.SendMessage`/`EditMessage` implement it. the push endpoint
     `POST /api/automation/notifications` (with `bridge.secret` auth) remains
     the alternative for sources that can push.
+  - BNP whatsapp mirror (added 2026-08-18, commit f0a8622): the worker also
+    mirrors every NEW send to a whatsapp group when `BNP_WHATSAPP_THREAD_ID`
+    (a `@g.us` JID) is set — best-effort, logs failures, messenger ack
+    contract unchanged (edits NOT mirrored). bridge `SendWhatsApp` implements
+    the optional `bnp.WhatsAppSender` interface and is gated by
+    `whatsapp.allowed_jids`. current value on Render:
+    `120363409684314037@g.us` (user's "ai" group, in production.yaml
+    allowed_jids). group JID lookup endpoint: `GET /api/whatsapp/groups`
+    (secret-gated) → whatsmeow `GetJoinedGroups()`, returns `{groups:[{id,
+    name}]}` — group ids are `@g.us` JIDs, names are structs (use `.name`).
   - notifier kill-switches (added 2026-08-14): `bridge.notifications_enabled`
     and `bridge.bnp_enabled` (both default true in code; set FALSE in
     config/lumen.yaml). notifications_enabled=false unmounts ONLY the
