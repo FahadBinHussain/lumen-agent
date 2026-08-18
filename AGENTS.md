@@ -140,9 +140,13 @@ stripped from the prompt). WhatsApp now mirrors messenger exactly (symmetric
 of our jid (group mentions via MentionedJID). Reply detection = whatsmeow
 `ContextInfo.StanzaID` matched against a 24h TTL map of outbound message IDs
 (`recordSent`/`isRecentSent` in whatsmeow_client.go); mention detection = own
-jid (Store.ID) in `ContextInfo.MentionedJID`. WhatsApp mentions are NOT stripped
-from the prompt (no jid->name resolution available — the rendered `@Name` stays,
-harmless; messenger strips because it has raw uids). Media-only replies/mentions
+jid (Store.ID) in `ContextInfo.MentionedJID`. WhatsApp mentions ARE stripped
+from the prompt (2026-08-17, symmetric with messenger): `CleanMentions` on
+WhatsmeowClient resolves each MentionedJID to its contact-store name (full
+name, then push name — store syncs from the phone on connect) and removes the
+literal `@<name>` tokens, collapsing the leftover double spaces; unresolvable
+names leave the text unchanged. Mirrors messenger's offset-based
+CleanMentions, which also strips only our own mention. Media-only replies/mentions
 stay silent on both. The `/ai` prefix
 is stripped; the rest becomes the prompt for the agent runner. No murmur `/ai`
 subcommands (models/image) — the fork uses the single `llm.model` config.
@@ -367,11 +371,19 @@ construction. Per-platform persistence:
 ## Cross-platform health notifications (2026-08-17)
 
 In-container watch (`internal/bridge/healthwatch.go`, config `bridge.health_watch:`):
-when whatsapp dies/recovers it tells the messenger test thread
-(`messenger_thread_id`, currently 2637078310061988); when messenger
-dies/recovers it tells the whatsapp test jid (`whatsapp_jid`, currently
-8801911104251@s.whatsapp.net). Sends go through the normal allowlist-gated
-`send()` path, so alerts to unlisted channels are dropped with a log line.
+when a platform dies/recovers it tells the OTHER platforms' test channels:
+whatsapp ↔ messenger thread 2637078310061988 ↔ whatsapp jid
+8801911104251@s.whatsapp.net, discord → both of those, and whatsapp/messenger
+deaths also copy to the discord channel (`discord_channel_id`, currently
+1537650032441032765 in AlgoJect) when set. So the mesh is symmetric: each
+platform's alerts land on the other two. Discord connection state is tracked
+in-process (`setConnected` via discordgo Ready/Resumed/Disconnect handlers +
+`IsConnected()` on the discordbot Service, wired into the bridge with
+`SetDiscord`), so a discord gateway drop fires the same dead/alive alerts
+(discordgo auto-reconnects, so dead only lasts until the gateway is back).
+Sends go through the normal allowlist-gated
+`send()` path, so alerts to unlisted channels are dropped with a log line
+(discord alerts use `SendPlainText` directly on the channel id).
 
 Semantics (all covered by unit tests):
 - **Arming**: no notification until the platform has been connected at least
