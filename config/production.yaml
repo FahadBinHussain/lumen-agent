@@ -264,6 +264,7 @@ bridge:
     min_notify_interval: 2m
     messenger_thread_id: "2637078310061988"
     whatsapp_jid: "8801911104251@s.whatsapp.net"
+    discord_channel_id: "1537650032441032765"
 
 notify:
   # lumen's own notifications endpoint (murmur space default is dead/paused)

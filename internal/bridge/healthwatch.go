@@ -6,11 +6,11 @@ import (
 	"time"
 )
 
-// healthTarget is where a platform's health notifications go: the other
+// healthTarget is where a platform's health notifications go: another
 // platform's test channel.
 type healthTarget struct {
-	notifyPlatform string // "messenger" or "whatsapp"
-	threadID       string // messenger thread id or whatsapp jid
+	notifyPlatform string // "messenger", "whatsapp", or "discord"
+	threadID       string // messenger thread id, whatsapp jid, or discord channel id
 }
 
 type healthState struct {
@@ -21,11 +21,12 @@ type healthState struct {
 }
 
 // watchHealth sends cross-platform notifications when a platform dies or
-// comes back: whatsapp state changes go to the messenger test thread,
-// messenger state changes go to the whatsapp test jid. It runs inside the
-// container so it keeps working when the laptop (and the whatsapp tailnet
-// route through it) is down — messenger egresses from Render directly, so
-// the whatsapp-dead alert always has a working channel.
+// comes back: whatsapp state changes go to the messenger test thread (and the
+// discord channel when configured), messenger state changes go to the
+// whatsapp test jid (and the discord channel), discord state changes go to
+// both. It runs inside the container so it keeps working when the laptop (and
+// the whatsapp tailnet route through it) is down — messenger egresses from
+// Render directly, so the whatsapp-dead alert always has a working channel.
 //
 // No notification fires until the platform has been connected at least once
 // (avoids boot/deploy spam), a dead state must persist for dead_after before
@@ -38,15 +39,27 @@ func (s *Service) watchHealth(ctx context.Context) {
 	deadAfter := parseDuration(hw.DeadAfter, 45*time.Second)
 	minNotify := parseDuration(hw.MinNotifyInterval, 2*time.Minute)
 
-	targets := map[string]healthTarget{}
+	targets := map[string][]healthTarget{}
 	if hw.MessengerThreadID != "" && s.messenger != nil {
-		targets["whatsapp"] = healthTarget{notifyPlatform: "messenger", threadID: hw.MessengerThreadID}
+		targets["whatsapp"] = append(targets["whatsapp"], healthTarget{notifyPlatform: "messenger", threadID: hw.MessengerThreadID})
 	}
 	if hw.WhatsAppJID != "" && s.whatsapp != nil {
-		targets["messenger"] = healthTarget{notifyPlatform: "whatsapp", threadID: hw.WhatsAppJID}
+		targets["messenger"] = append(targets["messenger"], healthTarget{notifyPlatform: "whatsapp", threadID: hw.WhatsAppJID})
+	}
+	if s.discord != nil {
+		if hw.MessengerThreadID != "" && s.messenger != nil {
+			targets["discord"] = append(targets["discord"], healthTarget{notifyPlatform: "messenger", threadID: hw.MessengerThreadID})
+		}
+		if hw.WhatsAppJID != "" && s.whatsapp != nil {
+			targets["discord"] = append(targets["discord"], healthTarget{notifyPlatform: "whatsapp", threadID: hw.WhatsAppJID})
+		}
+		if hw.DiscordChannelID != "" {
+			targets["whatsapp"] = append(targets["whatsapp"], healthTarget{notifyPlatform: "discord", threadID: hw.DiscordChannelID})
+			targets["messenger"] = append(targets["messenger"], healthTarget{notifyPlatform: "discord", threadID: hw.DiscordChannelID})
+		}
 	}
 	if len(targets) == 0 {
-		log.Printf("health-watch: no targets (set bridge.health_watch.messenger_thread_id / whatsapp_jid)")
+		log.Printf("health-watch: no targets (set bridge.health_watch.messenger_thread_id / whatsapp_jid / discord_channel_id)")
 		return
 	}
 
@@ -64,9 +77,11 @@ func (s *Service) watchHealth(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for name, target := range targets {
-				if msg := s.checkHealth(name, target, states[name], s.platformAlive(name), deadAfter, minNotify); msg != "" {
-					s.notifyHealth(target, msg)
+			for name, platformTargets := range targets {
+				if msg := s.checkHealth(name, states[name], s.platformAlive(name), deadAfter, minNotify); msg != "" {
+					for _, target := range platformTargets {
+						s.notifyHealth(target, msg)
+					}
 				}
 			}
 		}
@@ -75,7 +90,7 @@ func (s *Service) watchHealth(ctx context.Context) {
 
 // checkHealth advances the state machine for one platform and returns the
 // notification message to send, or "" when nothing should fire.
-func (s *Service) checkHealth(name string, target healthTarget, st *healthState, alive bool, deadAfter time.Duration, minNotify time.Duration) string {
+func (s *Service) checkHealth(name string, st *healthState, alive bool, deadAfter time.Duration, minNotify time.Duration) string {
 	if !st.armed {
 		if alive {
 			st.armed = true
@@ -112,6 +127,8 @@ func (s *Service) platformAlive(name string) bool {
 		return s.whatsapp != nil && s.whatsapp.IsConnected()
 	case "messenger":
 		return s.messenger != nil && s.messenger.IsConnected()
+	case "discord":
+		return s.discord != nil && s.discord.IsConnected()
 	}
 	return false
 }

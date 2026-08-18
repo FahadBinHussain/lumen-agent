@@ -31,6 +31,7 @@ type Service struct {
 	runner    *agent.Runner
 	messenger *messenger.Client
 	whatsapp  *whatsapp.WhatsmeowClient
+	discord   DiscordHealthClient
 	waDBPath  string
 	neon      *neon.DB
 
@@ -50,6 +51,19 @@ type Service struct {
 // mirrors discordbot's session persistence contract.
 func (s *Service) SetPersistenceToucher(fn func()) {
 	s.toucher = fn
+}
+
+// DiscordHealthClient is the slice of the Discord service the health watch
+// needs: gateway connection state and plain sends to a channel.
+type DiscordHealthClient interface {
+	IsConnected() bool
+	SendPlainText(channelID string, text string) error
+}
+
+// SetDiscord wires the Discord service into the bridge so the health watch
+// can poll its connection state and deliver alerts to a channel.
+func (s *Service) SetDiscord(d DiscordHealthClient) {
+	s.discord = d
 }
 
 func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
@@ -257,6 +271,13 @@ func (s *Service) handleWhatsAppMessage(ctx context.Context, msg whatsapp.Parsed
 	prompt := whatsappTriggerPrompt(msg)
 	if prompt == "" {
 		return
+	}
+
+	if msg.MentionsMe && s.whatsapp != nil {
+		prompt = s.whatsapp.CleanMentions(prompt, msg.MentionedJIDs)
+		if strings.TrimSpace(prompt) == "" {
+			return
+		}
 	}
 
 	chatJID := msg.Chat.String()
@@ -496,11 +517,21 @@ func (s *Service) notify(platform string, threadID string, text string) {
 	if platform == "" {
 		platform = "messenger"
 	}
-	jid := ""
 	if platform == "whatsapp" {
-		jid = threadID
+		s.send(platform, threadID, threadID, text)
+		return
 	}
-	s.send(platform, threadID, jid, text)
+	if platform == "discord" {
+		if s.discord == nil {
+			log.Printf("bridge: discord not wired, dropping health alert for %s", threadID)
+			return
+		}
+		if err := s.discord.SendPlainText(threadID, text); err != nil {
+			log.Printf("bridge: discord alert to %s failed: %v", threadID, err)
+		}
+		return
+	}
+	s.send(platform, threadID, "", text)
 }
 
 // SendMessage implements bnp.MessengerSender: delivers an outbox item to the
