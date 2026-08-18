@@ -239,7 +239,7 @@ func TestStatusReportWithoutSessionIsFriendly(t *testing.T) {
 func TestMemoryReportShowsShardSummary(t *testing.T) {
 	key := sessionKey{GuildID: "", ChannelID: "dm-channel", UserID: "user"}
 	workspace := t.TempDir()
-	memoryRoot := filepath.Join(workspace, ".element-orion", "memory")
+	memoryRoot := filepath.Join(workspace, ".element-orion", "guild-memory", "discord-dm", "dm-channel")
 	if err := os.MkdirAll(memoryRoot, 0o755); err != nil {
 		t.Fatalf("mkdir memory root: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestMemoryReportShowsShardSummary(t *testing.T) {
 		"**Memory**",
 		"```text",
 		"Status      enabled",
-		"Root        ./.element-orion/memory",
+		"Root        ./.element-orion/guild-memory/discord-dm/dm-channel",
 		"Shards      3 total, 2 loaded now, current + previous half-day",
 		"Range       2026-03-29 08:14 AEST -> 2026-03-29 13:11 AEST",
 		"Size        ",
