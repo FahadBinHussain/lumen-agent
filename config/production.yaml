@@ -194,6 +194,7 @@ whatsapp:
   # all). test thread: REDACTED_PHONE -> REDACTED_PHONE@s.whatsapp.net
   allowed_jids:
     - REDACTED_PHONE@s.whatsapp.net
+    - 120363409684314037@g.us
 
 gifs:
   enabled: false
