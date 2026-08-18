@@ -942,11 +942,15 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 		GuildID:         prompt.GuildID,
 		ChannelID:       prompt.ChannelID,
 		ModelOverride:   prompt.ModelOverride,
+		Streaming:       anim != nil,
 		Skills:          skillsSnapshot,
 		UserParts:       prompt.UserParts,
 		Now:             time.Now(),
 	}, func(event agent.Event) {
 		s.logAgentEvent(state, event)
+		if anim != nil {
+			anim.feed(event)
+		}
 	})
 
 	stopTyping()

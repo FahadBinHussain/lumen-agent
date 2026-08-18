@@ -3,6 +3,8 @@ package discordbot
 import (
 	"strings"
 	"testing"
+
+	"element-orion/internal/agent"
 )
 
 func TestThinkingAnimNilSafe(t *testing.T) {
@@ -32,11 +34,23 @@ func TestThinkingReplaceableMultiPart(t *testing.T) {
 	}
 }
 
-func TestThinkingFramesCycle(t *testing.T) {
-	if len(thinkingFrames) < 4 {
-		t.Fatalf("expected a smooth frame cycle, got %d frames", len(thinkingFrames))
+func TestThinkingFeedMapsEventsToSignals(t *testing.T) {
+	a := &thinkingAnim{signals: make(chan streamSignal, 16)}
+	a.feed(agent.Event{Kind: agent.EventStreamDelta, Message: "tok"})
+	a.feed(agent.Event{Kind: agent.EventToolStarted, ToolName: "exec_command"})
+	a.feed(agent.Event{Kind: agent.EventStatus, Message: "ignored"})
+
+	sig := <-a.signals
+	if sig.delta != "tok" || sig.reset {
+		t.Fatalf("expected token delta, got %+v", sig)
 	}
-	if thinkingFrames[0] != "thinking" {
-		t.Fatalf("animation must start on the bare word, got %q", thinkingFrames[0])
+	sig = <-a.signals
+	if !sig.reset || sig.tool != "exec_command" {
+		t.Fatalf("expected tool reset marker, got %+v", sig)
+	}
+	select {
+	case extra := <-a.signals:
+		t.Fatalf("non-stream events must not reach the renderer, got %+v", extra)
+	default:
 	}
 }
