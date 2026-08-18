@@ -253,24 +253,8 @@ func (s *Service) handleWhatsAppMessage(ctx context.Context, msg whatsapp.Parsed
 	if msg.FromMe {
 		return
 	}
-	if msg.Text == "" && msg.Media == nil && msg.Poll == nil {
-		return
-	}
 
-	text := msg.Text
-	if text == "" {
-		if msg.Media != nil {
-			text = "[media: " + msg.Media.Type + "]"
-		} else if msg.Poll != nil {
-			text = "Poll: " + msg.Poll.Question
-		}
-	}
-
-	trimmed := strings.TrimSpace(text)
-	if !strings.HasPrefix(trimmed, "/ai") {
-		return
-	}
-	prompt := strings.TrimSpace(trimmed[3:])
+	prompt := whatsappTriggerPrompt(msg)
 	if prompt == "" {
 		return
 	}
@@ -282,6 +266,32 @@ func (s *Service) handleWhatsAppMessage(ctx context.Context, msg whatsapp.Parsed
 	}
 	log.Printf("bridge: whatsapp message from %s in chat %s", msg.SenderJID, chatJID)
 	s.agentRun(ctx, "whatsapp", chatJID, chatJID, prompt)
+}
+
+// whatsappTriggerPrompt mirrors messenger's trigger semantics: /ai prefix,
+// a reply to one of our own messages, or a mention of our uid. Media-only
+// replies/mentions stay silent (the messenger path also skips them).
+func whatsappTriggerPrompt(msg whatsapp.ParsedMessage) string {
+	text := msg.Text
+	if text == "" {
+		if msg.Media != nil {
+			text = "[media: " + msg.Media.Type + "]"
+		} else if msg.Poll != nil {
+			text = "Poll: " + msg.Poll.Question
+		}
+	}
+
+	trimmed := strings.TrimSpace(text)
+	if strings.HasPrefix(trimmed, "/ai") {
+		return strings.TrimSpace(trimmed[3:])
+	}
+	if msg.IsReplyToUs || msg.MentionsMe {
+		if msg.Text == "" {
+			return ""
+		}
+		return trimmed
+	}
+	return ""
 }
 
 func (s *Service) agentRun(ctx context.Context, platform string, threadID string, jid string, prompt string) {

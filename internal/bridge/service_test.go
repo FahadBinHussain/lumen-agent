@@ -13,6 +13,7 @@ import (
 
 	"element-orion/internal/config"
 	"element-orion/internal/llm"
+	"element-orion/internal/whatsapp"
 )
 
 func writeTestConfig(t *testing.T, extra string) config.Config {
@@ -259,5 +260,46 @@ bridge:
 	_, err := config.Load(path)
 	if err == nil || !strings.Contains(err.Error(), "notifications_path") {
 		t.Fatalf("expected notifications_path validation error, got %v", err)
+	}
+}
+
+func TestWhatsAppTriggerPrompt(t *testing.T) {
+	wa := func(text string, replyToUs, mentionsMe, hasMedia bool) whatsapp.ParsedMessage {
+		m := whatsapp.ParsedMessage{
+			Chat:        whatsapp.ChatJID{User: "8801111111111", Server: "s.whatsapp.net"},
+			SenderJID:   "8802222222222@s.whatsapp.net",
+			Text:        text,
+			IsReplyToUs: replyToUs,
+			MentionsMe:  mentionsMe,
+		}
+		if hasMedia {
+			m.Media = &whatsapp.Media{Type: "image"}
+		}
+		return m
+	}
+
+	cases := []struct {
+		name string
+		msg  whatsapp.ParsedMessage
+		want string
+	}{
+		{"plain dm stays silent", wa("hello there", false, false, false), ""},
+		{"plain group message stays silent", wa("hello everyone", false, false, false), ""},
+		{"ai prefix triggers", wa("/ai who are you", false, false, false), "who are you"},
+		{"ai prefix with leading space", wa("  /ai  hi  ", false, false, false), "hi"},
+		{"ai prefix on media caption", wa("/ai describe this", false, false, true), "describe this"},
+		{"reply to our message triggers", wa("what did you mean?", true, false, false), "what did you mean?"},
+		{"mention triggers", wa("hey @Kite help", false, true, false), "hey @Kite help"},
+		{"reply and mention both", wa("explain", true, true, false), "explain"},
+		{"media-only reply stays silent", wa("", true, false, true), ""},
+		{"media-only mention stays silent", wa("", false, true, true), ""},
+		{"empty ai prompt skipped", wa("/ai", false, false, false), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := whatsappTriggerPrompt(tc.msg); got != tc.want {
+				t.Fatalf("whatsappTriggerPrompt() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

@@ -16,6 +16,9 @@ type ParsedMessage struct {
 	ReplyToID        string    `json:"ReplyToID"`
 	ReplyToSenderJID string    `json:"ReplyToSenderJID"`
 	ReplyToDisplay   string    `json:"ReplyToDisplay"`
+	IsReplyToUs      bool      `json:"IsReplyToUs"`
+	MentionsMe       bool      `json:"MentionsMe"`
+	IsGroup          bool      `json:"IsGroup"`
 	ReactionToID     string    `json:"ReactionToID"`
 	ReactionEmoji    string    `json:"ReactionEmoji"`
 	IsForwarded      bool      `json:"IsForwarded"`
