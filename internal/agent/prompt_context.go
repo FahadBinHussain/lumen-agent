@@ -240,6 +240,7 @@ type ConversationContext struct {
 	GuildID          string
 	ChannelID        string
 	ModelOverride    string
+	Streaming        bool
 	Skills           []skills.Summary
 	UserParts        []llm.ContentPart
 	Now              time.Time
