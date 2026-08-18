@@ -26,6 +26,7 @@ type notificationRequest struct {
 	DedupeKey string `json:"dedupeKey"`
 	URL       string `json:"url"`
 	Platform  string `json:"platform"`
+	Route     string `json:"route"`
 }
 
 func (s *Service) serveHTTP(ctx context.Context) error {
@@ -118,6 +119,28 @@ func (s *Service) handleAutomationNotification(w http.ResponseWriter, r *http.Re
 	threadID := strings.TrimSpace(req.ThreadID)
 	if threadID == "" {
 		http.Error(w, "threadId is required", http.StatusBadRequest)
+		return
+	}
+
+	// route mode: fan out to every channel of a configured route instead of
+	// a single platform/threadId. best-effort after validation, same murmur
+	// 200 contract so pollers keep working.
+	route := strings.TrimSpace(req.Route)
+	if route != "" {
+		if _, ok := s.cfg.Bridge.Routes[route]; !ok {
+			http.Error(w, "unknown route: "+route, http.StatusBadRequest)
+			return
+		}
+		if _, err := s.SendRoute(r.Context(), route, text); err != nil {
+			log.Printf("bridge: route %s notification failed: %v", route, err)
+		}
+		log.Printf("bridge: automation notification (source=%s route=%s)", req.Source, route)
+		notifID := fmt.Sprintf("ntf_%d", time.Now().UnixMilli())
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":     notifID,
+			"status": "sent",
+		})
 		return
 	}
 

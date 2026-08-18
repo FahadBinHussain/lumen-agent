@@ -266,6 +266,17 @@ bridge:
     messenger_thread_id: "2637078310061988"
     whatsapp_jid: "8801911104251@s.whatsapp.net"
     discord_channel_id: "1537650032441032765"
+  # route = list of channels to fan notifications out to. used by the BNP
+  # worker (BNP_ROUTE env, default "bnp") and by the notifications endpoint
+  # via the optional "route" body field. the messenger channel is the
+  # primary: its message ID feeds the BNP ack contract; every other channel
+  # is best-effort. adding a channel = edit this list + deploy, no code.
+  routes:
+    bnp:
+      - platform: messenger
+        thread_id: "984803114200952"
+      - platform: whatsapp
+        jid: "120363409684314037@g.us"
 
 notify:
   # lumen's own notifications endpoint (murmur space default is dead/paused)
