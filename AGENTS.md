@@ -512,7 +512,12 @@ Semantics (all covered by unit tests):
   messenger cookie reload (ReloadCookies sets connected=false for a few
   seconds) stay silent.
 - **Cooldown** (`min_notify_interval`, default 2m): caps flap spam — dead→alive
-  →dead cycles within the window only send once.
+  →dead cycles within the window only send once. **Pending-alive fix
+  (2026-08-18)**: recovery inside the cooldown now leaves the alive
+  notification PENDING and it fires as soon as the cooldown elapses while the
+  platform stays up — the old code reset lastDead on the suppressed recovery,
+  so quick come-backs (the common case, whatsapp reconnects fast) swallowed
+  the "alive again" message forever (user saw dead msgs but never alive msgs).
 - Watch loop runs inside the container (`bridge.health_watch.enabled`), so the
   whatsapp-dead alert still has a working messenger channel when the laptop
   (the whatsapp tailnet route) is down. Pure notification — nothing here

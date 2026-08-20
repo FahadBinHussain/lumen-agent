@@ -14,10 +14,11 @@ type healthTarget struct {
 }
 
 type healthState struct {
-	armed      bool
-	deadSince  time.Time
-	lastDead   bool
-	lastNotify time.Time
+	armed        bool
+	deadSince    time.Time
+	lastDead     bool
+	alivePending bool // recovery happened inside min_notify; alive msg still owed
+	lastNotify   time.Time
 }
 
 // watchHealth sends cross-platform notifications when a platform dies or
@@ -101,12 +102,20 @@ func (s *Service) checkHealth(name string, st *healthState, alive bool, deadAfte
 
 	if alive {
 		st.deadSince = time.Time{}
-		if st.lastDead && time.Since(st.lastNotify) >= minNotify {
-			st.lastDead = false
-			st.lastNotify = time.Now()
-			return name + " is alive again"
+		if st.lastDead || st.alivePending {
+			if time.Since(st.lastNotify) >= minNotify {
+				st.lastDead = false
+				st.alivePending = false
+				st.lastNotify = time.Now()
+				return name + " is alive again"
+			}
+			// recovery inside the cooldown: stay armed on the alert so the
+			// alive notification fires once the cooldown elapses instead of
+			// being swallowed forever (the old bug: a quick recovery reset
+			// lastDead and the alive message was silently lost).
+			st.alivePending = true
+			return ""
 		}
-		st.lastDead = false
 		return ""
 	}
 
