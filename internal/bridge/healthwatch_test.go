@@ -66,24 +66,38 @@ func TestCheckHealthTransitions(t *testing.T) {
 func TestCheckHealthCooldown(t *testing.T) {
 	s := &Service{}
 	deadAfter := time.Millisecond
-	minNotify := time.Hour
+	minNotify := 120 * time.Millisecond
 
 	st := &healthState{}
 
-	s.checkHealth("messenger", st, true, deadAfter, minNotify) // arm
+	s.checkHealth("messenger", st, true, deadAfter, minNotify)  // arm
 	s.checkHealth("messenger", st, false, deadAfter, minNotify) // start dead timer
 	time.Sleep(2 * time.Millisecond)
 
 	if msg := s.checkHealth("messenger", st, false, deadAfter, minNotify); msg == "" {
 		t.Fatal("expected dead notification")
 	}
-	// flapping back alive within min_notify_interval: silent
+	// flapping back alive within min_notify_interval: silent now, but the
+	// alive notification is PENDING — it must still fire once the cooldown
+	// elapses instead of being swallowed forever
 	if msg := s.checkHealth("messenger", st, true, deadAfter, minNotify); msg != "" {
 		t.Fatalf("flap alive within cooldown sent %q", msg)
 	}
 	// and dead again within cooldown: silent too
 	if msg := s.checkHealth("messenger", st, false, deadAfter, minNotify); msg != "" {
 		t.Fatalf("flap dead within cooldown sent %q", msg)
+	}
+	if msg := s.checkHealth("messenger", st, true, deadAfter, minNotify); msg != "" {
+		t.Fatalf("second flap alive within cooldown sent %q", msg)
+	}
+	// cooldown elapsed while alive: the pending alive notification fires once
+	time.Sleep(minNotify + 20*time.Millisecond)
+	msg := s.checkHealth("messenger", st, true, deadAfter, minNotify)
+	if msg == "" {
+		t.Fatal("expected pending alive notification after cooldown")
+	}
+	if msg2 := s.checkHealth("messenger", st, true, deadAfter, minNotify); msg2 != "" {
+		t.Fatalf("steady alive re-sent %q", msg2)
 	}
 }
 
