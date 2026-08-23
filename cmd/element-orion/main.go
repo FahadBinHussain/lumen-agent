@@ -248,7 +248,7 @@ func runServe(args []string) error {
 // when everything is off so the base binary behaves exactly as before.
 func buildNotify(cfg *config.Config) (*notify.Service, error) {
 	n := cfg.Notify
-	anyEnabled := n.SteamUpdates.Enabled || n.FreeGames.Enabled || n.NeonUsage.Enabled
+	anyEnabled := n.SteamUpdates.Enabled || n.FreeGames.Enabled || n.NeonUsage.Enabled || n.Supabase.Enabled
 	if !anyEnabled {
 		return nil, nil
 	}
@@ -279,6 +279,18 @@ func buildNotify(cfg *config.Config) (*notify.Service, error) {
 			ThreadID:     n.NeonUsage.ThreadID,
 			APIKeyEnv:    n.NeonUsage.APIKeyEnv,
 			StatePath:    n.NeonUsage.StatePath,
+		},
+		Supabase: notify.SupabaseCfg{
+			Enabled:                 n.Supabase.Enabled,
+			Interval:                n.Supabase.Interval,
+			ThreadID:                n.Supabase.ThreadID,
+			AppStateTable:           n.Supabase.AppStateTable,
+			ProjectRefs:             n.Supabase.ProjectRefs,
+			EgressThreshold:         n.Supabase.EgressThreshold,
+			DBThreshold:             n.Supabase.DBThreshold,
+			AppStateDatabaseURL:     n.Supabase.AppStateDatabaseURL,
+			AppStateDatabaseURLEnv:  n.Supabase.AppStateDatabaseURLEnv,
+			StatePath:               n.Supabase.StatePath,
 		},
 	}
 	return notify.New(context.Background(), nc)

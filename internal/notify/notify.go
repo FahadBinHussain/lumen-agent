@@ -24,6 +24,7 @@ type Config struct {
 	SteamUpdates  SteamUpdatesCfg  `yaml:"steam_updates"`
 	FreeGames     FreeGamesCfg     `yaml:"free_games"`
 	NeonUsage     NeonUsageCfg     `yaml:"neon_usage"`
+	Supabase      SupabaseCfg      `yaml:"supabase"`
 }
 
 type SteamUpdatesCfg struct {
@@ -51,6 +52,21 @@ type NeonUsageCfg struct {
 	StatePath    string   `yaml:"state_path"`
 }
 
+// SupabaseCfg watches supabase project quotas. tokens live in lumen's own Neon
+// app_state table (see supabase.go), NOT env vars.
+type SupabaseCfg struct {
+	Enabled       bool     `yaml:"enabled"`
+	Interval      string   `yaml:"interval"`
+	ThreadID      string   `yaml:"thread_id"`
+	AppStateTable string   `yaml:"app_state_table"`
+	ProjectRefs   []string `yaml:"project_refs"`
+	EgressThreshold float64 `yaml:"egress_threshold"`
+	DBThreshold     float64 `yaml:"db_threshold"`
+	AppStateDatabaseURL    string `yaml:"app_state_database_url"`
+	AppStateDatabaseURLEnv string `yaml:"app_state_database_url_env"`
+	StatePath              string `yaml:"state_path"`
+}
+
 // Service runs the ported Vercel pollers (steam-updates, free-games) and the
 // neon usage warning check. Faithful ports of
 //   - murmur/vercel/app/api/steam-updates/route.ts
@@ -62,8 +78,11 @@ type Service struct {
 	client    *http.Client
 	mu        sync.Mutex
 	db        *dedupeDB
+	appState  *appStateDB
 	neonState map[string]string // orgId -> period reset yyyy-MM-dd (state file persisted)
 	statePath string
+	supabaseState map[string]string // dedupeKey -> date (supabase watcher)
+	supabaseStatePath string
 }
 
 func New(ctx context.Context, cfg Config) (*Service, error) {
@@ -79,6 +98,18 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if cfg.NeonUsage.WarningHours <= 0 {
 		cfg.NeonUsage.WarningHours = 90
 	}
+	if cfg.Supabase.Interval == "" {
+		cfg.Supabase.Interval = "6h"
+	}
+	if cfg.Supabase.AppStateTable == "" {
+		cfg.Supabase.AppStateTable = "app_state"
+	}
+	if cfg.Supabase.EgressThreshold <= 0 {
+		cfg.Supabase.EgressThreshold = 0.8
+	}
+	if cfg.Supabase.DBThreshold <= 0 {
+		cfg.Supabase.DBThreshold = 0.8
+	}
 	if cfg.SteamUpdates.MaxAgeDays <= 0 {
 		cfg.SteamUpdates.MaxAgeDays = 30
 	}
@@ -93,6 +124,8 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		client:    &http.Client{Timeout: 60 * time.Second},
 		neonState: map[string]string{},
 		statePath: cfg.NeonUsage.StatePath,
+		supabaseState: map[string]string{},
+		supabaseStatePath: cfg.Supabase.StatePath,
 	}
 	if (cfg.SteamUpdates.Enabled || cfg.FreeGames.Enabled) && cfg.DatabaseURL != "" {
 		db, err := newDedupeDB(ctx, cfg.DatabaseURL)
@@ -101,12 +134,31 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		}
 		s.db = db
 	}
+	if cfg.Supabase.Enabled {
+		appDSN := cfg.Supabase.AppStateDatabaseURL
+		if appDSN == "" && cfg.Supabase.AppStateDatabaseURLEnv != "" {
+			appDSN = strings.TrimSpace(os.Getenv(cfg.Supabase.AppStateDatabaseURLEnv))
+		}
+		if appDSN == "" {
+			appDSN = cfg.DatabaseURL
+		}
+		if appDSN != "" {
+			appDB, err := newAppStateDB(ctx, appDSN, cfg.Supabase.AppStateTable)
+			if err != nil {
+				return nil, fmt.Errorf("notify app_state db: %w", err)
+			}
+			s.appState = appDB
+		}
+	}
 	return s, nil
 }
 
 func (s *Service) Close() {
 	if s.db != nil {
 		s.db.Close()
+	}
+	if s.appState != nil {
+		s.appState.Close()
 	}
 }
 
@@ -130,6 +182,10 @@ func (s *Service) Run(ctx context.Context) error {
 	if s.cfg.NeonUsage.Enabled {
 		iv := parseInterval(s.cfg.NeonUsage.Interval, time.Hour)
 		jobs = append(jobs, job{"neon-usage", s.checkNeonUsage, iv})
+	}
+	if s.cfg.Supabase.Enabled {
+		iv := parseInterval(s.cfg.Supabase.Interval, time.Hour)
+		jobs = append(jobs, job{"supabase", s.checkSupabase, iv})
 	}
 
 	if len(jobs) == 0 {
