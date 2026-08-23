@@ -257,6 +257,7 @@ type NotifyConfig struct {
 	SteamUpdates  NotifySteamCfg   `yaml:"steam_updates"`
 	FreeGames     NotifyFreeGames  `yaml:"free_games"`
 	NeonUsage     NotifyNeonUsage  `yaml:"neon_usage"`
+	Supabase      NotifySupabase   `yaml:"supabase"`
 }
 
 type NotifySteamCfg struct {
@@ -282,6 +283,27 @@ type NotifyNeonUsage struct {
 	ThreadID     string   `yaml:"thread_id"`
 	APIKeyEnv    []string `yaml:"api_key_env"`
 	StatePath    string   `yaml:"state_path"`
+}
+
+// NotifySupabase watches supabase project quotas (egress, db size). unlike the
+// other pollers, tokens are NOT read from env vars - they live in lumen's own
+// Neon app_state table (keyed per account), which is what lets lumen own and
+// rotate the supabase refresh token without touching vaultwarden.
+type NotifySupabase struct {
+	Enabled       bool     `yaml:"enabled"`
+	Interval      string   `yaml:"interval"`
+	ThreadID      string   `yaml:"thread_id"`
+	AppStateTable string   `yaml:"app_state_table"`
+	// project refs to watch; empty = discover all `supabase.<ref>.refresh_token`
+	// rows in app_state (scales to new accounts without config changes).
+	ProjectRefs []string `yaml:"project_refs"`
+	// thresholds as fractions of quota (0.8 = 80%). egress vs 5 GB, db vs 500 MB.
+	EgressThreshold float64 `yaml:"egress_threshold"`
+	DBThreshold     float64 `yaml:"db_threshold"`
+	// which Neon DB holds app_state; defaults to the notify DatabaseURL.
+	AppStateDatabaseURL    string `yaml:"app_state_database_url"`
+	AppStateDatabaseURLEnv string `yaml:"app_state_database_url_env"`
+	StatePath              string `yaml:"state_path"`
 }
 
 // PersistenceConfig snapshots the session dir to an external Postgres
@@ -566,6 +588,7 @@ func defaultConfig() Config {
 			SteamUpdates:     NotifySteamCfg{Enabled: false, Interval: "1m", MaxAgeDays: 30},
 			FreeGames:        NotifyFreeGames{Enabled: false, Interval: "1m"},
 			NeonUsage:        NotifyNeonUsage{Enabled: false, Interval: "1h", WarningHours: 90},
+			Supabase:         NotifySupabase{Enabled: false, Interval: "6h", AppStateTable: "app_state", EgressThreshold: 0.8, DBThreshold: 0.8},
 		},
 		GIFs: GIFConfig{
 			Enabled:       false,

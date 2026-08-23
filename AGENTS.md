@@ -594,6 +594,19 @@ bool). Both are polled, not event-driven.
   `entrypoint: tailscale userspace node up (<ip>)` + `WhatsApp connected`;
   tailnet shows `lumen-render` (linux, active). The laptop socks5-proxy (pid
   26760) must stay alive — it's now the tailnet upstream. pinggy retired.
+  **socks5-proxy restart (2026-08-20)**: when the proxy dies, whatsapp drops
+  silently (dial failures, `websocket not connected`) and — because the
+  notifications endpoint returns 200 on failed sends — neon-usage warnings
+  get recorded as sent and never re-fire (see automata\facebook.com
+  AGENTS.md). restart detached with creds matching SOCKS_CHAIN_UPSTREAM:
+  `$env:SOCKS5_USER='lumenwa'; $env:SOCKS5_PASS='z0xpjLQVd4nEgX5GtMqN2IDw';
+  Start-Process C:\Users\Admin\Downloads\automata\tools\socks5-proxy\socks5-proxy.exe
+  -ArgumentList '0.0.0.0:1080' -WindowStyle Hidden`. if whatsmeow doesn't
+  reconnect within ~15 min (no `Dialing wss://web.whatsapp.com` lines in
+  Render logs — its backoff can stall after a proxy outage), trigger a deploy
+  (`POST /v1/services/srv-d9vd3oh42hec738odeg0/deploys`, body `{}`) to force a
+  fresh boot + tailscale rejoin; the whatsapp session survives via Neon
+  (`bridge: restored whatsapp session from neon`).
 - **Log-noise flood from the SOCKS listeners (resolved 2026-08-17, commits
   cdb00e1 + b13d34b)**: the container logs were drowned by ~1-2/s
   `[ERR] socks: Unsupported SOCKS version: [72]` + `serve 127.0.0.1:PORT: ...`

@@ -311,6 +311,16 @@ notify:
     thread_id: "2637078310061988"
     api_key_env:
       - NEON_ORG_API_KEY
+  supabase:
+    enabled: true
+    interval: 6h
+    thread_id: "2637078310061988"
+    app_state_table: app_state
+    # app_state lives in lumen's OWN persistence Neon (DATABASE_URL), NOT
+    # NOTIFY_DATABASE_URL (murmur's dedupe DB).
+    app_state_database_url_env: DATABASE_URL
+    egress_threshold: 0.8
+    db_threshold: 0.8
 
 persistence:
   enabled: true
