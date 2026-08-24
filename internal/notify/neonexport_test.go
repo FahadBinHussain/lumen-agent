@@ -6,7 +6,31 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestExportIntervalDuration(t *testing.T) {
+	cases := []struct {
+		cfg  string
+		want time.Duration
+	}{
+		{"", 24 * time.Hour},
+		{"24h", 24 * time.Hour},
+		{"6h", 6 * time.Hour},
+		{"1h30m", 90 * time.Minute},
+		{"bogus", 24 * time.Hour},
+		{"0s", 24 * time.Hour},
+		{"-5m", 24 * time.Hour},
+	}
+	for _, c := range cases {
+		s := &Service{cfg: Config{NeonUsage: NeonUsageCfg{
+			Export: NeonExportCfg{ExportInterval: c.cfg},
+		}}}
+		if got := s.exportIntervalDuration(); got != c.want {
+			t.Errorf("exportIntervalDuration(%q) = %v, want %v", c.cfg, got, c.want)
+		}
+	}
+}
 
 func runGitTest(t *testing.T, dir string, args ...string) string {
 	t.Helper()

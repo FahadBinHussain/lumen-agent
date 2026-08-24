@@ -37,8 +37,18 @@ func (s *Service) checkNeonUsage(ctx context.Context) error {
 	}
 	s.mu.Unlock()
 
+	// The export runs on its own cadence (export_interval, default 24h),
+	// decoupled from the 1h warning poll — so we re-dump at most once per
+	// interval while an org stays over threshold. The WARNING still fires once
+	// per reset period (deduped in sendNeonWarning).
 	var exportFiles []exportFile
 	overThreshold := 0
+	exportDue := false
+	if s.cfg.NeonUsage.Export.Enabled {
+		s.mu.Lock()
+		exportDue = time.Since(s.lastExport) >= s.exportIntervalDuration()
+		s.mu.Unlock()
+	}
 	for _, envName := range s.cfg.NeonUsage.APIKeyEnv {
 		key := strings.TrimSpace(os.Getenv(envName))
 		if key == "" {
@@ -56,7 +66,7 @@ func (s *Service) checkNeonUsage(ctx context.Context) error {
 			if u.Used >= s.cfg.NeonUsage.WarningHours {
 				overThreshold++
 				s.sendNeonWarning(ctx, &u)
-				if s.cfg.NeonUsage.Export.Enabled {
+				if s.cfg.NeonUsage.Export.Enabled && exportDue {
 					files, err := s.exportNeonOrg(ctx, key, org.ID)
 					if err != nil {
 						log.Printf("notify: export %s: %v", org.ID, err)
@@ -72,9 +82,26 @@ func (s *Service) checkNeonUsage(ctx context.Context) error {
 	if len(exportFiles) > 0 {
 		if err := s.pushExports(ctx, exportFiles); err != nil {
 			log.Printf("notify: push exports: %v", err)
+		} else {
+			s.mu.Lock()
+			s.lastExport = time.Now()
+			s.mu.Unlock()
 		}
 	}
 	return nil
+}
+
+// exportIntervalDuration resolves the export cadence, defaulting to 24h.
+func (s *Service) exportIntervalDuration() time.Duration {
+	v := s.cfg.NeonUsage.Export.ExportInterval
+	if v == "" {
+		v = "24h"
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 24 * time.Hour
+	}
+	return d
 }
 
 type neonOrgUsage struct {

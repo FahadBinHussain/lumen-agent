@@ -298,6 +298,7 @@ type NotifyNeonExportCfg struct {
 	KeyEnv         string `yaml:"key_env"`
 	GitHubTokenEnv string `yaml:"github_token_env"`
 	ExportTimeout  string `yaml:"export_timeout"`
+	ExportInterval string `yaml:"export_interval"`
 }
 
 // NotifySupabase watches supabase project quotas (egress, db size). unlike the
@@ -607,7 +608,7 @@ func defaultConfig() Config {
 					Enabled: false, Repo: "FahadBinHussain/lumen-agent",
 					Branch: "exports", Path: "backups",
 					KeyEnv: "LUMEN_EXPORT_KEY", GitHubTokenEnv: "LUMEN_EXPORT_GITHUB_TOKEN",
-					ExportTimeout: "60s",
+					ExportTimeout: "60s", ExportInterval: "24h",
 				},
 			},
 			Supabase:         NotifySupabase{Enabled: false, Interval: "6h", AppStateTable: "app_state", EgressThreshold: 0.8, DBThreshold: 0.8},

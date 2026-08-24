@@ -337,13 +337,16 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     consumption passes `warning_hours`, `checkNeonUsage` now ALSO dumps every
     project in that org (pg_dump → gzip → openssl aes-256) and force-pushes the
     encrypted files to the `exports` branch of the lumen repo (config
-    `notify.neon_usage.export.*`). Runs EVERY poll while over threshold (NOT
-    deduped like the warning — that would give one stale backup per month).
-    Single commit per cycle (fresh `git init -b exports` + force-push = flat
-    history, 1 commit always, old blobs unreachable → GitHub GCs). Env vars on
+    `notify.neon_usage.export.*`). Runs on `export_interval` (default 24h) —
+    NOT every hourly poll and NOT deduped like the warning (the warning fires
+    once per reset period; the export re-dumps at most once per interval while
+    over threshold so the backup stays fresh). Single commit per cycle (fresh
+    `git init -b exports` + force-push = flat history, 1 commit always, old
+    blobs unreachable → GitHub GCs). Env vars on
     Render: `LUMEN_EXPORT_KEY` (openssl passphrase; decrypt = `openssl enc -d
     -aes-256-cbc -pbkdf2 -pass env:LUMEN_EXPORT_KEY`), `LUMEN_EXPORT_GITHUB_TOKEN`
-    (fahadbinhussain@outlook.com PAT, contents:write). Dockerfile now installs
+    (fahadbinhussain@outlook.com fine-grained PAT scoped to lumen-agent only,
+    contents:write). Dockerfile now installs
     `postgresql-client git openssl` (pg_dump + git needed). code:
     `internal/notify/neonexport.go` (`exportNeonOrg` per over-threshold org,
     `pushExports` batched single commit). Recovery of an encrypted export: key
