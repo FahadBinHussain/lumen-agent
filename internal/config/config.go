@@ -258,6 +258,7 @@ type NotifyConfig struct {
 	FreeGames     NotifyFreeGames  `yaml:"free_games"`
 	NeonUsage     NotifyNeonUsage  `yaml:"neon_usage"`
 	Supabase      NotifySupabase   `yaml:"supabase"`
+	CrackWatch    NotifyCrackWatch `yaml:"crack_watch"`
 }
 
 type NotifySteamCfg struct {
@@ -272,6 +273,17 @@ type NotifySteamCfg struct {
 type NotifyFreeGames struct {
 	Enabled    bool   `yaml:"enabled"`
 	Interval   string `yaml:"interval"`
+	ThreadIDs  string `yaml:"thread_ids"`
+	WebhookURL string `yaml:"webhook_url"`
+}
+
+// NotifyCrackWatch polls the r/CrackWatch RSS feed for scene releases
+// (Game-GROUP posts) and pushes new ones to the notify webhook, deduped
+// against Neon crack_seen.
+type NotifyCrackWatch struct {
+	Enabled    bool   `yaml:"enabled"`
+	Interval   string `yaml:"interval"`
+	FeedURL    string `yaml:"feed_url"`
 	ThreadIDs  string `yaml:"thread_ids"`
 	WebhookURL string `yaml:"webhook_url"`
 }
@@ -612,6 +624,7 @@ func defaultConfig() Config {
 				},
 			},
 			Supabase:         NotifySupabase{Enabled: false, Interval: "6h", AppStateTable: "app_state", EgressThreshold: 0.8, DBThreshold: 0.8},
+			CrackWatch:       NotifyCrackWatch{Enabled: false, Interval: "5m", FeedURL: "https://www.reddit.com/r/CrackWatch/.rss", ThreadIDs: ""},
 		},
 		GIFs: GIFConfig{
 			Enabled:       false,

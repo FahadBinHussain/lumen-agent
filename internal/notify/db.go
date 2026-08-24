@@ -38,6 +38,11 @@ func newDedupeDB(ctx context.Context, dsn string) (*dedupeDB, error) {
 			title    TEXT NOT NULL,
 			seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
+		`CREATE TABLE IF NOT EXISTS crack_seen (
+			guid     TEXT PRIMARY KEY,
+			title    TEXT NOT NULL,
+			seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
 	} {
 		if _, err := pool.Exec(ctx, stmt); err != nil {
 			pool.Close()

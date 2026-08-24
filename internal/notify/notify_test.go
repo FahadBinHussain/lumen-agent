@@ -86,3 +86,25 @@ func TestCanonicalResetDate(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestReleaseTitleFilter(t *testing.T) {
+	cases := []struct {
+		title string
+		want  bool
+	}{
+		{"Maneater-RUNE", true},
+		{"Warhounds-RUNE", true},
+		{"Grand.Theft.Auto.V.Legacy.v1.0.3889.0-RUNE", true},
+		{"Atomic.Heart-CODEX", true},
+		{"Daily Releases (August 13, 2026)", false},
+		{"[Crack Watch] Weekly question thread", false},
+		{"[Crack Watch] Games", false},
+		{"Something with no group", false},
+		{"Game-lowercasegroup", false},
+	}
+	for _, c := range cases {
+		if got := releaseTitleRe.MatchString(c.title); got != c.want {
+			t.Errorf("releaseTitleRe(%q) = %v, want %v", c.title, got, c.want)
+		}
+	}
+}

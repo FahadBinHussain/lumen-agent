@@ -333,6 +333,16 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     neon_usage needs `notify.neon_usage.api_key_env` (env var names holding
     Neon API keys) + `thread_id` + optional `state_path`. NOT wired yet on
     this box — copy only until cutover (mirrors bnp_enabled approach).
+  - **crack_watch poller (added 2026-08-24)**: `internal/notify/crackwatch.go`
+    polls `https://www.reddit.com/r/CrackWatch/.rss` (Atom) for scene releases.
+    Keeps only `Game-GROUP` posts (regex `-([A-Z0-9]{2,10})$` — drops "Daily
+    Releases (...)" digests, stickies, and meta threads), dedupes against Neon
+    `crack_seen`, pushes to the webhook as source `crackwatch` with
+    dedupeKey = reddit post URL. Config `notify.crack_watch.{enabled,interval
+    (default 5m),feed_url,thread_ids,webhook_url}`. Retries the feed fetch 3x
+    (5/10/15s backoff) — reddit's .rss intermittently resets connections from
+    datacenter IPs. Enabled=false everywhere by default; flip in the config
+    that's live on the target box + set thread_ids.
   - **neon_usage encrypted export (added 2026-08-24)**: when an org's
     consumption passes `warning_hours`, `checkNeonUsage` now ALSO dumps every
     project in that org (pg_dump → gzip → openssl aes-256) and force-pushes the

@@ -25,6 +25,7 @@ type Config struct {
 	FreeGames     FreeGamesCfg     `yaml:"free_games"`
 	NeonUsage     NeonUsageCfg     `yaml:"neon_usage"`
 	Supabase      SupabaseCfg      `yaml:"supabase"`
+	CrackWatch    CrackWatchCfg    `yaml:"crack_watch"`
 }
 
 type SteamUpdatesCfg struct {
@@ -39,6 +40,14 @@ type SteamUpdatesCfg struct {
 type FreeGamesCfg struct {
 	Enabled    bool   `yaml:"enabled"`
 	Interval   string `yaml:"interval"`
+	ThreadIDs  string `yaml:"thread_ids"`
+	WebhookURL string `yaml:"webhook_url"`
+}
+
+type CrackWatchCfg struct {
+	Enabled    bool   `yaml:"enabled"`
+	Interval   string `yaml:"interval"`
+	FeedURL    string `yaml:"feed_url"`
 	ThreadIDs  string `yaml:"thread_ids"`
 	WebhookURL string `yaml:"webhook_url"`
 }
@@ -107,6 +116,12 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if cfg.FreeGames.Interval == "" {
 		cfg.FreeGames.Interval = "1m"
 	}
+	if cfg.CrackWatch.Interval == "" {
+		cfg.CrackWatch.Interval = "5m"
+	}
+	if cfg.CrackWatch.FeedURL == "" {
+		cfg.CrackWatch.FeedURL = "https://www.reddit.com/r/CrackWatch/.rss"
+	}
 	if cfg.NeonUsage.Interval == "" {
 		cfg.NeonUsage.Interval = "1h"
 	}
@@ -163,7 +178,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		supabaseState: map[string]string{},
 		supabaseStatePath: cfg.Supabase.StatePath,
 	}
-	if (cfg.SteamUpdates.Enabled || cfg.FreeGames.Enabled) && cfg.DatabaseURL != "" {
+	if (cfg.SteamUpdates.Enabled || cfg.FreeGames.Enabled || cfg.CrackWatch.Enabled) && cfg.DatabaseURL != "" {
 		db, err := newDedupeDB(ctx, cfg.DatabaseURL)
 		if err != nil {
 			return nil, fmt.Errorf("notify dedupe db: %w", err)
@@ -222,6 +237,10 @@ func (s *Service) Run(ctx context.Context) error {
 	if s.cfg.Supabase.Enabled {
 		iv := parseInterval(s.cfg.Supabase.Interval, time.Hour)
 		jobs = append(jobs, job{"supabase", s.checkSupabase, iv})
+	}
+	if s.cfg.CrackWatch.Enabled {
+		iv := parseInterval(s.cfg.CrackWatch.Interval, 5*time.Minute)
+		jobs = append(jobs, job{"crack-watch", s.pollCrackWatch, iv})
 	}
 
 	if len(jobs) == 0 {
