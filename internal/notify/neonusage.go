@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -36,7 +37,8 @@ func (s *Service) checkNeonUsage(ctx context.Context) error {
 	}
 	s.mu.Unlock()
 
-	var results []neonOrgUsage
+	var exportFiles []exportFile
+	overThreshold := 0
 	for _, envName := range s.cfg.NeonUsage.APIKeyEnv {
 		key := strings.TrimSpace(os.Getenv(envName))
 		if key == "" {
@@ -51,16 +53,25 @@ func (s *Service) checkNeonUsage(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("%s: %s consumption: %w", envName, org.ID, err)
 			}
-			results = append(results, u)
+			if u.Used >= s.cfg.NeonUsage.WarningHours {
+				overThreshold++
+				s.sendNeonWarning(ctx, &u)
+				if s.cfg.NeonUsage.Export.Enabled {
+					files, err := s.exportNeonOrg(ctx, key, org.ID)
+					if err != nil {
+						log.Printf("notify: export %s: %v", org.ID, err)
+					}
+					exportFiles = append(exportFiles, files...)
+				}
+			}
 		}
 	}
 
-	overThreshold := 0
-	for i := range results {
-		r := &results[i]
-		if r.Used >= s.cfg.NeonUsage.WarningHours {
-			overThreshold++
-			s.sendNeonWarning(ctx, r)
+	// Single batched push: every over-threshold org's projects go into ONE
+	// commit, force-pushed over the previous export (flat branch history).
+	if len(exportFiles) > 0 {
+		if err := s.pushExports(ctx, exportFiles); err != nil {
+			log.Printf("notify: push exports: %v", err)
 		}
 	}
 	return nil

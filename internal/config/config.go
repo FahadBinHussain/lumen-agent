@@ -277,12 +277,27 @@ type NotifyFreeGames struct {
 }
 
 type NotifyNeonUsage struct {
-	Enabled      bool     `yaml:"enabled"`
-	Interval     string   `yaml:"interval"`
-	WarningHours float64  `yaml:"warning_hours"`
-	ThreadID     string   `yaml:"thread_id"`
-	APIKeyEnv    []string `yaml:"api_key_env"`
-	StatePath    string   `yaml:"state_path"`
+	Enabled      bool                `yaml:"enabled"`
+	Interval     string              `yaml:"interval"`
+	WarningHours float64             `yaml:"warning_hours"`
+	ThreadID     string              `yaml:"thread_id"`
+	APIKeyEnv    []string            `yaml:"api_key_env"`
+	StatePath    string              `yaml:"state_path"`
+	Export       NotifyNeonExportCfg `yaml:"export"`
+}
+
+// NotifyNeonExportCfg exports encrypted pg_dumps of every project in an
+// over-threshold org to a dedicated branch of the lumen repo, force-pushing
+// over the previous export each poll so storage stays flat. Encryption key and
+// GitHub token come from env vars (never committed).
+type NotifyNeonExportCfg struct {
+	Enabled        bool   `yaml:"enabled"`
+	Repo           string `yaml:"repo"`
+	Branch         string `yaml:"branch"`
+	Path           string `yaml:"path"`
+	KeyEnv         string `yaml:"key_env"`
+	GitHubTokenEnv string `yaml:"github_token_env"`
+	ExportTimeout  string `yaml:"export_timeout"`
 }
 
 // NotifySupabase watches supabase project quotas (egress, db size). unlike the
@@ -587,7 +602,14 @@ func defaultConfig() Config {
 			DatabaseURLEnv:   "DATABASE_URL",
 			SteamUpdates:     NotifySteamCfg{Enabled: false, Interval: "1m", MaxAgeDays: 30},
 			FreeGames:        NotifyFreeGames{Enabled: false, Interval: "1m"},
-			NeonUsage:        NotifyNeonUsage{Enabled: false, Interval: "1h", WarningHours: 90},
+			NeonUsage: NotifyNeonUsage{Enabled: false, Interval: "1h", WarningHours: 90,
+				Export: NotifyNeonExportCfg{
+					Enabled: false, Repo: "FahadBinHussain/lumen-agent",
+					Branch: "exports", Path: "backups",
+					KeyEnv: "LUMEN_EXPORT_KEY", GitHubTokenEnv: "LUMEN_EXPORT_GITHUB_TOKEN",
+					ExportTimeout: "60s",
+				},
+			},
 			Supabase:         NotifySupabase{Enabled: false, Interval: "6h", AppStateTable: "app_state", EgressThreshold: 0.8, DBThreshold: 0.8},
 		},
 		GIFs: GIFConfig{

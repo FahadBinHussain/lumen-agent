@@ -44,12 +44,25 @@ type FreeGamesCfg struct {
 }
 
 type NeonUsageCfg struct {
-	Enabled      bool     `yaml:"enabled"`
-	Interval     string   `yaml:"interval"`
-	WarningHours float64  `yaml:"warning_hours"`
-	ThreadID     string   `yaml:"thread_id"`
-	APIKeyEnv    []string `yaml:"api_key_env"`
-	StatePath    string   `yaml:"state_path"`
+	Enabled      bool           `yaml:"enabled"`
+	Interval     string         `yaml:"interval"`
+	WarningHours float64        `yaml:"warning_hours"`
+	ThreadID     string         `yaml:"thread_id"`
+	APIKeyEnv    []string       `yaml:"api_key_env"`
+	StatePath    string         `yaml:"state_path"`
+	Export       NeonExportCfg  `yaml:"export"`
+}
+
+// NeonExportCfg mirrors config.NotifyNeonExportCfg: encrypted pg_dump exports
+// of over-threshold orgs to a dedicated repo branch, force-pushed each poll.
+type NeonExportCfg struct {
+	Enabled        bool   `yaml:"enabled"`
+	Repo           string `yaml:"repo"`
+	Branch         string `yaml:"branch"`
+	Path           string `yaml:"path"`
+	KeyEnv         string `yaml:"key_env"`
+	GitHubTokenEnv string `yaml:"github_token_env"`
+	ExportTimeout  string `yaml:"export_timeout"`
 }
 
 // SupabaseCfg watches supabase project quotas. tokens live in lumen's own Neon
@@ -97,6 +110,24 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	if cfg.NeonUsage.WarningHours <= 0 {
 		cfg.NeonUsage.WarningHours = 90
+	}
+	if cfg.NeonUsage.Export.Repo == "" {
+		cfg.NeonUsage.Export.Repo = "FahadBinHussain/lumen-agent"
+	}
+	if cfg.NeonUsage.Export.Branch == "" {
+		cfg.NeonUsage.Export.Branch = "exports"
+	}
+	if cfg.NeonUsage.Export.Path == "" {
+		cfg.NeonUsage.Export.Path = "backups"
+	}
+	if cfg.NeonUsage.Export.KeyEnv == "" {
+		cfg.NeonUsage.Export.KeyEnv = "LUMEN_EXPORT_KEY"
+	}
+	if cfg.NeonUsage.Export.GitHubTokenEnv == "" {
+		cfg.NeonUsage.Export.GitHubTokenEnv = "LUMEN_EXPORT_GITHUB_TOKEN"
+	}
+	if cfg.NeonUsage.Export.ExportTimeout == "" {
+		cfg.NeonUsage.Export.ExportTimeout = "60s"
 	}
 	if cfg.Supabase.Interval == "" {
 		cfg.Supabase.Interval = "6h"

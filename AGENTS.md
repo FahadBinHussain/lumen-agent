@@ -333,6 +333,22 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     neon_usage needs `notify.neon_usage.api_key_env` (env var names holding
     Neon API keys) + `thread_id` + optional `state_path`. NOT wired yet on
     this box — copy only until cutover (mirrors bnp_enabled approach).
+  - **neon_usage encrypted export (added 2026-08-24)**: when an org's
+    consumption passes `warning_hours`, `checkNeonUsage` now ALSO dumps every
+    project in that org (pg_dump → gzip → openssl aes-256) and force-pushes the
+    encrypted files to the `exports` branch of the lumen repo (config
+    `notify.neon_usage.export.*`). Runs EVERY poll while over threshold (NOT
+    deduped like the warning — that would give one stale backup per month).
+    Single commit per cycle (fresh `git init -b exports` + force-push = flat
+    history, 1 commit always, old blobs unreachable → GitHub GCs). Env vars on
+    Render: `LUMEN_EXPORT_KEY` (openssl passphrase; decrypt = `openssl enc -d
+    -aes-256-cbc -pbkdf2 -pass env:LUMEN_EXPORT_KEY`), `LUMEN_EXPORT_GITHUB_TOKEN`
+    (fahadbinhussain@outlook.com PAT, contents:write). Dockerfile now installs
+    `postgresql-client git openssl` (pg_dump + git needed). code:
+    `internal/notify/neonexport.go` (`exportNeonOrg` per over-threshold org,
+    `pushExports` batched single commit). Recovery of an encrypted export: key
+    copy at `C:\Users\Admin\Downloads\lumen-export-key.txt`. File names are
+    `<project-id>.sql.gz.enc` under `backups/`.
   - model-catalog listing (/ai models etc.) intentionally dropped — the fork
     uses the single `llm.model` config.
 - Pre-existing test failures on this machine (NOT caused by the merge, verified):
