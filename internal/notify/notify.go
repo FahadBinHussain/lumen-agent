@@ -63,6 +63,7 @@ type NeonExportCfg struct {
 	KeyEnv         string `yaml:"key_env"`
 	GitHubTokenEnv string `yaml:"github_token_env"`
 	ExportTimeout  string `yaml:"export_timeout"`
+	ExportInterval string `yaml:"export_interval"`
 }
 
 // SupabaseCfg watches supabase project quotas. tokens live in lumen's own Neon
@@ -96,6 +97,7 @@ type Service struct {
 	statePath string
 	supabaseState map[string]string // dedupeKey -> date (supabase watcher)
 	supabaseStatePath string
+	lastExport time.Time // when the last neon export batch was pushed (export_interval throttle)
 }
 
 func New(ctx context.Context, cfg Config) (*Service, error) {
@@ -128,6 +130,9 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	if cfg.NeonUsage.Export.ExportTimeout == "" {
 		cfg.NeonUsage.Export.ExportTimeout = "60s"
+	}
+	if cfg.NeonUsage.Export.ExportInterval == "" {
+		cfg.NeonUsage.Export.ExportInterval = "24h"
 	}
 	if cfg.Supabase.Interval == "" {
 		cfg.Supabase.Interval = "6h"

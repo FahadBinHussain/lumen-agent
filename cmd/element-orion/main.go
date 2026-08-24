@@ -287,6 +287,7 @@ func buildNotify(cfg *config.Config) (*notify.Service, error) {
 				KeyEnv:         n.NeonUsage.Export.KeyEnv,
 				GitHubTokenEnv: n.NeonUsage.Export.GitHubTokenEnv,
 				ExportTimeout:  n.NeonUsage.Export.ExportTimeout,
+				ExportInterval: n.NeonUsage.Export.ExportInterval,
 			},
 		},
 		Supabase: notify.SupabaseCfg{

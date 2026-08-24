@@ -319,6 +319,7 @@ notify:
       key_env: LUMEN_EXPORT_KEY
       github_token_env: LUMEN_EXPORT_GITHUB_TOKEN
       export_timeout: 60s
+      export_interval: 24h
   supabase:
     enabled: true
     interval: 6h
