@@ -279,6 +279,15 @@ func buildNotify(cfg *config.Config) (*notify.Service, error) {
 			ThreadID:     n.NeonUsage.ThreadID,
 			APIKeyEnv:    n.NeonUsage.APIKeyEnv,
 			StatePath:    n.NeonUsage.StatePath,
+			Export: notify.NeonExportCfg{
+				Enabled:        n.NeonUsage.Export.Enabled,
+				Repo:           n.NeonUsage.Export.Repo,
+				Branch:         n.NeonUsage.Export.Branch,
+				Path:           n.NeonUsage.Export.Path,
+				KeyEnv:         n.NeonUsage.Export.KeyEnv,
+				GitHubTokenEnv: n.NeonUsage.Export.GitHubTokenEnv,
+				ExportTimeout:  n.NeonUsage.Export.ExportTimeout,
+			},
 		},
 		Supabase: notify.SupabaseCfg{
 			Enabled:                 n.Supabase.Enabled,

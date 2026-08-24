@@ -311,6 +311,14 @@ notify:
     thread_id: "2637078310061988"
     api_key_env:
       - NEON_ORG_API_KEY
+    export:
+      enabled: true
+      repo: "FahadBinHussain/lumen-agent"
+      branch: "exports"
+      path: "backups"
+      key_env: LUMEN_EXPORT_KEY
+      github_token_env: LUMEN_EXPORT_GITHUB_TOKEN
+      export_timeout: 60s
   supabase:
     enabled: true
     interval: 6h
