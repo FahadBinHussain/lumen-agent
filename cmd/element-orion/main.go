@@ -248,7 +248,7 @@ func runServe(args []string) error {
 // when everything is off so the base binary behaves exactly as before.
 func buildNotify(cfg *config.Config) (*notify.Service, error) {
 	n := cfg.Notify
-	anyEnabled := n.SteamUpdates.Enabled || n.FreeGames.Enabled || n.NeonUsage.Enabled || n.Supabase.Enabled
+	anyEnabled := n.SteamUpdates.Enabled || n.FreeGames.Enabled || n.NeonUsage.Enabled || n.Supabase.Enabled || n.CrackWatch.Enabled
 	if !anyEnabled {
 		return nil, nil
 	}
@@ -271,6 +271,13 @@ func buildNotify(cfg *config.Config) (*notify.Service, error) {
 			Interval:   n.FreeGames.Interval,
 			ThreadIDs:  n.FreeGames.ThreadIDs,
 			WebhookURL: n.FreeGames.WebhookURL,
+		},
+		CrackWatch: notify.CrackWatchCfg{
+			Enabled:    n.CrackWatch.Enabled,
+			Interval:   n.CrackWatch.Interval,
+			FeedURL:    n.CrackWatch.FeedURL,
+			ThreadIDs:  n.CrackWatch.ThreadIDs,
+			WebhookURL: n.CrackWatch.WebhookURL,
 		},
 		NeonUsage: notify.NeonUsageCfg{
 			Enabled:      n.NeonUsage.Enabled,
