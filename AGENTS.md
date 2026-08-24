@@ -343,6 +343,20 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     (5/10/15s backoff) — reddit's .rss intermittently resets connections from
     datacenter IPs. Enabled=false everywhere by default; flip in the config
     that's live on the target box + set thread_ids.
+  - **cs.rin.ru feeds (researched 2026-08-24, NOT added — future option)**: the
+    forum's phpBB `feed.php` is whitelisted (no login, no JS-challenge) and is
+    the only structured endpoint. Working modes, all Atom: `feed.php` (global
+    recent posts), `feed.php?f=<id>` (per-forum), `feed.php?t=<id>`
+    (per-topic), `feed.php?mode=forums` (forum list), `feed.php?mode=topics&f=<id>`
+    (topics in a forum), `feed.php?mode=topics_new` (new topics globally).
+    Access wrapper already exists at `C:\Users\Admin\Downloads\automata\cs.rin.ru\`
+    (csrin-session.ps1 token bootstrap, csrin-feed.ps1, csrin-search.ps1,
+    csrin-thread.ps1). Candidate uses if ever wanted: per-game thread updates
+    (e.g. GTA V Legacy t=67450), new-topics stream (`mode=topics_new`), or a
+    `[CRACKED]`-tag tracker on the Main Forum (f=10). Verdict from research:
+    mostly duplicates r/CrackWatch (already wired as `crack_watch`); only
+    cs.rin.ru-specific value is version-level detail + crack-status tags per
+    game thread. Deferred unless a concrete use appears.
   - **neon_usage encrypted export (added 2026-08-24)**: when an org's
     consumption passes `warning_hours`, `checkNeonUsage` now ALSO dumps every
     project in that org (pg_dump → gzip → openssl aes-256) and force-pushes the
