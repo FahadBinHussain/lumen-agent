@@ -289,13 +289,15 @@ type NotifyCrackWatch struct {
 }
 
 type NotifyNeonUsage struct {
-	Enabled      bool                `yaml:"enabled"`
-	Interval     string              `yaml:"interval"`
-	WarningHours float64             `yaml:"warning_hours"`
-	ThreadID     string              `yaml:"thread_id"`
-	APIKeyEnv    []string            `yaml:"api_key_env"`
-	StatePath    string              `yaml:"state_path"`
-	Export       NotifyNeonExportCfg `yaml:"export"`
+	Enabled           bool                `yaml:"enabled"`
+	Interval          string              `yaml:"interval"`
+	WarningHours      float64             `yaml:"warning_hours"`
+	WarningStoragePct float64             `yaml:"warning_storage_pct"`
+	WarningEgressPct  float64             `yaml:"warning_egress_pct"`
+	ThreadID          string              `yaml:"thread_id"`
+	APIKeyEnv         []string            `yaml:"api_key_env"`
+	StatePath         string              `yaml:"state_path"`
+	Export            NotifyNeonExportCfg `yaml:"export"`
 }
 
 // NotifyNeonExportCfg exports encrypted pg_dumps of every project in an
@@ -615,7 +617,7 @@ func defaultConfig() Config {
 			DatabaseURLEnv:   "DATABASE_URL",
 			SteamUpdates:     NotifySteamCfg{Enabled: false, Interval: "1m", MaxAgeDays: 30},
 			FreeGames:        NotifyFreeGames{Enabled: false, Interval: "1m"},
-			NeonUsage: NotifyNeonUsage{Enabled: false, Interval: "1h", WarningHours: 90,
+			NeonUsage: NotifyNeonUsage{Enabled: false, Interval: "1h", WarningHours: 90, WarningStoragePct: 80, WarningEgressPct: 80,
 				Export: NotifyNeonExportCfg{
 					Enabled: false, Repo: "FahadBinHussain/lumen-agent",
 					Branch: "exports", Path: "backups",

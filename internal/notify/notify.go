@@ -53,13 +53,15 @@ type CrackWatchCfg struct {
 }
 
 type NeonUsageCfg struct {
-	Enabled      bool           `yaml:"enabled"`
-	Interval     string         `yaml:"interval"`
-	WarningHours float64        `yaml:"warning_hours"`
-	ThreadID     string         `yaml:"thread_id"`
-	APIKeyEnv    []string       `yaml:"api_key_env"`
-	StatePath    string         `yaml:"state_path"`
-	Export       NeonExportCfg  `yaml:"export"`
+	Enabled           bool          `yaml:"enabled"`
+	Interval          string        `yaml:"interval"`
+	WarningHours      float64       `yaml:"warning_hours"`
+	WarningStoragePct float64       `yaml:"warning_storage_pct"`
+	WarningEgressPct  float64       `yaml:"warning_egress_pct"`
+	ThreadID          string        `yaml:"thread_id"`
+	APIKeyEnv         []string      `yaml:"api_key_env"`
+	StatePath         string        `yaml:"state_path"`
+	Export            NeonExportCfg `yaml:"export"`
 }
 
 // NeonExportCfg mirrors config.NotifyNeonExportCfg: encrypted pg_dump exports
@@ -127,6 +129,12 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	if cfg.NeonUsage.WarningHours <= 0 {
 		cfg.NeonUsage.WarningHours = 90
+	}
+	if cfg.NeonUsage.WarningStoragePct <= 0 {
+		cfg.NeonUsage.WarningStoragePct = 80
+	}
+	if cfg.NeonUsage.WarningEgressPct <= 0 {
+		cfg.NeonUsage.WarningEgressPct = 80
 	}
 	if cfg.NeonUsage.Export.Repo == "" {
 		cfg.NeonUsage.Export.Repo = "FahadBinHussain/lumen-agent"
