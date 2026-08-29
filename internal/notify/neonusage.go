@@ -63,6 +63,7 @@ func (s *Service) checkNeonUsage(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("%s: %s consumption: %w", envName, org.ID, err)
 			}
+			// compute (CU-hours)
 			if u.Used >= s.cfg.NeonUsage.WarningHours {
 				overThreshold++
 				s.sendNeonWarning(ctx, &u)
@@ -73,6 +74,14 @@ func (s *Service) checkNeonUsage(ctx context.Context) error {
 					}
 					exportFiles = append(exportFiles, files...)
 				}
+			}
+			// storage (0.5 GB free per project)
+			if u.StoragePct >= s.cfg.NeonUsage.WarningStoragePct {
+				s.sendNeonStorageWarning(ctx, &u)
+			}
+			// egress (5 GB free per month)
+			if u.EgressPct >= s.cfg.NeonUsage.WarningEgressPct {
+				s.sendNeonEgressWarning(ctx, &u)
 			}
 		}
 	}
@@ -111,6 +120,10 @@ type neonOrgUsage struct {
 	Used       float64
 	Left       float64
 	QuotaReset string
+	StorageUsed float64
+	StoragePct float64
+	EgressUsed float64
+	EgressPct float64
 }
 
 func (s *Service) sendNeonWarning(ctx context.Context, r *neonOrgUsage) {
@@ -134,6 +147,65 @@ func (s *Service) sendNeonWarning(ctx context.Context, r *neonOrgUsage) {
 	}
 	s.mu.Lock()
 	s.neonState[r.ProjectID] = resetDate
+	if s.statePath != "" {
+		s.saveNeonStateLocked()
+	}
+	s.mu.Unlock()
+}
+
+// sendNeonStorageWarning fires when an org's storage crosses the free-plan
+// threshold (0.5 GB per project). Deduped per project per reset period, same
+// pattern as the compute warning.
+func (s *Service) sendNeonStorageWarning(ctx context.Context, r *neonOrgUsage) {
+	resetDate := canonicalResetDate(r.QuotaReset)
+	key := "storage:" + r.ProjectID
+
+	s.mu.Lock()
+	if s.neonState[key] == resetDate {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+
+	msg := fmt.Sprintf("%s (%s) is using %s MB of 512 MB storage (%s%%). Quota reset: %s UTC.",
+		r.Project, r.Account, trimFloat(r.StorageUsed), trimFloat(r.StoragePct), resetDate)
+
+	err := s.postWebhook(ctx, "", "neon-usage", s.cfg.NeonUsage.ThreadID,
+		"Neon storage warning", msg, "", "neon-storage:"+key+":"+resetDate)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	s.neonState[key] = resetDate
+	if s.statePath != "" {
+		s.saveNeonStateLocked()
+	}
+	s.mu.Unlock()
+}
+
+// sendNeonEgressWarning fires when an org's data transfer crosses the free-plan
+// threshold (5 GB per month). Deduped per project per reset period.
+func (s *Service) sendNeonEgressWarning(ctx context.Context, r *neonOrgUsage) {
+	resetDate := canonicalResetDate(r.QuotaReset)
+	key := "egress:" + r.ProjectID
+
+	s.mu.Lock()
+	if s.neonState[key] == resetDate {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+
+	msg := fmt.Sprintf("%s (%s) has transferred %s GB of 5 GB (%s%%). Quota reset: %s UTC.",
+		r.Project, r.Account, trimFloat(r.EgressUsed), trimFloat(r.EgressPct), resetDate)
+
+	err := s.postWebhook(ctx, "", "neon-usage", s.cfg.NeonUsage.ThreadID,
+		"Neon egress warning", msg, "", "neon-egress:"+key+":"+resetDate)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	s.neonState[key] = resetDate
 	if s.statePath != "" {
 		s.saveNeonStateLocked()
 	}
@@ -216,6 +288,9 @@ func (s *Service) neonConsumption(ctx context.Context, apiKey, orgID string) (ne
 		Periods []struct {
 			ComputeTime float64 `json:"compute_time"`
 			PeriodEnd   string  `json:"period_end"`
+			DataTransfer float64 `json:"data_transfer"`
+			PeakDataStorage float64 `json:"peak_data_storage"`
+			DataStorage float64 `json:"data_storage"`
 		} `json:"periods"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
@@ -227,6 +302,16 @@ func (s *Service) neonConsumption(ctx context.Context, apiKey, orgID string) (ne
 		u.Used = round2(last.ComputeTime / 3600)
 		u.Left = round2((360000 - last.ComputeTime) / 3600)
 		u.QuotaReset = last.PeriodEnd
+		// storage: 0.5 GB free per project = 536870912 bytes
+		storage := last.PeakDataStorage
+		if storage == 0 {
+			storage = last.DataStorage
+		}
+		u.StorageUsed = round2(storage / 1048576) // MB
+		u.StoragePct = round2((storage / 536870912) * 100)
+		// egress: 5 GB free per month = 5368709120 bytes
+		u.EgressUsed = round2(last.DataTransfer / 1073741824) // GB
+		u.EgressPct = round2((last.DataTransfer / 5368709120) * 100)
 	}
 	return u, nil
 }

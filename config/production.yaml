@@ -308,6 +308,8 @@ notify:
     enabled: true
     interval: 1h
     warning_hours: 90
+    warning_storage_pct: 80
+    warning_egress_pct: 80
     thread_id: "2637078310061988"
     api_key_env:
       - NEON_API_KEY_01
