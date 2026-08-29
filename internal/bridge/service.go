@@ -231,6 +231,30 @@ func (s *Service) Run(ctx context.Context) error {
 		}()
 	}
 
+	if s.neon != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Give platforms a moment to connect on boot before first drain.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(20 * time.Second):
+			}
+			s.drainPending(ctx)
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					s.drainPending(ctx)
+				}
+			}
+		}()
+	}
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

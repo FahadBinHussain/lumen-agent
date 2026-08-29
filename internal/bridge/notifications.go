@@ -34,6 +34,7 @@ func (s *Service) serveHTTP(ctx context.Context) error {
 
 	if s.cfg.Bridge.NotificationsEnabled {
 		mux.HandleFunc(s.cfg.Bridge.NotificationsPath, s.handleAutomationNotification)
+		mux.HandleFunc("/api/automation/notifications/pending", s.handlePendingList)
 	}
 	// always mount the cookie upload handler while the bridge is up: it is
 	// ops-critical (browserless refresher + first-boot provisioning) and
@@ -124,6 +125,11 @@ func (s *Service) handleAutomationNotification(w http.ResponseWriter, r *http.Re
 		}
 		if _, err := s.SendRoute(r.Context(), route, text); err != nil {
 			log.Printf("bridge: route %s notification failed: %v", route, err)
+			if s.savePending(r.Context(), req, text) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]interface{}{"id": fmt.Sprintf("ntf_%d", time.Now().UnixMilli()), "status": "pending"})
+				return
+			}
 		}
 		log.Printf("bridge: automation notification (source=%s route=%s)", req.Source, route)
 		notifID := fmt.Sprintf("ntf_%d", time.Now().UnixMilli())
@@ -145,6 +151,17 @@ func (s *Service) handleAutomationNotification(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// If the mouth is dead, queue instead of dropping (so we don't miss
+	// notifications while Render sleeps or MQTT is down). The queue is in
+	// Neon (pending_notifications), so it survives free-tier restarts.
+	if !s.isPlatformConnected(platform) {
+		if s.savePending(r.Context(), req, text) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{"id": fmt.Sprintf("ntf_%d", time.Now().UnixMilli()), "status": "pending"})
+			return
+		}
+	}
+
 	log.Printf("bridge: automation notification (source=%s platform=%s thread=%s)", req.Source, platform, threadID)
 	s.notify(platform, threadID, text)
 
@@ -154,6 +171,28 @@ func (s *Service) handleAutomationNotification(w http.ResponseWriter, r *http.Re
 		"id":     notifID,
 		"status": "sent",
 	})
+}
+
+func (s *Service) handlePendingList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authenticated(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if s.neon == nil {
+		http.Error(w, "no db", http.StatusServiceUnavailable)
+		return
+	}
+	pending, err := s.neon.ListPending(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"pending": pending, "count": len(pending)})
 }
 
 func (s *Service) handleCookieUpload(w http.ResponseWriter, r *http.Request) {
