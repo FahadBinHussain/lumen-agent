@@ -310,7 +310,25 @@ notify:
     warning_hours: 90
     thread_id: "2637078310061988"
     api_key_env:
-      - NEON_ORG_API_KEY
+      - NEON_API_KEY_01
+      - NEON_API_KEY_02
+      - NEON_API_KEY_03
+      - NEON_API_KEY_04
+      - NEON_API_KEY_05
+      - NEON_API_KEY_06
+      - NEON_API_KEY_07
+      - NEON_API_KEY_08
+      - NEON_API_KEY_09
+      - NEON_API_KEY_10
+      - NEON_API_KEY_11
+      - NEON_API_KEY_12
+      - NEON_API_KEY_13
+      - NEON_API_KEY_14
+      - NEON_API_KEY_15
+      - NEON_API_KEY_16
+      - NEON_API_KEY_17
+      - NEON_API_KEY_18
+      - NEON_API_KEY_19
     export:
       enabled: true
       repo: "FahadBinHussain/lumen-agent"
