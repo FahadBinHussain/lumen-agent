@@ -390,7 +390,12 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     on the last period), so no extra API calls. Each metric dedupes once per
     project per reset period (separate `storage:`/`egress:` keys in neonState).
     e.g. the-daily-times was 5.15 GB egress → fires the egress warning while
-    compute (56 CU-h) and storage (46 MB) stay quiet.
+    compute (56 CU-h) and storage (46 MB) stay quiet. NOTE: egress/storage are
+    PER-PROJECT on free, but the org consumption endpoint aggregates the whole
+    org (verified 2026-08-29: a fresh project on a quota-dead account starts at
+    0 transfer — see automata/neon.com/AGENTS.md). So an org-level egress warning
+    can fire even when individual projects are fine, and a new project on the
+    same account resets the bucket.
   - model-catalog listing (/ai models etc.) intentionally dropped — the fork
     uses the single `llm.model` config.
 - Pre-existing test failures on this machine (NOT caused by the merge, verified):
