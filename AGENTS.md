@@ -376,6 +376,13 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     `pushExports` batched single commit). Recovery of an encrypted export: key
     copy at `C:\Users\Admin\Downloads\lumen-export-key.txt`. File names are
     `<project-id>.sql.gz.enc` under `backups/`.
+  - **neon watcher covers ALL accounts (2026-08-29)**: `neon_usage.api_key_env`
+    lists all 19 mainframe Neon API keys (env vars `NEON_API_KEY_01`..`NEON_API_KEY_19`,
+    ordered by profile email, mirroring neon-hours-table.ps1). The old single
+    `NEON_ORG_API_KEY` (error.503.mail@/Ratul only) was replaced — that asymmetry
+    meant e.g. Daily-BNP (ahmedtouhid88@, 110%) never warned. Any org over
+    `warning_hours` now warns + exports, across every account. Add a new Neon
+    account = new env var on Render + append to this list.
   - model-catalog listing (/ai models etc.) intentionally dropped — the fork
     uses the single `llm.model` config.
 - Pre-existing test failures on this machine (NOT caused by the merge, verified):
