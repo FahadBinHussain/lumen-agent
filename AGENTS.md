@@ -394,8 +394,19 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     PER-PROJECT on free, but the org consumption endpoint aggregates the whole
     org (verified 2026-08-29: a fresh project on a quota-dead account starts at
     0 transfer — see automata/neon.com/AGENTS.md). So an org-level egress warning
-    can fire even when individual projects are fine, and a new project on the
     same account resets the bucket.
+  - **pending notification queue (added 2026-08-29)**: when the mouth is dead
+    (messenger/whatsapp/discord not connected or Render free-tier asleep),
+    `POST /api/automation/notifications` no longer drops the message with a
+    fake 200 — it queues to Neon `pending_notifications` (durable, survives
+    free-tier restarts via `internal/neon`, same DB as `whatsapp_sessions`).
+    Each row stores platform/thread/route/title/message/dedupe_key/source/url;
+    dedupes on `dedupe_key` so a retried poller doesn't double-queue. Drain
+    happens on `health_watch` alive (`internal/bridge/healthwatch.go` calls
+    `drainPending` when a platform flips dead→alive) and every 5m as a safety
+    net (`internal/bridge/service.go` periodic ticker + 20s boot drain). Query
+    the backlog via `GET /api/automation/notifications/pending` (secret-gated
+    same as the POST, returns `{pending:[], count}`).
   - model-catalog listing (/ai models etc.) intentionally dropped — the fork
     uses the single `llm.model` config.
 - Pre-existing test failures on this machine (NOT caused by the merge, verified):
