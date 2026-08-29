@@ -83,6 +83,9 @@ func (s *Service) watchHealth(ctx context.Context) {
 					for _, target := range platformTargets {
 						s.notifyHealth(target, msg)
 					}
+					if len(msg) >= 13 && msg[len(msg)-13:] == "is alive again" {
+						go s.drainPending(context.Background())
+					}
 				}
 			}
 		}
