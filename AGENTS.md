@@ -383,6 +383,14 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     meant e.g. Daily-BNP (ahmedtouhid88@, 110%) never warned. Any org over
     `warning_hours` now warns + exports, across every account. Add a new Neon
     account = new env var on Render + append to this list.
+  - **neon checks ALL THREE quotas (2026-08-29)**: compute (CU-h, `warning_hours`,
+    default 90 of 100), storage (`warning_storage_pct`, default 80 of 0.5 GB),
+    and egress (`warning_egress_pct`, default 80 of 5 GB). Storage+egress read
+    from the SAME org consumption endpoint (`peak_data_storage`/`data_transfer`
+    on the last period), so no extra API calls. Each metric dedupes once per
+    project per reset period (separate `storage:`/`egress:` keys in neonState).
+    e.g. the-daily-times was 5.15 GB egress → fires the egress warning while
+    compute (56 CU-h) and storage (46 MB) stay quiet.
   - model-catalog listing (/ai models etc.) intentionally dropped — the fork
     uses the single `llm.model` config.
 - Pre-existing test failures on this machine (NOT caused by the merge, verified):
