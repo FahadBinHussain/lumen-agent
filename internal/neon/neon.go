@@ -46,7 +46,7 @@ func (db *DB) migrate(ctx context.Context) error {
 		return err
 	}
 	_, err = db.pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS pending_notifications (
+		CREATE TABLE IF NOT EXISTS public.pending_notifications (
 			id           BIGSERIAL PRIMARY KEY,
 			platform     TEXT NOT NULL,
 			thread_id    TEXT NOT NULL,
@@ -64,11 +64,11 @@ func (db *DB) migrate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, err = db.pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS pending_notifications_dedupe_idx ON pending_notifications(dedupe_key) WHERE dedupe_key <> ''`)
+	_, err = db.pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS pending_notifications_dedupe_idx ON public.pending_notifications(dedupe_key) WHERE dedupe_key <> ''`)
 	if err != nil {
 		return err
 	}
-	_, err = db.pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS pending_notifications_platform_idx ON pending_notifications(platform, thread_id)`)
+	_, err = db.pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS pending_notifications_platform_idx ON public.pending_notifications(platform, thread_id)`)
 	return err
 }
 
@@ -114,21 +114,21 @@ type PendingNotification struct {
 func (db *DB) SavePending(ctx context.Context, p PendingNotification) (int64, error) {
 	if p.DedupeKey != "" {
 		var existing int64
-		err := db.pool.QueryRow(ctx, `SELECT id FROM pending_notifications WHERE dedupe_key = $1 LIMIT 1`, p.DedupeKey).Scan(&existing)
+		err := db.pool.QueryRow(ctx, `SELECT id FROM public.pending_notifications WHERE dedupe_key = $1 LIMIT 1`, p.DedupeKey).Scan(&existing)
 		if err == nil {
 			return existing, nil
 		}
 	}
 	var id int64
 	err := db.pool.QueryRow(ctx, `
-		INSERT INTO pending_notifications (platform, thread_id, route, title, message, dedupe_key, source, url)
+		INSERT INTO public.pending_notifications (platform, thread_id, route, title, message, dedupe_key, source, url)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id
 	`, p.Platform, p.ThreadID, p.Route, p.Title, p.Message, p.DedupeKey, p.Source, p.URL).Scan(&id)
 	return id, err
 }
 
 func (db *DB) ListPending(ctx context.Context) ([]PendingNotification, error) {
-	rows, err := db.pool.Query(ctx, `SELECT id, platform, thread_id, route, title, message, dedupe_key, source, url, attempts FROM pending_notifications ORDER BY created_at ASC`)
+	rows, err := db.pool.Query(ctx, `SELECT id, platform, thread_id, route, title, message, dedupe_key, source, url, attempts FROM public.pending_notifications ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -145,11 +145,11 @@ func (db *DB) ListPending(ctx context.Context) ([]PendingNotification, error) {
 }
 
 func (db *DB) DeletePending(ctx context.Context, id int64) error {
-	_, err := db.pool.Exec(ctx, `DELETE FROM pending_notifications WHERE id = $1`, id)
+	_, err := db.pool.Exec(ctx, `DELETE FROM public.pending_notifications WHERE id = $1`, id)
 	return err
 }
 
 func (db *DB) IncPendingAttempts(ctx context.Context, id int64) error {
-	_, err := db.pool.Exec(ctx, `UPDATE pending_notifications SET attempts = attempts + 1, last_attempt = NOW() WHERE id = $1`, id)
+	_, err := db.pool.Exec(ctx, `UPDATE public.pending_notifications SET attempts = attempts + 1, last_attempt = NOW() WHERE id = $1`, id)
 	return err
 }

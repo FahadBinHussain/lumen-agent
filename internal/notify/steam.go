@@ -99,7 +99,7 @@ func (s *Service) pollSteamUpdates(ctx context.Context) error {
 		return nil
 	}
 
-	dbr, err := s.dbQuery(ctx, "steam_seen", "gid", func() []string {
+	dbr, err := s.dbQuery(ctx, "public.steam_seen", "gid", func() []string {
 		gids := make([]string, 0, len(items))
 		for _, it := range items {
 			gids = append(gids, it.gid)
@@ -143,7 +143,7 @@ func (s *Service) pollSteamUpdates(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		if err := s.dbInsertSeen(ctx, "steam_seen", "gid", map[string]string{
+		if err := s.dbInsertSeen(ctx, "public.steam_seen", "gid", map[string]string{
 			"gid":       item.gid,
 			"game_name": item.gameName,
 			"title":     item.title,

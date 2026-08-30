@@ -90,7 +90,7 @@ func (s *Store) Close() {
 
 func (s *Store) migrate(ctx context.Context) error {
 	_, err := s.pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS lumen_snapshots (
+		CREATE TABLE IF NOT EXISTS public.lumen_snapshots (
 			path       TEXT PRIMARY KEY,
 			data       BYTEA NOT NULL,
 			sha256     TEXT NOT NULL,
@@ -116,7 +116,7 @@ func (s *Store) Restore(ctx context.Context) error {
 			return nil
 		}
 	}
-	rows, err := s.pool.Query(ctx, `SELECT path, data FROM lumen_snapshots ORDER BY path`)
+	rows, err := s.pool.Query(ctx, `SELECT path, data FROM public.lumen_snapshots ORDER BY path`)
 	if err != nil {
 		return fmt.Errorf("persist restore query: %w", err)
 	}
@@ -219,7 +219,7 @@ func (s *Store) Sync(ctx context.Context) error {
 	}
 
 	stored := map[string]string{}
-	rows, err := s.pool.Query(ctx, `SELECT path, sha256 FROM lumen_snapshots`)
+	rows, err := s.pool.Query(ctx, `SELECT path, sha256 FROM public.lumen_snapshots`)
 	if err != nil {
 		return fmt.Errorf("persist sync query: %w", err)
 	}
@@ -252,7 +252,7 @@ func (s *Store) Sync(ctx context.Context) error {
 			continue
 		}
 		if _, err := s.pool.Exec(ctx, `
-			INSERT INTO lumen_snapshots (path, data, sha256, updated_at)
+			INSERT INTO public.lumen_snapshots (path, data, sha256, updated_at)
 			VALUES ($1, $2, $3, NOW())
 			ON CONFLICT (path) DO UPDATE SET data = $2, sha256 = $3, updated_at = NOW()
 		`, rel, data, sum); err != nil {
@@ -272,7 +272,7 @@ func (s *Store) Sync(ctx context.Context) error {
 			continue
 		}
 		if _, err := s.pool.Exec(ctx, `
-			INSERT INTO lumen_snapshots (path, data, sha256, updated_at)
+			INSERT INTO public.lumen_snapshots (path, data, sha256, updated_at)
 			VALUES ($1, $2, $3, NOW())
 			ON CONFLICT (path) DO UPDATE SET data = $2, sha256 = $3, updated_at = NOW()
 		`, rel, data, sum); err != nil {
@@ -298,7 +298,7 @@ func (s *Store) Sync(ctx context.Context) error {
 		}
 	}
 	if len(stale) > 0 {
-		if _, err := s.pool.Exec(ctx, `DELETE FROM lumen_snapshots WHERE path = ANY($1)`, stale); err != nil {
+		if _, err := s.pool.Exec(ctx, `DELETE FROM public.lumen_snapshots WHERE path = ANY($1)`, stale); err != nil {
 			return fmt.Errorf("persist sync delete stale: %w", err)
 		}
 	}
