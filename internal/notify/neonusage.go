@@ -138,14 +138,16 @@ type neonOrgUsage struct {
 }
 
 // usageLabel renders "Project (Account, email)" or falls back to the plain
-// project name when no account is known.
+// project name when no account is known. The email is the primary identifier
+// (org name often duplicates it), so it's only appended when it differs from
+// both the project and account fields.
 func usageLabel(r *neonOrgUsage) string {
 	label := r.Project
 	parts := make([]string, 0, 2)
 	if r.Account != "" && r.Account != r.Project {
 		parts = append(parts, r.Account)
 	}
-	if r.Email != "" {
+	if r.Email != "" && r.Email != r.Project && r.Email != r.Account {
 		parts = append(parts, r.Email)
 	}
 	if len(parts) > 0 {
@@ -267,14 +269,12 @@ func (s *Service) neonEmail(ctx context.Context, apiKey string) string {
 		return ""
 	}
 	var payload struct {
-		User struct {
-			Email string `json:"email"`
-		} `json:"user"`
+		Email string `json:"email"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return ""
 	}
-	return strings.TrimSpace(payload.User.Email)
+	return strings.TrimSpace(payload.Email)
 }
 
 func (s *Service) neonOrgs(ctx context.Context, apiKey string) ([]neonOrg, error) {
