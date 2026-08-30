@@ -87,9 +87,14 @@ func (s *Service) runAgentPrompt(ctx context.Context, platform, threadID, prompt
 	}
 
 	emit := func(ev agent.Event) {
-		if ev.Kind != agent.EventStreamDelta {
-			log.Printf("bridge: [%s %s] %s %s", platform, threadID, ev.Kind, ev.Message)
+		if ev.Kind == agent.EventStreamDelta {
+			return
 		}
+		if ev.Kind == agent.EventToolStarted || ev.Kind == agent.EventToolFinished {
+			log.Printf("bridge: [%s %s] %s %s (%.0fms) %s", platform, threadID, ev.Kind, ev.ToolName, float64(ev.DurationMS), ev.Detail)
+			return
+		}
+		log.Printf("bridge: [%s %s] %s %s", platform, threadID, ev.Kind, ev.Message)
 	}
 
 	newHistory, err := s.runner.Run(runCtx, history, prompt, conversation, emit)
