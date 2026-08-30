@@ -168,6 +168,9 @@ func runServe(args []string) error {
 	}
 	if notifyService != nil {
 		defer notifyService.Close()
+		if persistStore != nil {
+			notifyService.SetPersistenceToucher(persistStore.Touch)
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

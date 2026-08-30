@@ -109,6 +109,7 @@ type Service struct {
 	supabaseState map[string]string // dedupeKey -> date (supabase watcher)
 	supabaseStatePath string
 	lastExport time.Time // when the last neon export batch was pushed (export_interval throttle)
+	toucher   func()    // persist callback; fires after state file writes so Neon snapshot syncs promptly
 }
 
 func New(ctx context.Context, cfg Config) (*Service, error) {
@@ -220,6 +221,28 @@ func (s *Service) Close() {
 	if s.appState != nil {
 		s.appState.Close()
 	}
+}
+
+// SetPersistenceToucher registers a callback fired after state-file writes so
+// the Neon snapshot backup (internal/persist) syncs promptly — mirrors the
+// bridge/discord persistence contract. Without it, neon-usage/supabase dedupe
+// state stays local and a container restart re-fires warnings.
+func (s *Service) SetPersistenceToucher(fn func()) {
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	s.toucher = fn
+	s.mu.Unlock()
+}
+
+// touchPersistence notifies the persist store (best-effort) after a state
+// write so the dedupe state survives a container restart.
+func (s *Service) touchPersistence() {
+	if s.toucher == nil {
+		return
+	}
+	s.toucher()
 }
 
 // Run blocks until ctx is done, starting each enabled poller.
