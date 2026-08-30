@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -89,6 +90,13 @@ func (d *appStateDB) Keys(ctx context.Context, like string) ([]string, error) {
 	return out, rows.Err()
 }
 
+// quoteIdent quotes an identifier for safe interpolation. Dotted names
+// (schema.table) are split and each part quoted separately so schema-qualified
+// tables survive an empty search_path (e.g. Neon's pooler endpoint).
 func quoteIdent(s string) string {
-	return `"` + s + `"`
+	parts := strings.Split(s, ".")
+	for i, p := range parts {
+		parts[i] = `"` + p + `"`
+	}
+	return strings.Join(parts, ".")
 }

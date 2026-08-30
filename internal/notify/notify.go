@@ -162,7 +162,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		cfg.Supabase.Interval = "6h"
 	}
 	if cfg.Supabase.AppStateTable == "" {
-		cfg.Supabase.AppStateTable = "app_state"
+		cfg.Supabase.AppStateTable = "public.app_state"
 	}
 	if cfg.Supabase.EgressThreshold <= 0 {
 		cfg.Supabase.EgressThreshold = 0.8

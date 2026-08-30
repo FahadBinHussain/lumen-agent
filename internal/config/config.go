@@ -625,7 +625,7 @@ func defaultConfig() Config {
 					ExportTimeout: "60s", ExportInterval: "24h",
 				},
 			},
-			Supabase:         NotifySupabase{Enabled: false, Interval: "6h", AppStateTable: "app_state", EgressThreshold: 0.8, DBThreshold: 0.8},
+			Supabase:         NotifySupabase{Enabled: false, Interval: "6h", AppStateTable: "public.app_state", EgressThreshold: 0.8, DBThreshold: 0.8},
 			CrackWatch:       NotifyCrackWatch{Enabled: false, Interval: "5m", FeedURL: "https://www.reddit.com/r/CrackWatch/.rss", ThreadIDs: ""},
 		},
 		GIFs: GIFConfig{
