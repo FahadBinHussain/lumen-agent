@@ -475,12 +475,15 @@ notes): ~90% covered. Remaining gaps and how they're handled:
   `schtasks /run /tn "lumen-cookie-health"`; log `$env:TEMP\lumen-cookie-health.log`;
   Next Run shows N/A (logon-only trigger fires at next logon). Health-gates on
   `MURMUR_HF_SPACE_URL` (default http://127.0.0.1:8791).
-- **Dedupe continuity (WIRED 2026-08-14)**: `notify.database_url_env` now
-  points at `NOTIFY_DATABASE_URL` = murmur's Neon DSN (steam_seen/game_seen)
-  so pollers don't re-send the backlog; set on Render as an env var. lumen's
-  own `DATABASE_URL` (persistence + whatsapp sessions) stays the lumen Neon
-  project. Value backed up at
-  `%APPDATA%\mainframe\state\murmur-neon-database-url.txt`.
+- **Dedupe continuity (SELF-CONTAINED 2026-08-30)**: `notify.database_url_env`
+  = `DATABASE_URL` — lumen's OWN Neon. `steam_seen`/`game_seen`/`crack_seen`
+  dedupe tables, supabase app_state, persistence snapshots, whatsapp sessions,
+  AND the pending_notifications queue ALL live in the single lumen Neon project.
+  `NOTIFY_DATABASE_URL` was removed from Render 2026-08-30 (it pointed at an
+  external dead project that hard-failed boot when over quota). On the switch
+  the dedupe tables were seeded with the then-current feed GUIDs so nothing
+  re-sends; `internal/notify/notify.go` also tolerates a dead dedupe DB
+  (steam/free-games/crack_watch run without dedupe rather than crash boot).
 - **WhatsApp session carry-over**: NOT portable — murmur's wacli store is a
   different format than lumen's whatsmeow.db. Expect a fresh QR pairing at
   cutover (lumen logs `events.QR`); new sessions persist to lumen Neon.

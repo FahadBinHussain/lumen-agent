@@ -292,13 +292,12 @@ notify:
   # lumen's own notifications endpoint (murmur space default is dead/paused)
   webhook_url: https://lumen-aqyl.onrender.com/api/automation/notifications
   webhook_token_env: ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET
-  # murmur's Neon (steam_seen/game_seen) for dedupe continuity at cutover;
-  # separate from DATABASE_URL (lumen's own persistence/whatsapp DB).
+  # all dedupe state (steam_seen/game_seen/crack_seen) lives in lumen's own
+  # Neon (DATABASE_URL) — lumen is fully self-contained, no external DB.
   database_url_env: DATABASE_URL
   steam_updates:
     enabled: true
     interval: 1m
-    # murmur's live values: steam posts to GAMEBOT thread only
     thread_ids: "30738305889116993"
   free_games:
     enabled: true
@@ -346,8 +345,6 @@ notify:
     interval: 6h
     thread_id: "2637078310061988"
     app_state_table: app_state
-    # app_state lives in lumen's OWN persistence Neon (DATABASE_URL), NOT
-    # NOTIFY_DATABASE_URL (murmur's dedupe DB).
     app_state_database_url_env: DATABASE_URL
   crack_watch:
     enabled: true
