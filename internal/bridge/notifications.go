@@ -35,6 +35,7 @@ func (s *Service) serveHTTP(ctx context.Context) error {
 	if s.cfg.Bridge.NotificationsEnabled {
 		mux.HandleFunc(s.cfg.Bridge.NotificationsPath, s.handleAutomationNotification)
 		mux.HandleFunc("/api/automation/notifications/pending", s.handlePendingList)
+		mux.HandleFunc("/api/test/prompt", s.handleTestPrompt)
 	}
 	// always mount the cookie upload handler while the bridge is up: it is
 	// ops-critical (browserless refresher + first-boot provisioning) and
