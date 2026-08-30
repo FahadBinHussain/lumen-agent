@@ -63,6 +63,14 @@ func (s *Service) checkNeonUsage(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("%s: %s consumption: %w", envName, org.ID, err)
 			}
+			if org.Name != "" {
+				u.Account = org.Name
+			} else {
+				u.Account = org.ID
+			}
+			if strings.TrimSpace(u.Project) == "" {
+				u.Project = u.Account
+			}
 			// compute (CU-hours)
 			if u.Used >= s.cfg.NeonUsage.WarningHours {
 				overThreshold++
@@ -137,8 +145,12 @@ func (s *Service) sendNeonWarning(ctx context.Context, r *neonOrgUsage) {
 	}
 	s.mu.Unlock()
 
-	msg := fmt.Sprintf("%s (%s) has used %s of 100 CU-hours. %s CU-hours remain. Quota reset: %s UTC.",
-		r.Project, r.Account, trimFloat(r.Used), trimFloat(r.Left), resetDate)
+	label := r.Project
+	if r.Account != "" && r.Account != r.Project {
+		label = fmt.Sprintf("%s (%s)", r.Project, r.Account)
+	}
+	msg := fmt.Sprintf("%s has used %s of 100 CU-hours. %s CU-hours remain. Quota reset: %s UTC.",
+		label, trimFloat(r.Used), trimFloat(r.Left), resetDate)
 
 	err := s.postWebhook(ctx, "", "neon-usage", s.cfg.NeonUsage.ThreadID,
 		"Neon usage warning", msg, "", dedupeKey)
@@ -167,8 +179,12 @@ func (s *Service) sendNeonStorageWarning(ctx context.Context, r *neonOrgUsage) {
 	}
 	s.mu.Unlock()
 
-	msg := fmt.Sprintf("%s (%s) is using %s MB of 512 MB storage (%s%%). Quota reset: %s UTC.",
-		r.Project, r.Account, trimFloat(r.StorageUsed), trimFloat(r.StoragePct), resetDate)
+	label := r.Project
+	if r.Account != "" && r.Account != r.Project {
+		label = fmt.Sprintf("%s (%s)", r.Project, r.Account)
+	}
+	msg := fmt.Sprintf("%s is using %s MB of 512 MB storage (%s%%). Quota reset: %s UTC.",
+		label, trimFloat(r.StorageUsed), trimFloat(r.StoragePct), resetDate)
 
 	err := s.postWebhook(ctx, "", "neon-usage", s.cfg.NeonUsage.ThreadID,
 		"Neon storage warning", msg, "", "neon-storage:"+key+":"+resetDate)
@@ -196,8 +212,12 @@ func (s *Service) sendNeonEgressWarning(ctx context.Context, r *neonOrgUsage) {
 	}
 	s.mu.Unlock()
 
-	msg := fmt.Sprintf("%s (%s) has transferred %s GB of 5 GB (%s%%). Quota reset: %s UTC.",
-		r.Project, r.Account, trimFloat(r.EgressUsed), trimFloat(r.EgressPct), resetDate)
+	label2 := r.Project
+	if r.Account != "" && r.Account != r.Project {
+		label2 = fmt.Sprintf("%s (%s)", r.Project, r.Account)
+	}
+	msg := fmt.Sprintf("%s has transferred %s GB of 5 GB (%s%%). Quota reset: %s UTC.",
+		label2, trimFloat(r.EgressUsed), trimFloat(r.EgressPct), resetDate)
 
 	err := s.postWebhook(ctx, "", "neon-usage", s.cfg.NeonUsage.ThreadID,
 		"Neon egress warning", msg, "", "neon-egress:"+key+":"+resetDate)
@@ -213,7 +233,8 @@ func (s *Service) sendNeonEgressWarning(ctx context.Context, r *neonOrgUsage) {
 }
 
 type neonOrg struct {
-	ID string `json:"id"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 func (s *Service) neonOrgs(ctx context.Context, apiKey string) ([]neonOrg, error) {
