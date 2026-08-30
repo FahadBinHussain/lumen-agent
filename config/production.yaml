@@ -344,7 +344,7 @@ notify:
     enabled: true
     interval: 6h
     thread_id: "2637078310061988"
-    app_state_table: app_state
+    app_state_table: public.app_state
     app_state_database_url_env: DATABASE_URL
   crack_watch:
     enabled: true
