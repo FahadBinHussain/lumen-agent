@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"element-orion/internal/agent"
+	"element-orion/internal/tools"
 )
 
 // testPromptRequest is the body for POST /api/test/prompt. It runs the REAL
