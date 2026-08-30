@@ -54,6 +54,7 @@ func (s *Service) checkNeonUsage(ctx context.Context) error {
 		if key == "" {
 			continue
 		}
+		email := s.neonEmail(ctx, key)
 		orgs, err := s.neonOrgs(ctx, key)
 		if err != nil {
 			return fmt.Errorf("%s: orgs: %w", envName, err)
@@ -63,6 +64,7 @@ func (s *Service) checkNeonUsage(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("%s: %s consumption: %w", envName, org.ID, err)
 			}
+			u.Email = email
 			if org.Name != "" {
 				u.Account = org.Name
 			} else {
@@ -122,16 +124,34 @@ func (s *Service) exportIntervalDuration() time.Duration {
 }
 
 type neonOrgUsage struct {
-	Account    string
-	ProjectID  string
-	Project    string
-	Used       float64
-	Left       float64
-	QuotaReset string
+	Account     string
+	Email       string
+	ProjectID   string
+	Project     string
+	Used        float64
+	Left        float64
+	QuotaReset  string
 	StorageUsed float64
-	StoragePct float64
-	EgressUsed float64
-	EgressPct float64
+	StoragePct  float64
+	EgressUsed  float64
+	EgressPct   float64
+}
+
+// usageLabel renders "Project (Account, email)" or falls back to the plain
+// project name when no account is known.
+func usageLabel(r *neonOrgUsage) string {
+	label := r.Project
+	parts := make([]string, 0, 2)
+	if r.Account != "" && r.Account != r.Project {
+		parts = append(parts, r.Account)
+	}
+	if r.Email != "" {
+		parts = append(parts, r.Email)
+	}
+	if len(parts) > 0 {
+		label = fmt.Sprintf("%s (%s)", r.Project, strings.Join(parts, ", "))
+	}
+	return label
 }
 
 func (s *Service) sendNeonWarning(ctx context.Context, r *neonOrgUsage) {
@@ -145,10 +165,7 @@ func (s *Service) sendNeonWarning(ctx context.Context, r *neonOrgUsage) {
 	}
 	s.mu.Unlock()
 
-	label := r.Project
-	if r.Account != "" && r.Account != r.Project {
-		label = fmt.Sprintf("%s (%s)", r.Project, r.Account)
-	}
+	label := usageLabel(r)
 	msg := fmt.Sprintf("%s has used %s of 100 CU-hours. %s CU-hours remain. Quota reset: %s UTC.",
 		label, trimFloat(r.Used), trimFloat(r.Left), resetDate)
 
@@ -179,10 +196,7 @@ func (s *Service) sendNeonStorageWarning(ctx context.Context, r *neonOrgUsage) {
 	}
 	s.mu.Unlock()
 
-	label := r.Project
-	if r.Account != "" && r.Account != r.Project {
-		label = fmt.Sprintf("%s (%s)", r.Project, r.Account)
-	}
+	label := usageLabel(r)
 	msg := fmt.Sprintf("%s is using %s MB of 512 MB storage (%s%%). Quota reset: %s UTC.",
 		label, trimFloat(r.StorageUsed), trimFloat(r.StoragePct), resetDate)
 
@@ -212,10 +226,7 @@ func (s *Service) sendNeonEgressWarning(ctx context.Context, r *neonOrgUsage) {
 	}
 	s.mu.Unlock()
 
-	label2 := r.Project
-	if r.Account != "" && r.Account != r.Project {
-		label2 = fmt.Sprintf("%s (%s)", r.Project, r.Account)
-	}
+	label2 := usageLabel(r)
 	msg := fmt.Sprintf("%s has transferred %s GB of 5 GB (%s%%). Quota reset: %s UTC.",
 		label2, trimFloat(r.EgressUsed), trimFloat(r.EgressPct), resetDate)
 
@@ -235,6 +246,35 @@ func (s *Service) sendNeonEgressWarning(ctx context.Context, r *neonOrgUsage) {
 type neonOrg struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+}
+
+// neonEmail resolves the account email for an API key via the /users/me
+// endpoint. Best-effort: empty string on any failure (the warnings still
+// work, they just omit the email).
+func (s *Service) neonEmail(ctx context.Context, apiKey string) string {
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://console.neon.tech/api/v2/users/me", nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Accept", "application/json")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return ""
+	}
+	var payload struct {
+		User struct {
+			Email string `json:"email"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.User.Email)
 }
 
 func (s *Service) neonOrgs(ctx context.Context, apiKey string) ([]neonOrg, error) {
@@ -307,11 +347,11 @@ func (s *Service) neonConsumption(ctx context.Context, apiKey, orgID string) (ne
 	}
 	var payload struct {
 		Periods []struct {
-			ComputeTime float64 `json:"compute_time"`
-			PeriodEnd   string  `json:"period_end"`
-			DataTransfer float64 `json:"data_transfer"`
+			ComputeTime     float64 `json:"compute_time"`
+			PeriodEnd       string  `json:"period_end"`
+			DataTransfer    float64 `json:"data_transfer"`
 			PeakDataStorage float64 `json:"peak_data_storage"`
-			DataStorage float64 `json:"data_storage"`
+			DataStorage     float64 `json:"data_storage"`
 		} `json:"periods"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
