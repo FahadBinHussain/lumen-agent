@@ -19,6 +19,13 @@ type testPromptRequest struct {
 	Prompt   string `json:"prompt"`
 	Platform string `json:"platform"`
 	ThreadID string `json:"threadId"`
+	// ChannelID optionally injects a real Discord channel context so
+	// Discord-context tools (send_discord_message, background tasks, heartbeat
+	// wakeups, etc.) work from the test route the same way they do when the
+	// bot is actually triggered in a Discord channel.
+	ChannelID string `json:"channelId"`
+	GuildID   string `json:"guildId"`
+	UserID    string `json:"userId"`
 }
 
 // handleTestPrompt is secret-gated like the notifications endpoints. It runs a
@@ -52,7 +59,7 @@ func (s *Service) handleTestPrompt(w http.ResponseWriter, r *http.Request) {
 		threadID = "test"
 	}
 
-	reply, err := s.runAgentPrompt(r.Context(), platform, threadID, req.Prompt)
+	reply, err := s.runAgentPrompt(r.Context(), platform, threadID, req.Prompt, req.GuildID, req.ChannelID, req.UserID)
 	if err != nil {
 		log.Printf("bridge: test prompt failed (%s %s): %v", platform, threadID, err)
 		http.Error(w, "agent run failed: "+err.Error(), http.StatusInternalServerError)
@@ -69,11 +76,23 @@ func (s *Service) handleTestPrompt(w http.ResponseWriter, r *http.Request) {
 // same path messenger/whatsapp/discord use) and returns the final assistant
 // content. It mirrors agentRun's history/compaction/memory handling but does
 // NOT send anything to a platform — the reply is returned to the caller.
-func (s *Service) runAgentPrompt(ctx context.Context, platform, threadID, prompt string) (string, error) {
+func (s *Service) runAgentPrompt(ctx context.Context, platform, threadID, prompt, guildID, channelID, userID string) (string, error) {
 	key := platform + ":" + threadID
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// When a Discord channel is provided, inject the same Discord tool context
+	// the discordbot platform injects on real triggers, so Discord-context
+	// tools (send_discord_message, background tasks, heartbeat wakeups) work
+	// identically from the test route.
+	if strings.TrimSpace(channelID) != "" {
+		runCtx = tools.WithDiscordToolContext(runCtx, tools.DiscordToolContext{
+			GuildID:   strings.TrimSpace(guildID),
+			ChannelID: strings.TrimSpace(channelID),
+			UserID:    strings.TrimSpace(userID),
+		})
+	}
 
 	s.mu.Lock()
 	history := cloneMessages(s.sessions[key])
