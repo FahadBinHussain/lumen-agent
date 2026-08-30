@@ -311,6 +311,7 @@ notify:
     warning_storage_pct: 80
     warning_egress_pct: 80
     thread_id: "2637078310061988"
+    state_path: ./.element-orion/neon-usage-state.json
     api_key_env:
       - NEON_API_KEY_01
       - NEON_API_KEY_02
