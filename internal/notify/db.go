@@ -27,18 +27,18 @@ func newDedupeDB(ctx context.Context, dsn string) (*dedupeDB, error) {
 	}
 	db := &dedupeDB{pool: pool}
 	for _, stmt := range []string{
-		`CREATE TABLE IF NOT EXISTS steam_seen (
+		`CREATE TABLE IF NOT EXISTS public.steam_seen (
 			gid      TEXT PRIMARY KEY,
 			game_name TEXT NOT NULL,
 			title    TEXT NOT NULL,
 			seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
-		`CREATE TABLE IF NOT EXISTS game_seen (
+		`CREATE TABLE IF NOT EXISTS public.game_seen (
 			guid     TEXT PRIMARY KEY,
 			title    TEXT NOT NULL,
 			seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
-		`CREATE TABLE IF NOT EXISTS crack_seen (
+		`CREATE TABLE IF NOT EXISTS public.crack_seen (
 			guid     TEXT PRIMARY KEY,
 			title    TEXT NOT NULL,
 			seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()

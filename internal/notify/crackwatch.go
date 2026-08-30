@@ -43,7 +43,7 @@ func (s *Service) pollCrackWatch(ctx context.Context) error {
 		return nil
 	}
 
-	dbr, err := s.dbQuery(ctx, "crack_seen", "guid", func() []string {
+	dbr, err := s.dbQuery(ctx, "public.crack_seen", "guid", func() []string {
 		guids := make([]string, 0, len(items))
 		for _, it := range items {
 			guids = append(guids, it.GUID)
@@ -77,7 +77,7 @@ func (s *Service) pollCrackWatch(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		if err := s.dbInsertSeen(ctx, "crack_seen", "guid", map[string]string{
+		if err := s.dbInsertSeen(ctx, "public.crack_seen", "guid", map[string]string{
 			"guid":  item.GUID,
 			"title": item.Title,
 		}); err != nil {
