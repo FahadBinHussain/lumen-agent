@@ -224,9 +224,9 @@ heartbeat:
     start: ""
     end: ""
   target:
-    guild_id: "751043966182621234"
-    channel_id: "1537650032441032765"
-    user_id: "1536794187339399300"
+    guild_id: ""
+    channel_id: ""
+    user_id: ""
 
 dream_mode:
   enabled: false
