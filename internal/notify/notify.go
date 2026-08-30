@@ -189,9 +189,10 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if (cfg.SteamUpdates.Enabled || cfg.FreeGames.Enabled || cfg.CrackWatch.Enabled) && cfg.DatabaseURL != "" {
 		db, err := newDedupeDB(ctx, cfg.DatabaseURL)
 		if err != nil {
-			return nil, fmt.Errorf("notify dedupe db: %w", err)
+			log.Printf("notify: dedupe db unavailable (%v), steam/free-games/crack_watch will run without dedupe", err)
+		} else {
+			s.db = db
 		}
-		s.db = db
 	}
 	if cfg.Supabase.Enabled {
 		appDSN := cfg.Supabase.AppStateDatabaseURL

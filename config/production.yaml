@@ -294,7 +294,7 @@ notify:
   webhook_token_env: ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET
   # murmur's Neon (steam_seen/game_seen) for dedupe continuity at cutover;
   # separate from DATABASE_URL (lumen's own persistence/whatsapp DB).
-  database_url_env: NOTIFY_DATABASE_URL
+  database_url_env: DATABASE_URL
   steam_updates:
     enabled: true
     interval: 1m
