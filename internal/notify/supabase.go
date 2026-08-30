@@ -287,6 +287,7 @@ func (s *Service) saveSupabaseStateLocked() {
 		os.MkdirAll(dir, 0o755)
 	}
 	_ = os.WriteFile(s.supabaseStatePath, b, 0o644)
+	s.touchPersistence()
 }
 
 // loadNeonStateLocked / saveNeonStateLocked are shared with neonusage.go

@@ -419,6 +419,7 @@ func (s *Service) saveNeonStateLocked() {
 		os.MkdirAll(dir, 0o755)
 	}
 	_ = os.WriteFile(s.statePath, b, 0o644)
+	s.touchPersistence()
 }
 
 func readAll(r io.Reader) string {
