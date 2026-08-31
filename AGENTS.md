@@ -632,74 +632,60 @@ bool). Both are polled, not event-driven.
   proxy = local socks5 127.0.0.1:1080, bridge 127.0.0.1:8793), launcher
   `C:\tmp\lumen-local.cmd` (clears DATABASE_URL — local pgx→Neon hangs), log
   `C:\tmp\lumen-local.log`, store `C:\tmp\.element-orion\whatsapp`.
-- **WhatsApp egress via tailscale mesh (2026-08-17, replaces pinggy tunnel)**:
-  Render's whatsapp connects through the home laptop's socks5-proxy
-  (automata\tools\socks5-proxy, `C:\Users\Admin\Downloads\automata\tools\socks5-proxy\socks5-proxy.exe`
-  0.0.0.0:1080, auth only if SOCKS5_USER set; firewall allow rule
-  "socks5-proxy inbound 1080" exists) over the tailnet — no more 60-min pinggy
-  refresh. Chain: whatsmeow → `WHATSAPP_PROXY_URL=socks5://127.0.0.1:1081`
-  (sockschain sidecar, `cmd/sockschain`) → tailscale userspace socks
-  (127.0.0.1:1055) → `SOCKS_CHAIN_UPSTREAM=socks5://lumenwa:z0xpjLQVd4nEgX5GtMqN2IDw@100.76.10.50:1080`
-  (laptop-main) → WhatsApp, egressing from the home IP. AUTO-HEAL analysis
-  (2026-08-17): the route needs NO laptop-side watcher — whatsmeow retries
-  forever in the container (disconnect → infinite reconnect loop with backoff),
-  and tailscale rejoins via authkey on any container restart, so a dead laptop /
-  proxy / tailnet path heals by itself once the laptop returns. The only
-  non-auto-heal cases: WhatsApp logging the device out (needs manual phone
-  re-pair, watcher could only alert) and a sockschain sidecar crash with no
-  container restart (rare, fixed by next deploy). The cookie-health watch
-  exists only because messenger cookie refresh is an ACTIVE laptop-side heal
-  (agent-browser vault push); WhatsApp is passive-wait, so no watch. Note the
-  bridge `/api/health` returns bare "ok" — it does NOT expose WhatsApp state,
-  and `WhatsmeowClient.IsConnected()` is not surfaced anywhere.
-  `TS_AUTHKEY` = the
-  fleet reusable authkey (mainframe tailscale profile; since 2026-08-17 the
-  validated vault key, also saved to the mainframe tailscale profile's
-  authkey.txt; the old fleet key expired and every fresh boot failed with
-  `invalid key: API key k2bx6Qw2KB11CNTRL not valid` -> `Exited with status 1`
-  -> deploy update_failed/crash loop, while the old instance kept serving);
-  GOTCHA: `tailscale up` failing = exit 1 via `set -e` in entrypoint.sh; fix =
-  PUT a valid key via `PUT /v1/services/<id>/env-vars/TS_AUTHKEY` then redeploy
-  (manual deploy POST; autodeploy on push does NOT fire). `--state=mem` makes
-  every container node EPHEMERAL regardless of key type (verified: tailscaled
-  help says mem state registers as ephemeral). entrypoint.sh runs tailscaled
+- **WhatsApp egress via tailscale exit node (2026-08-30, replaces
+  socks5-proxy + sockschain sidecar)**: Render datacenter IPs get TLS-blocked
+  by WhatsApp, so the websocket egresses from the home IP. Previously that
+  meant a laptop socks5-proxy (100.76.10.50:1080) + a `cmd/sockschain` sidecar
+  chained through tailscale's userspace socks — since 2026-08-30 it uses a
+  NATIVE tailscale EXIT NODE: laptop-main advertises
+  `--advertise-exit-node` (Windows needs `IPEnableRouter=1` registry + reboot;
+  approved in the admin console), the container's tailscaled runs
+  `--tun=userspace-networking --socks5-server=127.0.0.1:1055` and
+  `tailscale up ... --exit-node=100.76.10.50`, and whatsmeow just points at
+  tailscale's OWN socks server: `WHATSAPP_PROXY_URL=socks5://127.0.0.1:1055`.
+  Chain: whatsmeow → tailscaled socks (1055) → exit node laptop-main → WhatsApp
+  from home IP. No socks5-proxy.exe, no sockschain, no SOCKS_CHAIN_UPSTREAM
+  (env var removed 2026-08-30). AUTO-HEAL: whatsmeow retries forever in the
+  container (disconnect → infinite reconnect loop with backoff), tailscale
+  rejoins via authkey on any container restart, so a dead laptop / tailnet
+  path heals once the laptop returns. Non-auto-heal cases: WhatsApp logging
+  the device out (needs manual phone re-pair, watcher could only alert).
+  The cookie-health watch exists only because messenger cookie refresh is an
+  ACTIVE laptop-side heal (agent-browser vault push); WhatsApp is
+  passive-wait, so no watch. bridge `/api/health` returns bare "ok" — it does
+  NOT expose WhatsApp state, and `WhatsmeowClient.IsConnected()` is not
+  surfaced anywhere. `TS_AUTHKEY` = the fleet reusable authkey (mainframe
+  tailscale profile; since 2026-08-17 the validated vault key, also saved to
+  the mainframe tailscale profile's authkey.txt; the old fleet key expired
+  and every fresh boot failed with `invalid key: API key k2bx6Qw2KB11CNTRL
+  not valid` -> `Exited with status 1` -> deploy update_failed/crash loop,
+  while the old instance kept serving); GOTCHA: `tailscale up` failing = exit
+  1 via `set -e` in entrypoint.sh; fix = PUT a valid key via `PUT
+  /v1/services/<id>/env-vars/TS_AUTHKEY` then redeploy (manual deploy POST;
+  autodeploy on push does NOT fire). `--state=mem` makes every container node
+  EPHEMERAL regardless of key type (verified: tailscaled help says mem state
+  registers as ephemeral). entrypoint.sh runs tailscaled
   `--tun=userspace-networking --socks5-server=127.0.0.1:1055 --state=mem` then
   `tailscale up --authkey=... --hostname=lumen-render --accept-dns=false
-  --timeout=40s`. GOTCHA: `--accept-dns` is a `tailscale up` flag, NOT a
-  tailscaled flag — passing it to tailscaled makes it print usage and exit 1
-  (deploy update_failed; fixed 2026-08-17, commit 2a0ac08). Verify: logs
-  `entrypoint: tailscale userspace node up (<ip>)` + `WhatsApp connected`;
-  tailnet shows `lumen-render` (linux, active). The laptop socks5-proxy (pid
-  26760) must stay alive — it's now the tailnet upstream. pinggy retired.
-  **socks5-proxy restart (2026-08-20)**: when the proxy dies, whatsapp drops
-  silently (dial failures, `websocket not connected`) and — because the
-  notifications endpoint returns 200 on failed sends — neon-usage warnings
-  get recorded as sent and never re-fire (see automata\facebook.com
-  AGENTS.md). restart detached with creds matching SOCKS_CHAIN_UPSTREAM:
-  `$env:SOCKS5_USER='lumenwa'; $env:SOCKS5_PASS='z0xpjLQVd4nEgX5GtMqN2IDw';
-  Start-Process C:\Users\Admin\Downloads\automata\tools\socks5-proxy\socks5-proxy.exe
-  -ArgumentList '0.0.0.0:1080' -WindowStyle Hidden`. if whatsmeow doesn't
-  reconnect within ~15 min (no `Dialing wss://web.whatsapp.com` lines in
-  Render logs — its backoff can stall after a proxy outage), trigger a deploy
-  (`POST /v1/services/srv-d9vd3oh42hec738odeg0/deploys`, body `{}`) to force a
-  fresh boot + tailscale rejoin; the whatsapp session survives via Neon
-  (`bridge: restored whatsapp session from neon`).
-- **Log-noise flood from the SOCKS listeners (resolved 2026-08-17, commits
+  --exit-node=100.76.10.50 --timeout=40s`. GOTCHA: `--accept-dns` is a
+  `tailscale up` flag, NOT a tailscaled flag — passing it to tailscaled makes
+  it print usage and exit 1 (deploy update_failed; fixed 2026-08-17, commit
+  2a0ac08). Verify: logs `entrypoint: tailscale userspace node up (<ip>),
+  exit node 100.76.10.50` + `WhatsApp connected`; tailnet shows `lumen-render`
+  (linux, active).
+- **Log-noise flood from the SOCKS listener (resolved 2026-08-17, commits
   cdb00e1 + b13d34b)**: the container logs were drowned by ~1-2/s
   `[ERR] socks: Unsupported SOCKS version: [72]` + `serve 127.0.0.1:PORT: ...`
   pairs starting the first second of boot, making Render logs useless
   (log API caps at ~300-500 lines ≈ a few minutes of flood). Root cause:
   tailscaled's netstack PORT DISCOVERY probes the container's own listeners
   with HTTP-ish first bytes (0x48 = 'H') — every probe hitting a SOCKS
-  listener gets rejected and logged by BOTH socks servers (tailscaled's
-  1055 AND sockschain's 1081 via armon/go-socks5, which also wraps rejects
-  with its own `serve %s: %v`). Harmless rejects, cosmetic problem. Fix:
-  entrypoint.sh pipes BOTH processes' stderr through
-  `grep --line-buffered -vE 'Unsupported SOCKS version|incompatible SOCKS
-  version|socks5: client connection failed|peerapi: unknown peer|RATELIMIT'`.
-  The first commit only filtered tailscaled (flood persisted — sockschain
-  was the louder half); filtering both = clean logs. Verify after deploys:
-  `render-cli logs` shows no socks-noise lines.
+  listener gets rejected and logged by tailscaled's 1055 socks server.
+  Harmless rejects, cosmetic problem. Fix: entrypoint.sh pipes tailscaled's
+  stderr through `grep --line-buffered -vE 'Unsupported SOCKS version|
+  incompatible SOCKS version|socks5: client connection failed|peerapi: unknown
+  peer|RATELIMIT'`. Verify after deploys: `render-cli logs` shows no
+  socks-noise lines.
 - **Neon from local while Proton VPN is on** (2026-08-17): Proton's WFP filter
   driver blocks direct psql/pgx traffic even with host routes added, and its
   client rewrites ServiceSettings.json split-tunnel edits on restart — don't
