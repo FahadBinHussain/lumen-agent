@@ -619,6 +619,11 @@ bool). Both are polled, not event-driven.
   `PairClientChrome`. (2) `PairPhone` display name must be `Browser (OS)`
   format (`"Chrome (Windows)"`); `"lumen"` → server returns `400 bad-request`
   on the code flow. Set both in `internal/whatsapp/whatsmeow_client.go`.
+- **2026-09-03: QR never works as of now, phone-code linking works** — the
+  `GET /api/whatsapp/qr?format=png` / `?format=html` QR rotates but phone scan
+  always fails (server returns 401/logged-out immediately after scan); use
+  phone-number pairing instead: `POST /api/whatsapp/pair {"phone":"REDACTED_PHONE"}`
+  → code → phone Settings → Linked devices → Link with phone number.
 - QR page button hardcodes the pairing number (`notifications.go` line ~264) —
   update it when the target account changes (the pair endpoint itself takes
   the phone in the body).
