@@ -608,8 +608,8 @@ bool). Both are polled, not event-driven.
 
 ## WhatsApp pairing gotchas (2026-08-17)
 
-- **RESOLVED 2026-08-17**: paired via PairPhone code flow (account `REDACTED_PHONE`
-  / `REDACTED_PHONE`) and transferred to Render through Neon
+- **RESOLVED 2026-08-17**: paired via PairPhone code flow (account via
+  `WHATSAPP_PAIR_PHONE` env) and transferred to Render through Neon
   (`POST /api/whatsapp/session/upload`); QR page reports `"status":"paired"`.
   Commit `c9d4ae8` carries the fixes. Old number `+8801911104251` stays
   hard-blocked — never retry it.
@@ -622,11 +622,12 @@ bool). Both are polled, not event-driven.
 - **2026-09-03: QR never works as of now, phone-code linking works** — the
   `GET /api/whatsapp/qr?format=png` / `?format=html` QR rotates but phone scan
   always fails (server returns 401/logged-out immediately after scan); use
-  phone-number pairing instead: `POST /api/whatsapp/pair {"phone":"REDACTED_PHONE"}`
-  → code → phone Settings → Linked devices → Link with phone number.
-- QR page button hardcodes the pairing number (`notifications.go` line ~264) —
-  update it when the target account changes (the pair endpoint itself takes
-  the phone in the body).
+  phone-number pairing instead: `POST /api/whatsapp/pair` with empty body
+  (server uses `WHATSAPP_PAIR_PHONE` / `WHATSAPP_PHONE` env) → code → phone
+  Settings → Linked devices → Link with phone number.
+- QR page no longer hardcodes a phone number (removed for privacy,
+  `notifications.go` page uses env var); pairing endpoint accepts empty body
+  and falls back to `WHATSAPP_PAIR_PHONE` env.
 - Client must be current: whatsmeow <2026-06-22 breaks pairing (server now
   expects passkey + client-props handshake). Pinned Aug 16 build
   (`fb386f152837`) + mautrix-go v0.30.0 — both required together (util v0.10.0).
