@@ -599,6 +599,19 @@ Semantics (all covered by unit tests):
   whatsapp-dead alert still has a working messenger channel when the laptop
   (the whatsapp tailnet route) is down. Pure notification — nothing here
   heals anything; the platforms auto-retry on their own.
+- **WhatsApp dead diagnosis (2026-09-03)**: `is dead` now classifies the
+  cause via `healthwatch.go:diagnoseWhatsAppDead` — probes `127.0.0.1:1055`
+  socks (`tailscaled` liveness), `tailscale status --json` (`BackendState`,
+  `ExitNodeStatus.Online`, peer `100.76.10.50` online), and SOCKS egress to
+  `1.1.1.1:443`/`web.whatsapp.com:443` (`golang.org/x/net/proxy`). Messages:
+  `tailscale socks down`, `tailscale not running`, `no exit node`, `exit node
+  offline — laptop-main ... (VPN/sleep?)`, `tail exit probe failed — proxy up
+  but egress blocked (VPN filtering)`, `tailscale ok — whatsapp websocket
+  down`. The VPN case you hit (Proton on laptop-main kills the exit) now
+  surfaces as `exit node offline` / `tail exit probe failed` instead of the
+  generic `auto-retrying` — no local watcher needed. Diagnosis runs only on
+  the `dead_after`→`min_notify` firing path and logs
+  `health-watch: whatsapp dead diagnosis: ...`.
 
 Platform state plumbing: `messenger.Client.IsConnected()` added (messagix has no
 disconnect event — Ready/Reconnected set connected=true, Event_SocketError /
