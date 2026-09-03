@@ -659,10 +659,19 @@ bool). Both are polled, not event-driven.
   the mainframe tailscale profile's authkey.txt; the old fleet key expired
   and every fresh boot failed with `invalid key: API key k2bx6Qw2KB11CNTRL
   not valid` -> `Exited with status 1` -> deploy update_failed/crash loop,
-  while the old instance kept serving); GOTCHA: `tailscale up` failing = exit
+   while the old instance kept serving); GOTCHA: `tailscale up` failing = exit
   1 via `set -e` in entrypoint.sh; fix = PUT a valid key via `PUT
   /v1/services/<id>/env-vars/TS_AUTHKEY` then redeploy (manual deploy POST;
-  autodeploy on push does NOT fire). `--state=mem` makes every container node
+  autodeploy on push does NOT fire). **WhatsApp health distinction (2026-09-03)**:
+  health-watch now differentiates `is dead (auto-retrying...)` vs
+  `is logged out (needs phone re-pair via QR - not auto-recovering)` — logged-out
+  is fatal (401 from WhatsApp, store deleted, `whatsapp_is logged out` requires
+  QR at `GET /api/whatsapp/qr`). Logged-out arms immediately on fresh boots
+  (transient dead still needs one prior alive), and `whatsmeow_client` now
+  auto-creates a fresh device on `LoggedOut` (previously `Connect` failed with
+  `invalid use of deleted device` and never produced a QR; now `NewWhatsmeowClient`
+  skips deleted devices and `Connect` recreates the client). `LoggedOut` now
+  also triggers `scheduleReconnect` (15s) like `Disconnected`. `--state=mem` makes every container node
   EPHEMERAL regardless of key type (verified: tailscaled help says mem state
   registers as ephemeral). entrypoint.sh runs tailscaled
   `--tun=userspace-networking --socks5-server=127.0.0.1:1055 --state=mem` then
