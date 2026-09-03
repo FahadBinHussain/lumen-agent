@@ -316,7 +316,7 @@ func (s *Service) handleWhatsAppQR(w http.ResponseWriter, r *http.Request) {
 <body><h1>WhatsApp pairing &mdash; lumen</h1>
 <div id="status" style="color:#8be08b">loading...</div>
 <div id="qrbox"><img id="qr" width="512" height="512" alt="QR"></div>
-<ol><li>Open WhatsApp on <b>+REDACTED_PHONE</b></li><li>Settings &rarr; Linked devices &rarr; Link a device</li><li>Scan this QR &mdash; it refreshes automatically every 4 seconds</li></ol>
+<ol><li>Open WhatsApp on your phone</li><li>Settings &rarr; Linked devices &rarr; Link a device</li><li>Scan this QR &mdash; it refreshes automatically every 4 seconds</li></ol>
 <h2>or link with phone number</h2>
 <button id="pairbtn" onclick="genCode()">Generate linking code</button>
 <div id="code"></div>
