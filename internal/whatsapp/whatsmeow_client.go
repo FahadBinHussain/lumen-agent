@@ -75,9 +75,13 @@ func NewWhatsmeowClient(dbPath string, proxyAddr string, logger zerolog.Logger, 
 		return nil, fmt.Errorf("get devices: %w", err)
 	}
 	var device *store.Device
-	if len(devices) > 0 {
-		device = devices[0]
-	} else {
+	for _, d := range devices {
+		if d.ID != nil {
+			device = d
+			break
+		}
+	}
+	if device == nil {
 		device = deviceStore.NewDevice()
 	}
 
@@ -326,7 +330,29 @@ func (w *WhatsmeowClient) handleMessage(evt *events.Message) {
 
 func (w *WhatsmeowClient) Connect(ctx context.Context) error {
 	if w.client.Store.ID == nil {
-		qrChan, _ := w.client.GetQRChannel(ctx)
+		// Device was logged out/deleted (Store.ID nil). The client still
+		// holds the deleted device object, so Connect would fail with
+		// "invalid use of deleted device". Create a fresh device and
+		// client before connecting so a new QR can be generated.
+		w.logger.Info().Msg("whatsapp: creating fresh device for QR after logout")
+		log := waLog.Zerolog(w.logger.With().Str("component", "whatsmeow").Logger())
+		newDevice := w.deviceStore.NewDevice()
+		newClient := whatsmeow.NewClient(newDevice, log)
+		newClient.QRClientType = whatsmeow.PairClientChrome
+		proxyAddr := os.Getenv("WHATSAPP_PROXY_URL")
+		if proxyAddr == "" {
+			proxyAddr = os.Getenv("WHATSAPP_PROXY")
+		}
+		wsHTTPClient := NewChromeHTTPClient(proxyAddr)
+		newClient.SetWebsocketHTTPClient(wsHTTPClient)
+		newClient.SetPreLoginHTTPClient(wsHTTPClient)
+		newClient.SetMediaHTTPClient(wsHTTPClient)
+		if proxyAddr != "" {
+			_ = newClient.SetProxyAddress(proxyAddr)
+		}
+		newClient.AddEventHandler(w.handleEvent)
+		w.client = newClient
+		qrChan, _ := newClient.GetQRChannel(ctx)
 		go func() {
 			for evt := range qrChan {
 				if evt.Event == "code" {
@@ -338,6 +364,11 @@ func (w *WhatsmeowClient) Connect(ctx context.Context) error {
 				w.scheduleReconnect()
 			}
 		}()
+		err := newClient.Connect()
+		if err != nil {
+			return fmt.Errorf("connect: %w", err)
+		}
+		return nil
 	}
 
 	err := w.client.Connect()
