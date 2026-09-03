@@ -2,8 +2,16 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"log"
+	"net"
+	"net/url"
+	"os"
+	"os/exec"
+	"strings"
 	"time"
+
+	"golang.org/x/net/proxy"
 )
 
 // healthTarget is where a platform's health notifications go: another
@@ -141,6 +149,12 @@ func (s *Service) checkHealth(name string, st *healthState, alive bool, deadAfte
 		if name == "whatsapp" && s.whatsapp != nil && !s.whatsapp.IsLoggedIn() {
 			return name + " is logged out (needs phone re-pair via QR - not auto-recovering)"
 		}
+		if name == "whatsapp" {
+			if diag := s.diagnoseWhatsAppDead(); diag != "" {
+				log.Printf("health-watch: whatsapp dead diagnosis: %s", diag)
+				return name + " is dead (" + diag + ")"
+			}
+		}
 		return name + " is dead (auto-retrying, will come back on its own)"
 	}
 	return ""
@@ -164,6 +178,205 @@ func (s *Service) notifyHealth(target healthTarget, text string) {
 	// a log line, same as the notifications endpoint.
 	s.notify(target.notifyPlatform, target.threadID, text)
 	log.Printf("health-watch: notified %s %s: %s", target.notifyPlatform, target.threadID, text)
+}
+
+// diagnoseWhatsAppDead probes tailnet vs whatsapp to classify a whatsapp dead.
+func (s *Service) diagnoseWhatsAppDead() string {
+	proxyAddr := os.Getenv("WHATSAPP_PROXY_URL")
+	if proxyAddr == "" {
+		proxyAddr = os.Getenv("WHATSAPP_PROXY")
+	}
+	if proxyAddr == "" {
+		return ""
+	}
+	u, err := url.Parse(proxyAddr)
+	var proxyHost string
+	if err == nil && u.Host != "" {
+		proxyHost = u.Host
+	} else {
+		proxyHost = strings.TrimPrefix(proxyAddr, "socks5://")
+		proxyHost = strings.TrimPrefix(proxyHost, "socks://")
+		proxyHost = strings.TrimPrefix(proxyHost, "socks5h://")
+	}
+	if proxyHost == "" {
+		proxyHost = "127.0.0.1:1055"
+	}
+	// 1. socks TCP liveness — tailscaled crash
+	conn, err := net.DialTimeout("tcp", proxyHost, 2*time.Second)
+	if err != nil {
+		return "tailscale socks down — " + proxyHost + " not listening (tailscaled crashed, container restart needed)"
+	}
+	conn.Close()
+
+	// 2. tailscale status --json — exit node reachability
+	st, err := tailscaleStatus(4 * time.Second)
+	if err != nil {
+		log.Printf("health-watch: tailscale status failed: %v", err)
+	} else {
+		if st.BackendState != "" && st.BackendState != "Running" {
+			return "tailscale not running — BackendState=" + st.BackendState + " (restart needed)"
+		}
+		if len(st.Health) > 0 {
+			for _, h := range st.Health {
+				lh := strings.ToLower(h)
+				if strings.Contains(lh, "exit") || strings.Contains(lh, "offline") || strings.Contains(lh, "not running") {
+					return "tailscale health: " + h
+				}
+			}
+		}
+		if st.ExitNodeStatus == nil {
+			return "no exit node — container not routing via tail exit (check --exit-node=100.76.10.50 / TS_AUTHKEY)"
+		}
+		if !st.ExitNodeStatus.Online {
+			host, ip := findExitNodePeer(st)
+			detail := ""
+			if host != "" {
+				detail = host
+			}
+			if ip != "" {
+				if detail != "" {
+					detail += " " + ip
+				} else {
+					detail = ip
+				}
+			}
+			if detail == "" {
+				detail = "100.76.10.50 laptop-main"
+			}
+			return "exit node offline — " + detail + " not reachable (laptop VPN/sleep? Tailscale on that machine may be blocked; disable VPN or allow split-tunnel)"
+		}
+		if peer := findPeerByIP(st, "100.76.10.50"); peer != nil && !peer.Online {
+			return "exit node host offline — laptop-main 100.76.10.50 peer offline (VPN may have disconnected Tailscale on that machine)"
+		}
+	}
+
+	// 3. egress probe via SOCKS — VPN filtering / ISP block
+	if err := probeViaSocks(proxyHost, "1.1.1.1:443", 4*time.Second); err != nil {
+		return "tail exit probe failed — proxy up but egress blocked (VPN on laptop-main filtering tail traffic? try split-tunnel or disconnect VPN)"
+	}
+	if err := probeViaSocks(proxyHost, "web.whatsapp.com:443", 5*time.Second); err != nil {
+		if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "i/o timeout") || strings.Contains(err.Error(), "deadline") {
+			return "whatsapp egress timeout via tail exit — exit node may be throttled/offline, will retry"
+		}
+		return "whatsapp host unreachable via tail exit — " + err.Error()
+	}
+	return "tailscale ok — whatsapp websocket down (TLS/JA3 block or WhatsApp rate limit; auto-retrying)"
+}
+
+type tsStatus struct {
+	BackendState   string             `json:"BackendState"`
+	Health         []string           `json:"Health"`
+	Self           *tsPeer            `json:"Self"`
+	Peer           map[string]*tsPeer `json:"Peer"`
+	ExitNodeStatus *tsExit            `json:"ExitNodeStatus"`
+}
+
+type tsPeer struct {
+	HostName       string   `json:"HostName"`
+	DNSName        string   `json:"DNSName"`
+	TailscaleIPs   []string `json:"TailscaleIPs"`
+	Online         bool     `json:"Online"`
+	ExitNode       bool     `json:"ExitNode"`
+	ExitNodeOption bool     `json:"ExitNodeOption"`
+}
+
+type tsExit struct {
+	ID           string   `json:"ID"`
+	Online       bool     `json:"Online"`
+	TailscaleIPs []string `json:"TailscaleIPs"`
+}
+
+func tailscaleStatus(timeout time.Duration) (*tsStatus, error) {
+	candidates := []string{"/app/tailscale", "tailscale"}
+	var lastErr error
+	for _, bin := range candidates {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		cmd := exec.CommandContext(ctx, bin, "status", "--json")
+		out, err := cmd.Output()
+		cancel()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		var st tsStatus
+		if err := json.Unmarshal(out, &st); err != nil {
+			lastErr = err
+			continue
+		}
+		return &st, nil
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, context.DeadlineExceeded
+}
+
+func findExitNodePeer(st *tsStatus) (host, ip string) {
+	if st.Peer == nil {
+		return "", ""
+	}
+	// prefer peer with ExitNode==true
+	for _, p := range st.Peer {
+		if p.ExitNode {
+			host = p.HostName
+			if len(p.TailscaleIPs) > 0 {
+				ip = p.TailscaleIPs[0]
+			}
+			return host, ip
+		}
+	}
+	// fallback: match ExitNodeStatus IPs
+	if st.ExitNodeStatus != nil && len(st.ExitNodeStatus.TailscaleIPs) > 0 {
+		target := st.ExitNodeStatus.TailscaleIPs[0]
+		for _, p := range st.Peer {
+			for _, pip := range p.TailscaleIPs {
+				if pip == target {
+					return p.HostName, pip
+				}
+			}
+		}
+		return "", target
+	}
+	return "", ""
+}
+
+func findPeerByIP(st *tsStatus, ip string) *tsPeer {
+	if st.Peer == nil {
+		return nil
+	}
+	for _, p := range st.Peer {
+		for _, pip := range p.TailscaleIPs {
+			if pip == ip {
+				return p
+			}
+		}
+	}
+	return nil
+}
+
+func probeViaSocks(proxyHost, target string, timeout time.Duration) error {
+	dialer := &net.Dialer{Timeout: timeout}
+	auth := (*proxy.Auth)(nil)
+	// proxyHost may contain user:pass but our proxy is open; strip it
+	if u, err := url.Parse("socks5://" + proxyHost); err == nil && u.Host != "" {
+		proxyHost = u.Host
+		if u.User != nil {
+			pass, _ := u.User.Password()
+			auth = &proxy.Auth{User: u.User.Username(), Password: pass}
+		}
+	}
+	socks, err := proxy.SOCKS5("tcp", proxyHost, auth, dialer)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	conn, err := socks.(proxy.ContextDialer).DialContext(ctx, "tcp", target)
+	if err != nil {
+		return err
+	}
+	conn.Close()
+	return nil
 }
 
 func parseDuration(v string, def time.Duration) time.Duration {
