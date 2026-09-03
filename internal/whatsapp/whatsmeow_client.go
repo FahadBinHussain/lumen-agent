@@ -137,6 +137,7 @@ func (w *WhatsmeowClient) handleEvent(evt interface{}) {
 		w.mu.Unlock()
 		w.setQR("")
 		w.logger.Error().Msg("WhatsApp logged out")
+		w.scheduleReconnect()
 	case *events.QR:
 		w.setQR("")
 		for _, code := range e.Codes {

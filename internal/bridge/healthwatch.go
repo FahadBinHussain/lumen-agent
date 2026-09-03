@@ -99,8 +99,18 @@ func (s *Service) checkHealth(name string, st *healthState, alive bool, deadAfte
 		if alive {
 			st.armed = true
 			log.Printf("health-watch: %s armed (first connect)", name)
+			return ""
 		}
-		return ""
+		// whatsapp logged out is fatal (needs QR) — arm immediately so the
+		// logged-out alert can fire even on a fresh boot that has never seen
+		// a live connection in this run. transient dead still needs one alive
+		// first (boot spam guard).
+		if name == "whatsapp" && s.whatsapp != nil && !s.whatsapp.IsLoggedIn() {
+			st.armed = true
+			log.Printf("health-watch: %s armed (logged out)", name)
+		} else {
+			return ""
+		}
 	}
 
 	if alive {
@@ -128,6 +138,9 @@ func (s *Service) checkHealth(name string, st *healthState, alive bool, deadAfte
 	if !st.lastDead && time.Since(st.deadSince) >= deadAfter && time.Since(st.lastNotify) >= minNotify {
 		st.lastDead = true
 		st.lastNotify = time.Now()
+		if name == "whatsapp" && s.whatsapp != nil && !s.whatsapp.IsLoggedIn() {
+			return name + " is logged out (needs phone re-pair via QR - not auto-recovering)"
+		}
 		return name + " is dead (auto-retrying, will come back on its own)"
 	}
 	return ""
