@@ -223,13 +223,18 @@ func New(cfg config.Config, runner *agent.Runner, audit *auditlog.Logger, sandbo
 
 	session.AddHandler(service.handleInteractionCreate)
 	session.AddHandler(service.handleMessageCreate)
-	session.AddHandler(func(_ *discordgo.Ready) {
+	// NOTE: discordgo handlers MUST take (session, event) — single-arg funcs
+	// are rejected at runtime ("Invalid handler type, will never be called").
+	// That exact bug lived here: Ready/Resumed never fired, so IsConnected()
+	// was permanently false — discord-dead alerts could never arm and every
+	// discord-bound notification was queued instead of sent. Found 2026-09-07.
+	session.AddHandler(func(_ *discordgo.Session, _ *discordgo.Ready) {
 		service.setConnected(true)
 	})
-	session.AddHandler(func(_ *discordgo.Resumed) {
+	session.AddHandler(func(_ *discordgo.Session, _ *discordgo.Resumed) {
 		service.setConnected(true)
 	})
-	session.AddHandler(func(_ *discordgo.Disconnect) {
+	session.AddHandler(func(_ *discordgo.Session, _ *discordgo.Disconnect) {
 		service.setConnected(false)
 	})
 

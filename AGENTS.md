@@ -595,6 +595,17 @@ in-process (`setConnected` via discordgo Ready/Resumed/Disconnect handlers +
 `IsConnected()` on the discordbot Service, wired into the bridge with
 `SetDiscord`), so a discord gateway drop fires the same dead/alive alerts
 (discordgo auto-reconnects, so dead only lasts until the gateway is back).
+**Discord handlers were dead code (found + fixed 2026-09-07, commit TBD):**
+the Ready/Resumed/Disconnect closures were registered as single-arg funcs,
+which discordgo rejects at runtime (`[DG0] AddHandler() Invalid handler
+type, will never be called` ×3 at every boot — visible in Render logs since
+the SetDiscord wiring). Effect: `IsConnected()` permanently false, so
+discord-dead could never arm AND every discord-bound notification was queued
+to `pending_notifications` instead of sent (the drain also gates on the flag,
+so discord rows sat forever). The gateway itself was fine the whole time —
+only the flag was broken. Handlers must be
+`func(*discordgo.Session, *discordgo.Ready)` etc. Oracle after deploys: the
+three `[DG0] Invalid handler type` lines must be GONE.
 Sends go through the normal allowlist-gated
 `send()` path, so alerts to unlisted channels are dropped with a log line
 (discord alerts use `SendPlainText` directly on the channel id).
