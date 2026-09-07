@@ -343,6 +343,14 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     (5/10/15s backoff) — reddit's .rss intermittently resets connections from
     datacenter IPs. Enabled=false everywhere by default; flip in the config
     that's live on the target box + set thread_ids.
+  - **Rate-limit handling (2026-09-07):** Render's shared egress IP gets
+    intermittent HTTP 429s (~1 in 5 polls; the feed itself is fine — verified
+    200 from residential). Old code burned 3 rapid retries into the 429, and
+    429s looked identical to real failures. Now: 429 honors `Retry-After`
+    (default 60s, capped 3m) with exactly ONE delayed retry, logged loudly as
+    `crackwatch: rate-limited by reddit ... backing off`; other 4xx fail fast
+    with no retries; transport/5xx keep the 3x backoff. Covered by
+    `crackwatch_test.go` (httptest 429→200 backoff timing, 404 fail-fast).
   - **cs.rin.ru feeds (researched 2026-08-24, NOT added — future option)**: the
     forum's phpBB `feed.php` is whitelisted (no login, no JS-challenge) and is
     the only structured endpoint. Working modes, all Atom: `feed.php` (global
