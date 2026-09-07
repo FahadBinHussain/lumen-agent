@@ -136,8 +136,8 @@ RUN apt-get install -y --no-install-recommends postgresql-client git openssl
 | `LUMEN_EXPORT_KEY` | Encryption key for openssl (long random string) |
 | `LUMEN_EXPORT_GITHUB_TOKEN` | GitHub PAT with `contents:write` on lumen-agent repo |
 
-The GitHub token is the same `REDACTED_EMAIL` PAT already in the
-vault (rule 34). Only the last 4 chars are logged for verification.
+The GitHub token is the same fine-grained PAT (local mainframe github profile)
+already in the vault (rule 34). Only the last 4 chars are logged for verification.
 
 ### Code structure
 

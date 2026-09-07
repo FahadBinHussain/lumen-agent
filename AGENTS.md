@@ -56,7 +56,7 @@
   missing and main exits 1 → deploy `update_failed` / 503 crash loop. It is an
   account linkage like whatsapp_sessions — keep the row, or rebuild it from
   the agent-browser vault
-  (`%APPDATA%\mainframe\accounts\agent-browser\cookies\REDACTED_EMAIL.cookies.json`,
+  (`%APPDATA%\mainframe\accounts\agent-browser\cookies\<fb-account-email>.cookies.json`,
   REQUIRED_COOKIES = `c_user`/`xs`/`datr` → plain `{name:value}` JSON, 163
   bytes) and `INSERT INTO lumen_snapshots (path, data, sha256) VALUES
   ('messenger-cookies.json', decode('<hex>','hex'), '<sha256-hex>')` (schema:
@@ -99,22 +99,22 @@
   comes from the DATABASE_URL Render env var. Validation fails startup when
   enabled without a resolvable URL — by design, so a missing env var is loud.
 - Neon project: `lumen` / aged-fire-12399795, org "Ratul"
-  (org-plain-glade-16980612), OWNS ACCOUNT REDACTED_EMAIL (mainframe
+  (org-plain-glade-16980612), OWNS ACCOUNT (mainframe neon profile holding it,
   neon profile), aws-us-west-2, pg 17. Connection URI via
   neon-account.ps1 / mainframe api-key. Never commit the DSN.
 
 ## Deploy: Render web service (2026-08-14)
 
 - Service: `lumen` (srv-d9vd3oh42hec738odeg0), workspace "Bayazid's workspace"
-  (tea-cu1mom1u0jms738ka280, shared by REDACTED_EMAIL + REDACTED_EMAIL),
+  (workspace tea-cu1mom1u0jms738ka280),
   free plan, oregon. URL https://lumen-aqyl.onrender.com, health /api/health.
 - Dockerfile multi-stage build (golang:1.25 → debian:bookworm-slim + ffmpeg),
   binds 7860, `serve -config /app/config/production.yaml`. Auto-deploy on main.
 - `config/production.yaml` is now TRACKED in git (was gitignored) and is
   secret-free: `discord.bot_token_env: DISCORD_BOT_TOKEN` (added 2026-08-14,
   bot_token fallback if the env var is unset). Render env vars:
-  DISCORD_BOT_TOKEN (the real token), LITELLM_API_KEY (REDACTED_EMAIL HF
-  token for https://alchoholpad-litellm.hf.space). GitHub push protection
+  DISCORD_BOT_TOKEN (the real token), LITELLM_API_KEY (HF token from the local mainframe hf profile,
+  authorizing https://alchoholpad-litellm.hf.space). GitHub push protection
   (secret scan) blocks any commit containing the token — never commit it.
 - First create via `render services create` did NOT auto-trigger a deploy
   (status stayed empty); fix: `POST /v1/services/<id>/deploys` via curl.
@@ -216,7 +216,7 @@ allowed thread becomes usable without a deploy. Only threads listed in
 `bridge.admin_threads` (per-platform; empty = nobody) can run these; a
 denied thread gets a one-line "admin command" reply and never falls through
 to the agent. production.yaml: admin_threads = the three test channels
-(messenger 2637078310061988 / whatsapp REDACTED_PHONE@s.whatsapp.net /
+(messenger 2637078310061988 / whatsapp test JID (Render env) /
 discord 1537650032441032765) — keep it that way unless a real thread needs
 admin.
 
@@ -377,7 +377,7 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     blobs unreachable → GitHub GCs). Env vars on
     Render: `LUMEN_EXPORT_KEY` (openssl passphrase; decrypt = `openssl enc -d
     -aes-256-cbc -pbkdf2 -pass env:LUMEN_EXPORT_KEY`), `LUMEN_EXPORT_GITHUB_TOKEN`
-    (REDACTED_EMAIL fine-grained PAT scoped to lumen-agent only,
+    (github fine-grained PAT scoped to lumen-agent only, see local mainframe github profile,
     contents:write). Dockerfile now installs
     `postgresql-client git openssl` (pg_dump + git needed). code:
     `internal/notify/neonexport.go` (`exportNeonOrg` per over-threshold org,
@@ -447,7 +447,7 @@ Hardcoded test targets — use these for cutover test sends only:
 
 - Messenger thread `2637078310061988` (already in `messenger.allowed_thread_ids`)
 - Discord channel `1537650032441032765` (AlgoJect — where @murmur hello tests happen)
-- WhatsApp contact REDACTED_PHONE → JID `REDACTED_PHONE@s.whatsapp.net` (now gated
+- WhatsApp test contact (JID in Render env `WHATSAPP_ALLOWED_JIDS`) (now gated
   by the new `whatsapp.allowed_jids`, mirror of `messenger.allowed_thread_ids`:
   empty list = allow all; blocked sends log `blocked (not in whatsapp.allowed_jids)`
   and are dropped).
@@ -516,10 +516,10 @@ notes): ~90% covered. Remaining gaps and how they're handled:
   cutover (lumen logs `events.QR`); new sessions persist to lumen Neon.
 - **Messenger account**: user plans a different FB account than murmur's —
   `messenger.enabled` stays false. **bridge.secret SET (2026-08-14)**:
-  `ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET` on Render = the fahadbinhussain001
-  HF profile token (the one the refresher sends as Bearer, verified by sha256).
-  The Vercel poller project (murmur, prj_EWeinTGTbfW5iC2bciQ65ZuA4WyZ, owner
-  REDACTED_EMAIL) had an old `HF_TOKEN` that matches nothing in mainframe
+  `ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET` on Render = the HF profile token
+  from the local mainframe hf profile (the one the refresher sends as Bearer,
+  verified by sha256). The Vercel poller project (murmur, prj_EWeinTGTbfW5iC2bciQ65ZuA4WyZ)
+  had an old `HF_TOKEN` from an unrelated account that matches nothing in mainframe
   — realigned it to the same value via env PATCH (murmur's endpoints never
   checked auth, so this is safe). NOTE: Vercel env GET redacts values
   (`"value": "<redacted>"`, `decrypted:false`) — you cannot hash-verify env
@@ -595,7 +595,7 @@ construction. Per-platform persistence:
 In-container watch (`internal/bridge/healthwatch.go`, config `bridge.health_watch:`):
 when a platform dies/recovers it tells the OTHER platforms' test channels:
 whatsapp ↔ messenger thread 2637078310061988 ↔ whatsapp jid
-REDACTED_PHONE@s.whatsapp.net, discord → both of those, and whatsapp/messenger
+whatsapp test JID (Render env), discord → both of those, and whatsapp/messenger
 deaths also copy to the discord channel (`discord_channel_id`, currently
 1537650032441032765 in AlgoJect) when set. So the mesh is symmetric: each
 platform's alerts land on the other two. Discord connection state is tracked
@@ -662,7 +662,7 @@ bool). Both are polled, not event-driven.
 - **RESOLVED 2026-08-17**: paired via PairPhone code flow (account via
   `WHATSAPP_PAIR_PHONE` env) and transferred to Render through Neon
   (`POST /api/whatsapp/session/upload`); QR page reports `"status":"paired"`.
-  Commit `c9d4ae8` carries the fixes. Old number `+REDACTED_PHONE` stays
+  Commit `c9d4ae8` carries the fixes. The old test number (redacted) stays
   hard-blocked — never retry it.
 - **Pairing identity fixes (the actual root cause)**: (1) whatsmeow `Client.QRClientType`
   was unset → QR advertised client type `9` (OtherWebClient) and the server
