@@ -170,6 +170,10 @@ type WhatsAppConfig struct {
 	Proxy        string   `yaml:"proxy"`
 	ProxyEnv     string   `yaml:"proxy_env"`
 	AllowedJIDs  []string `yaml:"allowed_jids"`
+	// AllowedJIDsEnv names an env var holding the comma-separated allowlist.
+	// Fail-closed: when set, the var must resolve non-empty at boot, else
+	// Load errors instead of silently allowing every chat.
+	AllowedJIDsEnv string `yaml:"allowed_jids_env"`
 }
 
 type BridgeConfig struct {
@@ -187,6 +191,9 @@ type BridgeConfig struct {
 	// Keyed by platform name (messenger/whatsapp/discord); an empty list
 	// means nobody can run them.
 	AdminThreads map[string][]string `yaml:"admin_threads"`
+	// AdminThreadsEnv maps platform -> env var holding that platform's
+	// comma-separated admin list (same fail-closed rule as allowed_jids_env).
+	AdminThreadsEnv map[string]string `yaml:"admin_threads_env"`
 }
 
 // RouteChannel is one delivery target in a route. Exactly one target field
@@ -242,7 +249,11 @@ type HealthWatchConfig struct {
 	MinNotifyInterval string `yaml:"min_notify_interval"`
 	MessengerThreadID string `yaml:"messenger_thread_id"`
 	WhatsAppJID       string `yaml:"whatsapp_jid"`
-	DiscordChannelID  string `yaml:"discord_channel_id"`
+	// WhatsAppJIDEnv names an env var holding the alert-target JID.
+	// Fail-closed like allowed_jids_env (a missing var errors at boot
+	// instead of silently dropping messenger-death alerts).
+	WhatsAppJIDEnv   string `yaml:"whatsapp_jid_env"`
+	DiscordChannelID string `yaml:"discord_channel_id"`
 }
 
 // NotifyConfig mirrors the murmur Vercel pollers' env surface. Copy-only for
@@ -786,11 +797,35 @@ func (c *Config) resolvePaths() error {
 		c.Messenger.CookiesPath = resolvedCookiesPath
 	}
 	c.Messenger.AllowedThreadIDs = uniqueTrimmedStrings(c.Messenger.AllowedThreadIDs)
-	c.WhatsApp.AllowedJIDs = uniqueTrimmedStrings(c.WhatsApp.AllowedJIDs)
-	if c.Bridge.AdminThreads != nil {
-		for platform, ids := range c.Bridge.AdminThreads {
-			c.Bridge.AdminThreads[platform] = uniqueTrimmedStrings(ids)
+	c.WhatsApp.AllowedJIDsEnv = strings.TrimSpace(c.WhatsApp.AllowedJIDsEnv)
+	if c.WhatsApp.AllowedJIDsEnv != "" {
+		ids, err := resolveCSVEnv(c.WhatsApp.AllowedJIDsEnv, "whatsapp.allowed_jids_env")
+		if err != nil {
+			return err
 		}
+		c.WhatsApp.AllowedJIDs = ids
+	}
+	c.WhatsApp.AllowedJIDs = uniqueTrimmedStrings(c.WhatsApp.AllowedJIDs)
+	if len(c.Bridge.AdminThreadsEnv) > 0 && c.Bridge.AdminThreads == nil {
+		c.Bridge.AdminThreads = map[string][]string{}
+	}
+	for platform, envName := range c.Bridge.AdminThreadsEnv {
+		ids, err := resolveCSVEnv(strings.TrimSpace(envName), "bridge.admin_threads_env."+platform)
+		if err != nil {
+			return err
+		}
+		c.Bridge.AdminThreads[strings.ToLower(strings.TrimSpace(platform))] = ids
+	}
+	for platform, ids := range c.Bridge.AdminThreads {
+		c.Bridge.AdminThreads[platform] = uniqueTrimmedStrings(ids)
+	}
+	c.Bridge.HealthWatch.WhatsAppJIDEnv = strings.TrimSpace(c.Bridge.HealthWatch.WhatsAppJIDEnv)
+	if c.Bridge.HealthWatch.WhatsAppJIDEnv != "" {
+		jid, err := resolveSingleEnv(c.Bridge.HealthWatch.WhatsAppJIDEnv, "bridge.health_watch.whatsapp_jid_env")
+		if err != nil {
+			return err
+		}
+		c.Bridge.HealthWatch.WhatsAppJID = jid
 	}
 
 	c.WhatsApp.StoreDir = strings.TrimSpace(c.WhatsApp.StoreDir)
@@ -1977,6 +2012,31 @@ func expandHome(path string) (string, error) {
 	}
 
 	return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
+}
+
+// resolveCSVEnv reads a comma-separated list from an env var. Fail-closed:
+// an unset (or all-blank) var errors instead of yielding an empty list,
+// because empty allowlists mean "allow all" downstream.
+func resolveCSVEnv(envName, field string) ([]string, error) {
+	raw := strings.TrimSpace(os.Getenv(envName))
+	if raw == "" {
+		return nil, fmt.Errorf("%s: env var %s is unset or empty", field, envName)
+	}
+	out := uniqueTrimmedStrings(strings.Split(raw, ","))
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%s: env var %s holds no usable values", field, envName)
+	}
+	return out, nil
+}
+
+// resolveSingleEnv reads one trimmed value from an env var, fail-closed like
+// resolveCSVEnv.
+func resolveSingleEnv(envName, field string) (string, error) {
+	v := strings.TrimSpace(os.Getenv(envName))
+	if v == "" {
+		return "", fmt.Errorf("%s: env var %s is unset or empty", field, envName)
+	}
+	return v, nil
 }
 
 func uniqueTrimmedStrings(values []string) []string {

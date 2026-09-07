@@ -135,6 +135,9 @@ whatsapp:
   store_dir: ./.element-orion/whatsapp
   database_url: ""
   proxy: ""
+  # allowed_jids lists chat JIDs; allowed_jids_env (comma-separated env var)
+  # keeps phone numbers out of tracked files. env form fails boot when unset.
+  # allowed_jids_env: WHATSAPP_ALLOWED_JIDS
 
 # Bridge service: HTTP endpoints for automation notifications (Vercel pollers)
 # and cookie refresh. Runs when bridge.enabled is true.

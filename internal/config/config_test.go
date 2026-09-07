@@ -794,7 +794,7 @@ func TestBridgeAdminThreadEmptyListDeniesAll(t *testing.T) {
 func TestBridgeAdminThreadListedAndUnlisted(t *testing.T) {
 	cfg := Config{Bridge: BridgeConfig{AdminThreads: map[string][]string{
 		"messenger": {"2637078310061988", "  30738305889116993  "},
-		"whatsapp":  {"REDACTED_PHONE@s.whatsapp.net"},
+		"whatsapp":  {"8801711472629@s.whatsapp.net"},
 	}}}
 	if !cfg.BridgeAdminThread("messenger", "2637078310061988") {
 		t.Fatal("listed thread must be admin")
@@ -805,11 +805,91 @@ func TestBridgeAdminThreadListedAndUnlisted(t *testing.T) {
 	if cfg.BridgeAdminThread("discord", "1537650032441032765") {
 		t.Fatal("platform with no admin list must deny")
 	}
-	if !cfg.BridgeAdminThread("whatsapp", "REDACTED_PHONE@s.whatsapp.net") {
+	if !cfg.BridgeAdminThread("whatsapp", "8801711472629@s.whatsapp.net") {
 		t.Fatal("listed jid must be admin")
 	}
 	if cfg.BridgeAdminThread("whatsapp", "999@g.us") {
 		t.Fatal("unlisted jid must not be admin")
+	}
+}
+
+func TestResolveWhatsAppJIDsFromEnv(t *testing.T) {
+	t.Setenv("LUMEN_TEST_WA_JIDS", "8801711472629@s.whatsapp.net, 120363409684314037@g.us ")
+
+	cfg := defaultConfig()
+	cfg.sourcePath = filepath.Join(t.TempDir(), "lumen.yaml")
+	cfg.App.WorkspaceRoot = "."
+	cfg.App.SessionDir = ".element-orion"
+	cfg.WhatsApp.AllowedJIDs = []string{"stale@example"}
+	cfg.WhatsApp.AllowedJIDsEnv = "LUMEN_TEST_WA_JIDS"
+
+	if err := cfg.resolvePaths(); err != nil {
+		t.Fatalf("resolvePaths returned error: %v", err)
+	}
+	if len(cfg.WhatsApp.AllowedJIDs) != 2 || cfg.WhatsApp.AllowedJIDs[0] != "8801711472629@s.whatsapp.net" {
+		t.Fatalf("env allowlist not resolved: %v", cfg.WhatsApp.AllowedJIDs)
+	}
+}
+
+func TestResolveWhatsAppJIDsFromEnvMissingFailsClosed(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.sourcePath = filepath.Join(t.TempDir(), "lumen.yaml")
+	cfg.App.WorkspaceRoot = "."
+	cfg.App.SessionDir = ".element-orion"
+	cfg.WhatsApp.AllowedJIDsEnv = "LUMEN_TEST_WA_JIDS_DEFINITELY_UNSET"
+
+	if err := cfg.resolvePaths(); err == nil {
+		t.Fatal("missing allowlist env must fail boot, not allow all")
+	} else if !strings.Contains(err.Error(), "whatsapp.allowed_jids_env") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveHealthWatchJIDFromEnv(t *testing.T) {
+	t.Setenv("LUMEN_TEST_HW_JID", "8801711472629@s.whatsapp.net")
+
+	cfg := defaultConfig()
+	cfg.sourcePath = filepath.Join(t.TempDir(), "lumen.yaml")
+	cfg.App.WorkspaceRoot = "."
+	cfg.App.SessionDir = ".element-orion"
+	cfg.Bridge.HealthWatch.WhatsAppJIDEnv = "LUMEN_TEST_HW_JID"
+
+	if err := cfg.resolvePaths(); err != nil {
+		t.Fatalf("resolvePaths returned error: %v", err)
+	}
+	if cfg.Bridge.HealthWatch.WhatsAppJID != "8801711472629@s.whatsapp.net" {
+		t.Fatalf("env jid not resolved: %q", cfg.Bridge.HealthWatch.WhatsAppJID)
+	}
+}
+
+func TestResolveHealthWatchJIDFromEnvMissingFailsClosed(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.sourcePath = filepath.Join(t.TempDir(), "lumen.yaml")
+	cfg.App.WorkspaceRoot = "."
+	cfg.App.SessionDir = ".element-orion"
+	cfg.Bridge.HealthWatch.WhatsAppJIDEnv = "LUMEN_TEST_HW_JID_DEFINITELY_UNSET"
+
+	if err := cfg.resolvePaths(); err == nil {
+		t.Fatal("missing health-watch jid env must fail boot")
+	} else if !strings.Contains(err.Error(), "bridge.health_watch.whatsapp_jid_env") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveAdminThreadsFromEnv(t *testing.T) {
+	t.Setenv("LUMEN_TEST_ADMIN_WA", "8801711472629@s.whatsapp.net")
+
+	cfg := defaultConfig()
+	cfg.sourcePath = filepath.Join(t.TempDir(), "lumen.yaml")
+	cfg.App.WorkspaceRoot = "."
+	cfg.App.SessionDir = ".element-orion"
+	cfg.Bridge.AdminThreadsEnv = map[string]string{"whatsapp": "LUMEN_TEST_ADMIN_WA"}
+
+	if err := cfg.resolvePaths(); err != nil {
+		t.Fatalf("resolvePaths returned error: %v", err)
+	}
+	if !cfg.BridgeAdminThread("whatsapp", "8801711472629@s.whatsapp.net") {
+		t.Fatal("env admin jid must be admin")
 	}
 }
 

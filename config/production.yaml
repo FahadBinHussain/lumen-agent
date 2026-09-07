@@ -190,10 +190,11 @@ whatsapp:
   proxy_env: WHATSAPP_PROXY_URL
   # send-side allowlist (mirrors messenger.allowed_thread_ids): outgoing
   # WhatsApp sends are blocked when the chat JID is not listed (empty = allow
-  # all). test thread: REDACTED_PHONE -> REDACTED_PHONE@s.whatsapp.net
-  allowed_jids:
-    - REDACTED_PHONE@s.whatsapp.net
-    - 120363409684314037@g.us
+  # all). JIDs live in the Render env (WHATSAPP_ALLOWED_JIDS, comma-separated)
+  # so no phone number sits in this tracked file; a missing var fails the boot
+  # loudly instead of silently allowing all chats.
+  allowed_jids: []
+  allowed_jids_env: WHATSAPP_ALLOWED_JIDS
 
 gifs:
   enabled: false
@@ -263,7 +264,9 @@ bridge:
     dead_after: 45s
     min_notify_interval: 2m
     messenger_thread_id: "2637078310061988"
-    whatsapp_jid: "REDACTED_PHONE@s.whatsapp.net"
+    # alert-target JID in Render env (HEALTH_WHATSAPP_JID) — no phone in git.
+    whatsapp_jid: ""
+    whatsapp_jid_env: HEALTH_WHATSAPP_JID
     discord_channel_id: "1537650032441032765"
   # route = list of channels to fan notifications out to. used by the BNP
   # worker (BNP_ROUTE env, default "bnp") and by the notifications endpoint
@@ -282,10 +285,12 @@ bridge:
   admin_threads:
     messenger:
       - "2637078310061988"
-    whatsapp:
-      - "REDACTED_PHONE@s.whatsapp.net"
+    whatsapp: []
     discord:
       - "1537650032441032765"
+  # whatsapp admin JID in Render env (ADMIN_WHATSAPP_JIDS, comma-separated).
+  admin_threads_env:
+    whatsapp: ADMIN_WHATSAPP_JIDS
 
 notify:
   # lumen's own notifications endpoint (murmur space default is dead/paused)
