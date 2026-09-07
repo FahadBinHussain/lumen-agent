@@ -728,9 +728,14 @@ bool). Both are polled, not event-driven.
   --exit-node=100.76.10.50 --timeout=40s`. GOTCHA: `--accept-dns` is a
   `tailscale up` flag, NOT a tailscaled flag — passing it to tailscaled makes
   it print usage and exit 1 (deploy update_failed; fixed 2026-08-17, commit
-  2a0ac08).   Verify: logs `entrypoint: tailscale userspace node up (<ip>),
-  exit node 100.76.10.50` + `WhatsApp connected`; tailnet shows `lumen-render`
-  (linux, active).
+  2a0ac08). **Initial dial retries forever (2026-09-07):** a single failed
+  `Connect` at boot (tailscaled SOCKS `general failure` while the
+  re-advertised exit was still settling) used to kill the whatsapp goroutine
+  silently — whatsapp stayed dead until the next deploy, since post-connect
+  auto-reconnect never engages when the INITIAL dial fails. `bridge.Run` now
+  retries the dial every 20s until it succeeds. Verify: logs `entrypoint:
+  tailscale userspace node up (<ip>), exit node 100.76.10.50` + `WhatsApp
+  connected`; tailnet shows `lumen-render` (linux, active).
 - **Exit advertisement can silently vanish (2026-09-07):** laptop-main lost
   `AdvertiseRoutes` (prefs showed null; `exit-node list` offered only the
   offline desktop-main) — cause unknown (client update? VPN toggle?), effect

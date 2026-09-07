@@ -181,9 +181,27 @@ func (s *Service) Run(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := s.whatsapp.Connect(ctx); err != nil {
-				log.Printf("bridge: whatsapp connect failed: %v", err)
-				return
+			// Retry the initial dial forever: a single failed handshake
+			// (e.g. tailscaled exit not yet usable at boot — seen 2026-09-07
+			// as a SOCKS general failure 40s after boot) used to kill this
+			// goroutine and leave whatsapp dead until the next deploy, with
+			// no reconnect path (post-connect drops are whatsmeow's own
+			// auto-reconnect domain; a failed INITIAL Connect never gets
+			// there). Steady-state reconnects are unaffected.
+			for {
+				if err := s.whatsapp.Connect(ctx); err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+					log.Printf("bridge: whatsapp connect failed, retrying in 20s: %v", err)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(20 * time.Second):
+					}
+					continue
+				}
+				break
 			}
 			s.saveWhatsAppSession(ctx)
 			log.Printf("bridge: whatsapp connected")
