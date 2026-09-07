@@ -475,6 +475,25 @@ notes): ~90% covered. Remaining gaps and how they're handled:
   `schtasks /run /tn "lumen-cookie-health"`; log `$env:TEMP\lumen-cookie-health.log`;
   Next Run shows N/A (logon-only trigger fires at next logon). Health-gates on
   `MURMUR_HF_SPACE_URL` (default http://127.0.0.1:8791).
+- **Cookie-refresh heal path was broken two ways (found + fixed 2026-09-07,
+  messenger had been down since ~09-06 with the watchdog detecting but never
+  healing):** (1) the refresher (murmur repo, DO NOT EDIT) needs
+  `HF_EMAIL` + `AGENT_BROWSER_EMAIL` + `MURMUR_HF_SPACE_URL` in ITS OWN env —
+  cookie-health.ps1 only forwarded the URL, and `AGENT_BROWSER_EMAIL` was set
+  nowhere in the pipeline; `.env.local` now carries all three and the script
+  logs env readiness before spawning (lengths only). (2) the refresher reads
+  its Bearer token from `mainframe/accounts/hf/<HF_EMAIL>/token` — that file
+  did not exist (`stored_tokens` there is a placeholder, NOT the token); it
+  must equal the Render `ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET` value
+  (recreated from Render on 2026-09-07). (3) **`handleCookieUpload`
+  context bug (commit TBD):** it passed `r.Context()` into
+  `ReloadCookies` → `Start` → background `Connect`, so every successful upload
+  context-canceled its own MQTT handshake the moment the handler returned
+  (swallowed as `context.Canceled`, zero logs) — refresh could NEVER
+  reconnect; only a reboot brought messenger back. Now
+  `context.WithoutCancel(r.Context())`. Symptom of all three combined:
+  `foreground keepalive failed: not connected` every minute + `failed to send
+  reply: not connected` on every send, with no socket-error lines ever.
 - **Dedupe continuity (SELF-CONTAINED 2026-08-30)**: `notify.database_url_env`
   = `DATABASE_URL` — lumen's OWN Neon. `steam_seen`/`game_seen`/`crack_seen`
   dedupe tables, supabase app_state, persistence snapshots, whatsapp sessions,
@@ -698,9 +717,21 @@ bool). Both are polled, not event-driven.
   --exit-node=100.76.10.50 --timeout=40s`. GOTCHA: `--accept-dns` is a
   `tailscale up` flag, NOT a tailscaled flag — passing it to tailscaled makes
   it print usage and exit 1 (deploy update_failed; fixed 2026-08-17, commit
-  2a0ac08). Verify: logs `entrypoint: tailscale userspace node up (<ip>),
+  2a0ac08).   Verify: logs `entrypoint: tailscale userspace node up (<ip>),
   exit node 100.76.10.50` + `WhatsApp connected`; tailnet shows `lumen-render`
   (linux, active).
+- **Exit advertisement can silently vanish (2026-09-07):** laptop-main lost
+  `AdvertiseRoutes` (prefs showed null; `exit-node list` offered only the
+  offline desktop-main) — cause unknown (client update? VPN toggle?), effect
+  was whatsapp `websocket not connected` on every send while the container
+  looked healthy. Fix: `tailscale set --advertise-exit-node=true` on the
+  laptop; admin-console route approval PERSISTS per device, no re-approval
+  needed (verified via API: advertised + enabled `0.0.0.0/0, ::/0`). No
+  container restart needed — tailscaled re-picks the exit and whatsmeow
+  reconnects on its own. Probe for this class of outage without touching the
+  container: `POST /api/automation/notifications` with a platform/thread —
+  response `sent` vs `pending` reads the EXACT `IsConnected` flags the
+  health-watch uses (a `pending` on all three = total mouth outage).
 - **Log-noise flood from the SOCKS listener (resolved 2026-08-17, commits
   cdb00e1 + b13d34b)**: the container logs were drowned by ~1-2/s
   `[ERR] socks: Unsupported SOCKS version: [72]` + `serve 127.0.0.1:PORT: ...`

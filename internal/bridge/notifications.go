@@ -225,7 +225,13 @@ func (s *Service) handleCookieUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.messenger != nil {
-		if err := s.messenger.ReloadCookies(r.Context()); err != nil {
+		// Detached context: ReloadCookies -> Start launches the background
+		// MQTT Connect under this ctx. With r.Context() the handshake was
+		// ALWAYS context-canceled the moment this handler returned (the
+		// cancel is swallowed as "context canceled", so no error ever
+		// surfaced) — every cookie refresh silently left messenger
+		// disconnected until the next deploy/reboot. Found 2026-09-07.
+		if err := s.messenger.ReloadCookies(context.WithoutCancel(r.Context())); err != nil {
 			http.Error(w, "Failed to reload cookies: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
