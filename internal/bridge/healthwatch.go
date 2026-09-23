@@ -76,6 +76,7 @@ func (s *Service) watchHealth(ctx context.Context) {
 	for name := range targets {
 		states[name] = &healthState{}
 	}
+	pairURL := withWhatsAppPairToken(hw.WhatsAppPairURL)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -88,7 +89,7 @@ func (s *Service) watchHealth(ctx context.Context) {
 		case <-ticker.C:
 			for name, platformTargets := range targets {
 				if msg := s.checkHealth(name, states[name], s.platformAlive(name), deadAfter, minNotify); msg != "" {
-					msg = addWhatsAppPairLink(name, msg, hw.WhatsAppPairURL)
+					msg = addWhatsAppPairLink(name, msg, pairURL)
 					for _, target := range platformTargets {
 						s.notifyHealth(target, msg)
 					}
@@ -106,6 +107,22 @@ func addWhatsAppPairLink(name, message, pairURL string) string {
 		return message
 	}
 	return message + "\nPair WhatsApp here: " + pairURL
+}
+
+func withWhatsAppPairToken(pairURL string) string {
+	token := strings.TrimSpace(os.Getenv("WHATSAPP_PAIR_TOKEN"))
+	if pairURL == "" || token == "" {
+		return pairURL
+	}
+	u, err := url.Parse(pairURL)
+	if err != nil {
+		log.Printf("health-watch: invalid whatsapp_pair_url: %v", err)
+		return pairURL
+	}
+	q := u.Query()
+	q.Set("token", token)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // checkHealth advances the state machine for one platform and returns the
@@ -185,7 +202,11 @@ func (s *Service) notifyHealth(target healthTarget, text string) {
 	// whatsapp.allowed_jids) — alerts to non-listed channels get dropped with
 	// a log line, same as the notifications endpoint.
 	s.notify(target.notifyPlatform, target.threadID, text)
-	log.Printf("health-watch: notified %s %s: %s", target.notifyPlatform, target.threadID, text)
+	logText := text
+	if token := strings.TrimSpace(os.Getenv("WHATSAPP_PAIR_TOKEN")); token != "" {
+		logText = strings.ReplaceAll(logText, token, "[pair-token-redacted]")
+	}
+	log.Printf("health-watch: notified %s %s: %s", target.notifyPlatform, target.threadID, logText)
 }
 
 // diagnoseWhatsAppDead probes tailnet vs whatsapp to classify a whatsapp dead.

@@ -111,6 +111,14 @@ func TestAddWhatsAppPairLink(t *testing.T) {
 	}
 }
 
+func TestWithWhatsAppPairToken(t *testing.T) {
+	t.Setenv("WHATSAPP_PAIR_TOKEN", "test-token")
+	got := withWhatsAppPairToken("https://example.com/pair?format=html")
+	if got != "https://example.com/pair?format=html&token=test-token" {
+		t.Fatalf("unexpected protected pair URL: %q", got)
+	}
+}
+
 type fakeDiscordHealthClient struct {
 	connected bool
 }

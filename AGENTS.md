@@ -835,6 +835,11 @@ bool). Both are polled, not event-driven.
   actual backend error instead of failing with a JSON parse exception. Enter
   the number with its international country code and no leading trunk zero.
 
+- Pairing access is private: Render must define `WHATSAPP_PAIR_TOKEN`. The
+  QR page and pair API require that token, and pairing always uses the saved
+  `WHATSAPP_PAIR_PHONE`/`WHATSAPP_PHONE`; never restore a public pairing URL
+  or accept arbitrary request-body phone overrides.
+
 ## Upstream tracking
 
 Upstream is `eli32-vlc/lumen-agent`; this fork is `FahadBinHussain/lumen-agent`.
