@@ -479,15 +479,32 @@ func (c *Client) SendText(ctx context.Context, threadID int64, text string) stri
 }
 
 func (c *Client) EditMessage(ctx context.Context, messageID string, text string) error {
+	return c.EditMessageWithContinuation(ctx, 0, messageID, text)
+}
+
+// EditMessageWithContinuation edits the existing message with the first
+// chunk and sends any remaining chunks as new messages in the same thread.
+// This is needed for edited notifications because platform edit APIs cannot
+// turn one message into multiple messages.
+func (c *Client) EditMessageWithContinuation(ctx context.Context, threadID int64, messageID string, text string) error {
 	if messageID == "" {
 		return nil
 	}
+	chunks := splitMessage(text, maxMsgLen)
 	_, err := c.client.ExecuteTasks(ctx, &socket.EditMessageTask{
 		MessageID: messageID,
-		Text:      text,
+		Text:      chunks[0],
 	})
 	if err != nil {
 		return fmt.Errorf("edit message: %w", err)
+	}
+	for _, chunk := range chunks[1:] {
+		if threadID == 0 {
+			return fmt.Errorf("long edit requires messenger thread id")
+		}
+		if id := c.SendText(ctx, threadID, chunk); id == "" {
+			return fmt.Errorf("send edited message continuation failed")
+		}
 	}
 	return nil
 }

@@ -466,13 +466,19 @@ func (w *WhatsmeowClient) EditText(ctx context.Context, to string, messageID str
 
 	jid = w.resolvePN(ctx, jid)
 
+	chunks := splitText(text, whatsappMaxTextRunes)
 	msg := w.client.BuildEdit(jid, types.MessageID(messageID), &waE2E.Message{
-		Conversation: &text,
+		Conversation: &chunks[0],
 	})
 
 	_, err = w.client.SendMessage(ctx, jid, msg)
 	if err != nil {
 		return fmt.Errorf("send edit: %w", err)
+	}
+	for _, chunk := range chunks[1:] {
+		if _, err := w.SendText(ctx, to, chunk); err != nil {
+			return fmt.Errorf("send edited message continuation: %w", err)
+		}
 	}
 
 	w.logger.Info().Str("to", to).Str("id", messageID).Str("text", truncate(text, 50)).Msg("WhatsApp message edited via whatsmeow")

@@ -860,12 +860,16 @@ bool). Both are polled, not event-driven.
   rune counts, not byte counts. Each continuation is labeled `[part n/total]`
   so Bengali and other multibyte text cannot be cut mid-character or appear
   silently truncated.
+- Edited notifications use the same behavior: edit the first chunk in place
+  and send continuation chunks as new messages.
 
 ## WhatsApp long messages (2026-09-23)
 
 - WhatsApp notifications use Unicode-safe labeled splitting with a
   conservative 4000-rune chunk size. The WhatsApp API accepts larger
   messages, but this ceiling avoids silent truncation in older clients.
+- WhatsApp edited notifications also edit the first chunk and send any
+  continuation chunks separately.
 
 ## Upstream tracking
 

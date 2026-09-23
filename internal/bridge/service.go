@@ -704,7 +704,11 @@ func (s *Service) editMessage(threadID string, messageID string, text string) er
 	if !s.threadAllowed("messenger", threadID) {
 		return fmt.Errorf("thread %s not in messenger.allowed_thread_ids", threadID)
 	}
-	return s.messenger.EditMessage(context.Background(), messageID, text)
+	tid, err := strconv.ParseInt(threadID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid messenger thread id %q", threadID)
+	}
+	return s.messenger.EditMessageWithContinuation(context.Background(), tid, messageID, text)
 }
 
 // sendReply delivers a formatted message the murmur way: edit the pending
@@ -776,7 +780,7 @@ func (s *Service) EditMessage(ctx context.Context, threadID int64, messageID str
 	if !s.threadAllowed("messenger", strconv.FormatInt(threadID, 10)) {
 		return fmt.Errorf("thread %d not in messenger.allowed_thread_ids", threadID)
 	}
-	return s.messenger.EditMessage(ctx, messageID, text)
+	return s.messenger.EditMessageWithContinuation(ctx, threadID, messageID, text)
 }
 
 // SendWhatsApp delivers text to one whatsapp chat through the allowlist
