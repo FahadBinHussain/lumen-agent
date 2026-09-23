@@ -374,7 +374,8 @@ func (s *Service) handleWhatsAppQR(w http.ResponseWriter, r *http.Request) {
 <div id="qrbox"><img id="qr" width="512" height="512" alt="QR"></div>
 <ol><li>Open WhatsApp on your phone</li><li>Settings &rarr; Linked devices &rarr; Link a device</li><li>Scan this QR &mdash; it refreshes automatically every 4 seconds</li></ol>
 <h2>or link with phone number</h2>
-<input id="phone" inputmode="numeric" autocomplete="tel" placeholder="country code + number, e.g. 8801712345678" style="font-size:16px;padding:10px;width:min(360px,90vw);border-radius:8px;border:1px solid #555;background:#222;color:#eee">
+<input id="phone" inputmode="numeric" autocomplete="tel" placeholder="leave blank to use saved phone number" style="font-size:16px;padding:10px;width:min(360px,90vw);border-radius:8px;border:1px solid #555;background:#222;color:#eee">
+<div style="font-size:13px;color:#aaa">Leave blank to use the saved server-side phone number, or enter an international number to override it.</div>
 <button id="pairbtn" onclick="genCode()">Generate linking code</button>
 <div id="code"></div>
 <ol><li>Press the button above</li><li>Open WhatsApp on the phone &rarr; Settings &rarr; Linked devices &rarr; <b>Link with phone number instead</b></li><li>Type the code shown above into the phone</li></ol>
@@ -383,7 +384,7 @@ async function tick(){try{const j=await(await fetch('?format=json')).json();if(j
 if(j.status!=='qr'){st.textContent=(j.status||'waiting')+' - '+(j.message||'');return}
 if(j.ref!==have){have=j.ref;img.src='?format=png&t='+Date.now();st.textContent='refreshed '+new Date().toLocaleTimeString()}else{st.textContent='waiting for next refresh...'}}
 catch(e){st.textContent='error: '+e.message}}
-async function genCode(){const value=phone.value.trim();if(!value){st.textContent='enter your phone number with country code first';phone.focus();return}btn.disabled=true;code.style.display='none';st.textContent='requesting code...';try{const r=await fetch('/api/whatsapp/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:value})});const raw=await r.text();let j;try{j=JSON.parse(raw)}catch(_){throw new Error(raw||('HTTP '+r.status))}if(!r.ok){throw new Error(j.message||('HTTP '+r.status))}if(j.status==='code'){code.textContent=j.code;code.style.display='block';st.textContent='enter this code on the phone'}else{st.textContent=(j.message||'pair failed');btn.disabled=false}}
+async function genCode(){const value=phone.value.trim();btn.disabled=true;code.style.display='none';st.textContent=value?'requesting code...':'requesting code using saved phone number...';try{const r=await fetch('/api/whatsapp/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:value?JSON.stringify({phone:value}):JSON.stringify({})});const raw=await r.text();let j;try{j=JSON.parse(raw)}catch(_){throw new Error(raw||('HTTP '+r.status))}if(!r.ok){throw new Error(j.message||('HTTP '+r.status))}if(j.status==='code'){code.textContent=j.code;code.style.display='block';st.textContent='enter this code on the phone'}else{st.textContent=(j.message||'pair failed');btn.disabled=false}}
 catch(e){st.textContent='error: '+e.message;btn.disabled=false}}
 tick();setInterval(tick,4000)</script></body></html>`))
 		return
