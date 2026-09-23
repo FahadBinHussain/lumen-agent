@@ -101,6 +101,16 @@ func TestCheckHealthCooldown(t *testing.T) {
 	}
 }
 
+func TestAddWhatsAppPairLink(t *testing.T) {
+	got := addWhatsAppPairLink("whatsapp", "whatsapp is logged out (needs phone re-pair via QR - not auto-recovering)", "https://example.com/pair")
+	if got != "whatsapp is logged out (needs phone re-pair via QR - not auto-recovering)\nPair WhatsApp here: https://example.com/pair" {
+		t.Fatalf("unexpected linked warning: %q", got)
+	}
+	if got := addWhatsAppPairLink("messenger", "messenger is logged out", "https://example.com/pair"); got != "messenger is logged out" {
+		t.Fatalf("non-whatsapp warning changed: %q", got)
+	}
+}
+
 type fakeDiscordHealthClient struct {
 	connected bool
 }

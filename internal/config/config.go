@@ -164,12 +164,12 @@ type MessengerConfig struct {
 }
 
 type WhatsAppConfig struct {
-	Enabled      bool     `yaml:"enabled"`
-	StoreDir     string   `yaml:"store_dir"`
-	DatabaseURL  string   `yaml:"database_url"`
-	Proxy        string   `yaml:"proxy"`
-	ProxyEnv     string   `yaml:"proxy_env"`
-	AllowedJIDs  []string `yaml:"allowed_jids"`
+	Enabled     bool     `yaml:"enabled"`
+	StoreDir    string   `yaml:"store_dir"`
+	DatabaseURL string   `yaml:"database_url"`
+	Proxy       string   `yaml:"proxy"`
+	ProxyEnv    string   `yaml:"proxy_env"`
+	AllowedJIDs []string `yaml:"allowed_jids"`
 	// AllowedJIDsEnv names an env var holding the comma-separated allowlist.
 	// Fail-closed: when set, the var must resolve non-empty at boot, else
 	// Load errors instead of silently allowing every chat.
@@ -177,15 +177,15 @@ type WhatsAppConfig struct {
 }
 
 type BridgeConfig struct {
-	Enabled              bool                       `yaml:"enabled"`
-	ListenAddr           string                     `yaml:"listen_addr"`
-	NotificationsPath    string                     `yaml:"notifications_path"`
-	NotificationsEnabled bool                       `yaml:"notifications_enabled"`
-	BNPEnabled           bool                       `yaml:"bnp_enabled"`
-	Secret               string                     `yaml:"secret"`
-	SecretEnv            string                     `yaml:"secret_env"`
-	HealthWatch          HealthWatchConfig          `yaml:"health_watch"`
-	Routes               map[string][]RouteChannel  `yaml:"routes"`
+	Enabled              bool                      `yaml:"enabled"`
+	ListenAddr           string                    `yaml:"listen_addr"`
+	NotificationsPath    string                    `yaml:"notifications_path"`
+	NotificationsEnabled bool                      `yaml:"notifications_enabled"`
+	BNPEnabled           bool                      `yaml:"bnp_enabled"`
+	Secret               string                    `yaml:"secret"`
+	SecretEnv            string                    `yaml:"secret_env"`
+	HealthWatch          HealthWatchConfig         `yaml:"health_watch"`
+	Routes               map[string][]RouteChannel `yaml:"routes"`
 	// AdminThreads is the per-platform set of threads/jids/channels allowed
 	// to run the admin commands (/threads, /allow, /block, /allowlist).
 	// Keyed by platform name (messenger/whatsapp/discord); an empty list
@@ -249,6 +249,7 @@ type HealthWatchConfig struct {
 	MinNotifyInterval string `yaml:"min_notify_interval"`
 	MessengerThreadID string `yaml:"messenger_thread_id"`
 	WhatsAppJID       string `yaml:"whatsapp_jid"`
+	WhatsAppPairURL   string `yaml:"whatsapp_pair_url"`
 	// WhatsAppJIDEnv names an env var holding the alert-target JID.
 	// Fail-closed like allowed_jids_env (a missing var errors at boot
 	// instead of silently dropping messenger-death alerts).
@@ -259,17 +260,17 @@ type HealthWatchConfig struct {
 // NotifyConfig mirrors the murmur Vercel pollers' env surface. Copy-only for
 // now: all pollers default to disabled; flip enabled flags at cutover.
 type NotifyConfig struct {
-	Enabled       bool             `yaml:"enabled"`
-	WebhookURL    string           `yaml:"webhook_url"`
-	WebhookToken  string           `yaml:"webhook_token"`
-	WebhookTokenEnv string         `yaml:"webhook_token_env"`
-	DatabaseURL   string           `yaml:"database_url"`
-	DatabaseURLEnv string          `yaml:"database_url_env"`
-	SteamUpdates  NotifySteamCfg   `yaml:"steam_updates"`
-	FreeGames     NotifyFreeGames  `yaml:"free_games"`
-	NeonUsage     NotifyNeonUsage  `yaml:"neon_usage"`
-	Supabase      NotifySupabase   `yaml:"supabase"`
-	CrackWatch    NotifyCrackWatch `yaml:"crack_watch"`
+	Enabled         bool             `yaml:"enabled"`
+	WebhookURL      string           `yaml:"webhook_url"`
+	WebhookToken    string           `yaml:"webhook_token"`
+	WebhookTokenEnv string           `yaml:"webhook_token_env"`
+	DatabaseURL     string           `yaml:"database_url"`
+	DatabaseURLEnv  string           `yaml:"database_url_env"`
+	SteamUpdates    NotifySteamCfg   `yaml:"steam_updates"`
+	FreeGames       NotifyFreeGames  `yaml:"free_games"`
+	NeonUsage       NotifyNeonUsage  `yaml:"neon_usage"`
+	Supabase        NotifySupabase   `yaml:"supabase"`
+	CrackWatch      NotifyCrackWatch `yaml:"crack_watch"`
 }
 
 type NotifySteamCfg struct {
@@ -331,10 +332,10 @@ type NotifyNeonExportCfg struct {
 // Neon app_state table (keyed per account), which is what lets lumen own and
 // rotate the supabase refresh token without touching vaultwarden.
 type NotifySupabase struct {
-	Enabled       bool     `yaml:"enabled"`
-	Interval      string   `yaml:"interval"`
-	ThreadID      string   `yaml:"thread_id"`
-	AppStateTable string   `yaml:"app_state_table"`
+	Enabled       bool   `yaml:"enabled"`
+	Interval      string `yaml:"interval"`
+	ThreadID      string `yaml:"thread_id"`
+	AppStateTable string `yaml:"app_state_table"`
 	// project refs to watch; empty = discover all `supabase.<ref>.refresh_token`
 	// rows in app_state (scales to new accounts without config changes).
 	ProjectRefs []string `yaml:"project_refs"`
@@ -624,10 +625,10 @@ func defaultConfig() Config {
 			},
 		},
 		Notify: NotifyConfig{
-			WebhookTokenEnv:  "ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET",
-			DatabaseURLEnv:   "DATABASE_URL",
-			SteamUpdates:     NotifySteamCfg{Enabled: false, Interval: "1m", MaxAgeDays: 30},
-			FreeGames:        NotifyFreeGames{Enabled: false, Interval: "1m"},
+			WebhookTokenEnv: "ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET",
+			DatabaseURLEnv:  "DATABASE_URL",
+			SteamUpdates:    NotifySteamCfg{Enabled: false, Interval: "1m", MaxAgeDays: 30},
+			FreeGames:       NotifyFreeGames{Enabled: false, Interval: "1m"},
 			NeonUsage: NotifyNeonUsage{Enabled: false, Interval: "1h", WarningHours: 90, WarningStoragePct: 80, WarningEgressPct: 80,
 				Export: NotifyNeonExportCfg{
 					Enabled: false, Repo: "FahadBinHussain/lumen-agent",
@@ -636,8 +637,8 @@ func defaultConfig() Config {
 					ExportTimeout: "60s", ExportInterval: "24h",
 				},
 			},
-			Supabase:         NotifySupabase{Enabled: false, Interval: "6h", AppStateTable: "public.app_state", EgressThreshold: 0.8, DBThreshold: 0.8},
-			CrackWatch:       NotifyCrackWatch{Enabled: false, Interval: "5m", FeedURL: "https://www.reddit.com/r/CrackWatch/.rss", ThreadIDs: ""},
+			Supabase:   NotifySupabase{Enabled: false, Interval: "6h", AppStateTable: "public.app_state", EgressThreshold: 0.8, DBThreshold: 0.8},
+			CrackWatch: NotifyCrackWatch{Enabled: false, Interval: "5m", FeedURL: "https://www.reddit.com/r/CrackWatch/.rss", ThreadIDs: ""},
 		},
 		GIFs: GIFConfig{
 			Enabled:       false,

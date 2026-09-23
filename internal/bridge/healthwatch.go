@@ -88,6 +88,7 @@ func (s *Service) watchHealth(ctx context.Context) {
 		case <-ticker.C:
 			for name, platformTargets := range targets {
 				if msg := s.checkHealth(name, states[name], s.platformAlive(name), deadAfter, minNotify); msg != "" {
+					msg = addWhatsAppPairLink(name, msg, hw.WhatsAppPairURL)
 					for _, target := range platformTargets {
 						s.notifyHealth(target, msg)
 					}
@@ -98,6 +99,13 @@ func (s *Service) watchHealth(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func addWhatsAppPairLink(name, message, pairURL string) string {
+	if name != "whatsapp" || pairURL == "" || !strings.Contains(message, "is logged out") {
+		return message
+	}
+	return message + "\nPair WhatsApp here: " + pairURL
 }
 
 // checkHealth advances the state machine for one platform and returns the

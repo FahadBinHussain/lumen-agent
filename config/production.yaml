@@ -264,6 +264,7 @@ bridge:
     dead_after: 45s
     min_notify_interval: 2m
     messenger_thread_id: "2637078310061988"
+    whatsapp_pair_url: https://lumen-aqyl.onrender.com/api/whatsapp/qr?format=html
     # alert-target JID in Render env (HEALTH_WHATSAPP_JID) — no phone in git.
     whatsapp_jid: ""
     whatsapp_jid_env: HEALTH_WHATSAPP_JID
