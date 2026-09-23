@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strconv"
 	"time"
@@ -44,6 +45,22 @@ func (s *Service) savePending(ctx context.Context, req notificationRequest, text
 	if s.isPlatformConnected(platform) {
 		return false
 	}
+	_, err := s.queuePending(ctx, req, platform, text)
+	if err != nil {
+		log.Printf("bridge: pending save failed: %v", err)
+		return false
+	}
+	log.Printf("bridge: pending queued (source=%s platform=%s thread=%s dedupe=%s)", req.Source, platform, req.ThreadID, req.DedupeKey)
+	return true
+}
+
+// queuePending writes a durable notification row regardless of platform
+// connectivity. Deduped poller notifications use this queue-first path so a
+// process restart cannot lose a warning between accepting it and sending it.
+func (s *Service) queuePending(ctx context.Context, req notificationRequest, platform, text string) (int64, error) {
+	if s.neon == nil {
+		return 0, fmt.Errorf("pending notification database is unavailable")
+	}
 	p := neon.PendingNotification{
 		Platform:  platform,
 		ThreadID:  req.ThreadID,
@@ -54,18 +71,13 @@ func (s *Service) savePending(ctx context.Context, req notificationRequest, text
 		Source:    req.Source,
 		URL:       req.URL,
 	}
-	if _, err := s.neon.SavePending(ctx, p); err != nil {
-		log.Printf("bridge: pending save failed: %v", err)
-		return false
-	}
-	log.Printf("bridge: pending queued (source=%s platform=%s thread=%s dedupe=%s)", req.Source, platform, req.ThreadID, req.DedupeKey)
-	return true
+	return s.neon.SavePending(ctx, p)
 }
 
 // drainPending retries every queued notification whose platform is now
 // connected. It is called from health-watch on dead→alive and from a
-// periodic ticker as a safety net. Best-effort: a still-dead mouth leaves
-// the row for the next drain; a successful send deletes it.
+// periodic ticker as a safety net. Pending rows have no age-based expiry: a
+// warning stays queued until a successful send deletes it.
 func (s *Service) drainPending(ctx context.Context) {
 	if s.neon == nil {
 		return

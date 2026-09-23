@@ -759,7 +759,11 @@ func (s *Service) SendMessage(ctx context.Context, threadID int64, text string) 
 	if !s.threadAllowed("messenger", strconv.FormatInt(threadID, 10)) {
 		return "", fmt.Errorf("thread %d not in messenger.allowed_thread_ids", threadID)
 	}
-	return s.messenger.SendText(ctx, threadID, text), nil
+	id := s.messenger.SendText(ctx, threadID, text)
+	if id == "" {
+		return "", fmt.Errorf("messenger send returned no message id")
+	}
+	return id, nil
 }
 
 // EditMessage replaces an existing Messenger message (edit_pending outbox

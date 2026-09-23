@@ -116,9 +116,47 @@ func (s *Service) handleAutomationNotification(w http.ResponseWriter, r *http.Re
 
 	// route mode: fan out to every channel of a configured route instead of
 	// a single platform/threadId. checked before the threadId requirement
-	// (routes carry their own targets). best-effort after validation, same
-	// murmur 200 contract so pollers keep working.
+	// (routes carry their own targets).
 	route := strings.TrimSpace(req.Route)
+
+	// Pollers provide a dedupe key. Queue those notifications before trying to
+	// send them: the Neon row is the durable source of truth, and drainPending
+	// removes it only after the platform send succeeds. This gives warnings
+	// at-least-once delivery without allowing duplicate queue rows.
+	if strings.TrimSpace(req.DedupeKey) != "" {
+		if s.neon == nil {
+			http.Error(w, "deduped notification cannot be guaranteed: pending database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if route != "" {
+			if _, ok := s.cfg.Bridge.Routes[route]; !ok {
+				http.Error(w, "unknown route: "+route, http.StatusBadRequest)
+				return
+			}
+		} else if strings.TrimSpace(req.ThreadID) == "" {
+			http.Error(w, "threadId is required", http.StatusBadRequest)
+			return
+		}
+		platform := strings.TrimSpace(strings.ToLower(req.Platform))
+		if platform == "" {
+			platform = "messenger"
+		}
+		if _, err := s.queuePending(r.Context(), req, platform, text); err != nil {
+			http.Error(w, "could not persist deduped notification: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		// Try immediately when the platform is already connected; the row
+		// remains available for the periodic retry if delivery fails.
+		s.drainPending(r.Context())
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":     fmt.Sprintf("ntf_%d", time.Now().UnixMilli()),
+			"status": "pending",
+		})
+		return
+	}
+
+	// Non-deduped/manual notifications retain the existing immediate behavior.
 	if route != "" {
 		if _, ok := s.cfg.Bridge.Routes[route]; !ok {
 			http.Error(w, "unknown route: "+route, http.StatusBadRequest)

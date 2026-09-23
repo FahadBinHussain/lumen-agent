@@ -819,6 +819,14 @@ bool). Both are polled, not event-driven.
   (same identity dual-connect conflict); transfer session via
   `POST /api/whatsapp/session/upload` (bridge secret auth) → Neon restore on boot.
 
+## Neon warning delivery (2026-09-23)
+
+- Deduped poller notifications are persisted to Neon before delivery and
+  remain queued indefinitely until the platform send succeeds. This is
+  intentional at-least-once delivery: never add age-based expiry to Neon
+  warnings, and keep the same `dedupeKey` so retries cannot create duplicate
+  queue rows.
+
 ## Upstream tracking
 
 Upstream is `eli32-vlc/lumen-agent`; this fork is `FahadBinHussain/lumen-agent`.
