@@ -845,6 +845,8 @@ bool). Both are polled, not event-driven.
 - Successful deduped notifications are recorded in Neon
   `notification_deliveries`, not only in local Render state. This prevents a
   restart or redeploy from sending the same quota-period warning again.
+- Pending rows store the already-rendered notification text with an empty
+  title; otherwise the queue drain prepends the title a second time.
 
 ## Upstream tracking
 

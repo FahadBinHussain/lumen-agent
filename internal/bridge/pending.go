@@ -62,10 +62,12 @@ func (s *Service) queuePending(ctx context.Context, req notificationRequest, pla
 		return 0, fmt.Errorf("pending notification database is unavailable")
 	}
 	p := neon.PendingNotification{
-		Platform:  platform,
-		ThreadID:  req.ThreadID,
-		Route:     req.Route,
-		Title:     req.Title,
+		Platform: platform,
+		ThreadID: req.ThreadID,
+		Route:    req.Route,
+		// text is already rendered as title + message by the HTTP handler.
+		// Keep Title empty so drainPending does not prepend it a second time.
+		Title:     "",
 		Message:   text,
 		DedupeKey: req.DedupeKey,
 		Source:    req.Source,
