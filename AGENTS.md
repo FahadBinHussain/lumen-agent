@@ -868,8 +868,9 @@ bool). Both are polled, not event-driven.
 ## WhatsApp long messages (2026-09-23)
 
 - WhatsApp notifications use Unicode-safe labeled splitting with a
-  conservative 4000-rune chunk size. The WhatsApp API accepts larger
-  messages, but this ceiling avoids silent truncation in older clients.
+  conservative 900-rune chunk size. The WhatsApp API accepts larger
+  messages, but the bridge/client path has an observed effective limit near
+  1000 characters, so the lower ceiling avoids silent truncation.
 - WhatsApp edited notifications also edit the first chunk and send any
   continuation chunks separately.
 

@@ -7,12 +7,12 @@ import (
 )
 
 func TestSplitTextUnicodeSafeAndLabeled(t *testing.T) {
-	parts := splitText(strings.Repeat("বাংলা release line with a link https://example.com\n", 120), 4000)
+	parts := splitText(strings.Repeat("বাংলা release line with a link https://example.com\n", 120), whatsappMaxTextRunes)
 	if len(parts) < 2 {
 		t.Fatalf("expected multiple parts, got %d", len(parts))
 	}
 	for i, part := range parts {
-		if utf8.RuneCountInString(part) > 4000 {
+		if utf8.RuneCountInString(part) > whatsappMaxTextRunes {
 			t.Fatalf("part %d exceeds limit: %d runes", i+1, utf8.RuneCountInString(part))
 		}
 		if !strings.HasPrefix(part, "[part ") {

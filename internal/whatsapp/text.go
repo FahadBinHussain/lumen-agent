@@ -5,10 +5,10 @@ import (
 	"unicode/utf8"
 )
 
-// Keep WhatsApp notifications comfortably below client/protocol limits while
-// preserving complete Unicode characters. The platform accepts more, but a
-// conservative ceiling avoids silent truncation in older clients.
-const whatsappMaxTextRunes = 4000
+// Keep WhatsApp notifications below the effective limit of the bridge/client
+// path while preserving complete Unicode characters. Although WhatsApp's
+// documented limit is larger, this conservative ceiling avoids truncation.
+const whatsappMaxTextRunes = 900
 
 func splitText(text string, max int) []string {
 	if max < 1 || utf8.RuneCountInString(text) <= max {
