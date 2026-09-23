@@ -854,6 +854,13 @@ bool). Both are polled, not event-driven.
   The poller dedupes normalized release titles as well as Reddit GUIDs, while
   still recording duplicate GUIDs so they are not reconsidered every poll.
 
+## Messenger long messages (2026-09-23)
+
+- Messenger notifications are split below the platform limit using Unicode
+  rune counts, not byte counts. Each continuation is labeled `[part n/total]`
+  so Bengali and other multibyte text cannot be cut mid-character or appear
+  silently truncated.
+
 ## Upstream tracking
 
 Upstream is `eli32-vlc/lumen-agent`; this fork is `FahadBinHussain/lumen-agent`.

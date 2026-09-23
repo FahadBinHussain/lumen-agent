@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/rs/zerolog"
 
@@ -25,16 +26,16 @@ import (
 const maxMsgLen = 1900
 
 type Incoming struct {
-	MessageID    string
-	ThreadID     int64
-	SenderID     int64
-	Text         string
-	Timestamp    int64
-	ReplySource  string
-	ReplyToUser  int64
-	MentionIDs   []int64
-	MentionOffs  []int
-	MentionLens  []int
+	MessageID   string
+	ThreadID    int64
+	SenderID    int64
+	Text        string
+	Timestamp   int64
+	ReplySource string
+	ReplyToUser int64
+	MentionIDs  []int64
+	MentionOffs []int
+	MentionLens []int
 }
 
 type Handler func(ctx context.Context, msg Incoming)
@@ -416,7 +417,7 @@ func (c *Client) CleanMentions(msg Incoming) string {
 func (c *Client) SendText(ctx context.Context, threadID int64, text string) string {
 	otid := time.Now().UnixMilli()
 
-	if len(text) > maxMsgLen {
+	if utf8.RuneCountInString(text) > maxMsgLen {
 		chunks := splitMessage(text, maxMsgLen)
 		var lastMsgID string
 		for _, chunk := range chunks {
@@ -536,25 +537,41 @@ func (c *Client) SendImage(ctx context.Context, threadID int64, imageData []byte
 	return nil
 }
 
-// splitMessage breaks a long string into chunks, preferring to split at
-// newlines or spaces near the max length boundary.
+// splitMessage breaks a long string into Unicode-safe, labeled chunks,
+// preferring to split at newlines or spaces near the max length boundary.
 func splitMessage(text string, max int) []string {
-	if len(text) <= max {
+	if utf8.RuneCountInString(text) <= max {
 		return []string{text}
 	}
-	var chunks []string
-	for len(text) > max {
-		cut := max
-		if idx := strings.LastIndex(text[:max], "\n"); idx > max/2 {
-			cut = idx + 1
-		} else if idx := strings.LastIndex(text[:max], " "); idx > max/2 {
-			cut = idx + 1
-		}
-		chunks = append(chunks, strings.TrimSpace(text[:cut]))
-		text = text[cut:]
+	// Reserve room for the continuation label. This keeps every final
+	// Messenger message below the platform limit.
+	bodyMax := max - 32
+	if bodyMax < 1 {
+		bodyMax = max
 	}
-	if strings.TrimSpace(text) != "" {
-		chunks = append(chunks, strings.TrimSpace(text))
+	chunks := splitMessageRunes(text, bodyMax)
+	for i := range chunks {
+		chunks[i] = fmt.Sprintf("[part %d/%d]\n%s", i+1, len(chunks), chunks[i])
+	}
+	return chunks
+}
+
+func splitMessageRunes(text string, max int) []string {
+	runes := []rune(text)
+	var chunks []string
+	for len(runes) > max {
+		cut := max
+		for i := max - 1; i > max/2; i-- {
+			if runes[i] == '\n' || runes[i] == ' ' {
+				cut = i + 1
+				break
+			}
+		}
+		chunks = append(chunks, strings.TrimSpace(string(runes[:cut])))
+		runes = []rune(strings.TrimSpace(string(runes[cut:])))
+	}
+	if len(runes) > 0 {
+		chunks = append(chunks, strings.TrimSpace(string(runes)))
 	}
 	return chunks
 }
