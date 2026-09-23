@@ -73,6 +73,23 @@ func (db *DB) migrate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Older deployments could have raced and inserted duplicate pending rows
+	// before the durable dedupe guard existed. Keep the oldest row, then make
+	// the invariant database-enforced for all future inserts.
+	_, err = db.pool.Exec(ctx, `
+		DELETE FROM public.pending_notifications older
+		USING public.pending_notifications newer
+		WHERE older.dedupe_key <> ''
+		  AND older.dedupe_key = newer.dedupe_key
+		  AND older.id > newer.id
+	`)
+	if err != nil {
+		return err
+	}
+	_, err = db.pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS pending_notifications_dedupe_unique_idx ON public.pending_notifications(dedupe_key) WHERE dedupe_key <> ''`)
+	if err != nil {
+		return err
+	}
 	_, err = db.pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS pending_notifications_dedupe_idx ON public.pending_notifications(dedupe_key) WHERE dedupe_key <> ''`)
 	if err != nil {
 		return err
@@ -121,19 +138,23 @@ type PendingNotification struct {
 }
 
 func (db *DB) SavePending(ctx context.Context, p PendingNotification) (int64, error) {
-	if p.DedupeKey != "" {
-		var existing int64
-		err := db.pool.QueryRow(ctx, `SELECT id FROM public.pending_notifications WHERE dedupe_key = $1 LIMIT 1`, p.DedupeKey).Scan(&existing)
-		if err == nil {
-			return existing, nil
-		}
-	}
 	var id int64
 	err := db.pool.QueryRow(ctx, `
 		INSERT INTO public.pending_notifications (platform, thread_id, route, title, message, dedupe_key, source, url)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		ON CONFLICT (dedupe_key) WHERE dedupe_key <> '' DO NOTHING
+		RETURNING id
 	`, p.Platform, p.ThreadID, p.Route, p.Title, p.Message, p.DedupeKey, p.Source, p.URL).Scan(&id)
-	return id, err
+	if err == nil {
+		return id, nil
+	}
+	if p.DedupeKey != "" {
+		err = db.pool.QueryRow(ctx, `SELECT id FROM public.pending_notifications WHERE dedupe_key = $1 LIMIT 1`, p.DedupeKey).Scan(&id)
+		if err == nil {
+			return id, nil
+		}
+	}
+	return 0, err
 }
 
 func (db *DB) IsDelivered(ctx context.Context, dedupeKey string) (bool, error) {

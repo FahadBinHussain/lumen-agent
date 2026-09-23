@@ -94,6 +94,22 @@ func (s *Service) drainPending(ctx context.Context) {
 	}
 	log.Printf("bridge: draining %d pending notifications", len(pending))
 	for _, p := range pending {
+		// A duplicate request may have been accepted while the first delivery
+		// was still in flight. Never send a queued row after its key is already
+		// marked delivered; remove it instead.
+		if p.DedupeKey != "" {
+			delivered, checkErr := s.neon.IsDelivered(ctx, p.DedupeKey)
+			if checkErr != nil {
+				log.Printf("bridge: pending %d dedupe check failed: %v", p.ID, checkErr)
+				continue
+			}
+			if delivered {
+				if err := s.neon.DeletePending(ctx, p.ID); err != nil {
+					log.Printf("bridge: pending duplicate delete %d failed: %v", p.ID, err)
+				}
+				continue
+			}
+		}
 		// Re-check mouth is still up for this row's platform.
 		if !s.isPlatformConnected(p.Platform) {
 			continue
