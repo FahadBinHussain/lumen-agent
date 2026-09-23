@@ -128,6 +128,16 @@ func (s *Service) handleAutomationNotification(w http.ResponseWriter, r *http.Re
 			http.Error(w, "deduped notification cannot be guaranteed: pending database unavailable", http.StatusServiceUnavailable)
 			return
 		}
+		delivered, err := s.neon.IsDelivered(r.Context(), req.DedupeKey)
+		if err != nil {
+			http.Error(w, "could not check deduped notification: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		if delivered {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{"status": "sent", "deduped": true})
+			return
+		}
 		if route != "" {
 			if _, ok := s.cfg.Bridge.Routes[route]; !ok {
 				http.Error(w, "unknown route: "+route, http.StatusBadRequest)

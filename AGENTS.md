@@ -840,6 +840,12 @@ bool). Both are polled, not event-driven.
   `WHATSAPP_PAIR_PHONE`/`WHATSAPP_PHONE`; never restore a public pairing URL
   or accept arbitrary request-body phone overrides.
 
+## Neon notification dedupe (2026-09-23)
+
+- Successful deduped notifications are recorded in Neon
+  `notification_deliveries`, not only in local Render state. This prevents a
+  restart or redeploy from sending the same quota-period warning again.
+
 ## Upstream tracking
 
 Upstream is `eli32-vlc/lumen-agent`; this fork is `FahadBinHussain/lumen-agent`.

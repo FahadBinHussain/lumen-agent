@@ -64,6 +64,15 @@ func (db *DB) migrate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	_, err = db.pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS public.notification_deliveries (
+			dedupe_key TEXT PRIMARY KEY,
+			delivered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`)
+	if err != nil {
+		return err
+	}
 	_, err = db.pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS pending_notifications_dedupe_idx ON public.pending_notifications(dedupe_key) WHERE dedupe_key <> ''`)
 	if err != nil {
 		return err
@@ -125,6 +134,29 @@ func (db *DB) SavePending(ctx context.Context, p PendingNotification) (int64, er
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id
 	`, p.Platform, p.ThreadID, p.Route, p.Title, p.Message, p.DedupeKey, p.Source, p.URL).Scan(&id)
 	return id, err
+}
+
+func (db *DB) IsDelivered(ctx context.Context, dedupeKey string) (bool, error) {
+	if dedupeKey == "" {
+		return false, nil
+	}
+	var exists bool
+	err := db.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM public.notification_deliveries WHERE dedupe_key = $1)`, dedupeKey,
+	).Scan(&exists)
+	return exists, err
+}
+
+func (db *DB) MarkDelivered(ctx context.Context, dedupeKey string) error {
+	if dedupeKey == "" {
+		return nil
+	}
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO public.notification_deliveries (dedupe_key)
+		VALUES ($1)
+		ON CONFLICT (dedupe_key) DO NOTHING
+	`, dedupeKey)
+	return err
 }
 
 func (db *DB) ListPending(ctx context.Context) ([]PendingNotification, error) {

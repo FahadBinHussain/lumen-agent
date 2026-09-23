@@ -126,6 +126,10 @@ func (s *Service) drainPending(ctx context.Context) {
 			log.Printf("bridge: pending %d still failing: %v", p.ID, sendErr)
 			continue
 		}
+		if err := s.neon.MarkDelivered(ctx, p.DedupeKey); err != nil {
+			log.Printf("bridge: pending %d delivered but dedupe record failed: %v", p.ID, err)
+			continue
+		}
 		if err := s.neon.DeletePending(ctx, p.ID); err != nil {
 			log.Printf("bridge: pending delete %d failed: %v", p.ID, err)
 		} else {
