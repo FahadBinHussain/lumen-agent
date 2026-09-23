@@ -132,6 +132,7 @@ func TestBridgeNotificationsAuth(t *testing.T) {
 }
 
 func TestWhatsAppPairErrorsAreJSON(t *testing.T) {
+	t.Setenv("WHATSAPP_PAIR_TOKEN", "test-token")
 	cfg := writeTestConfig(t, "")
 	s, err := New(cfg, nil)
 	if err != nil {
@@ -140,6 +141,9 @@ func TestWhatsAppPairErrorsAreJSON(t *testing.T) {
 	defer s.Close()
 
 	req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1/api/whatsapp/pair", bytes.NewBufferString(`{}`))
+	q := req.URL.Query()
+	q.Set("token", "test-token")
+	req.URL.RawQuery = q.Encode()
 	rec := newRecorder()
 	s.handleWhatsAppPair(rec, req)
 	if rec.status != http.StatusBadRequest {
