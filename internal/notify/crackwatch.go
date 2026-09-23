@@ -79,9 +79,22 @@ func (s *Service) pollCrackWatch(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("crack_seen query: %w", err)
 	}
+	titleSeen, err := s.dbCrackTitles(ctx)
+	if err != nil {
+		return fmt.Errorf("crack_seen title query: %w", err)
+	}
 
 	for _, item := range items {
-		if dbr.seen[item.GUID] {
+		titleKey := normalizeCrackTitle(item.Title)
+		if dbr.seen[item.GUID] || titleSeen[titleKey] {
+			// Keep the feed GUID deduped too, so a duplicate-title Reddit post
+			// is not reconsidered on every five-minute poll.
+			if !dbr.seen[item.GUID] {
+				_ = s.dbInsertSeen(ctx, "public.crack_seen", "guid", map[string]string{
+					"guid":  item.GUID,
+					"title": item.Title,
+				})
+			}
 			continue
 		}
 		linkLine := ""
@@ -109,8 +122,13 @@ func (s *Service) pollCrackWatch(ctx context.Context) error {
 		}); err != nil {
 			continue
 		}
+		titleSeen[titleKey] = true
 	}
 	return nil
+}
+
+func normalizeCrackTitle(title string) string {
+	return strings.Join(strings.Fields(strings.ToLower(title)), " ")
 }
 
 // fetchCrackWatchFeed fetches and filters one CrackWatch feed pass. Only posts

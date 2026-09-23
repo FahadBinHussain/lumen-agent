@@ -848,6 +848,12 @@ bool). Both are polled, not event-driven.
 - Pending rows store the already-rendered notification text with an empty
   title; otherwise the queue drain prepends the title a second time.
 
+## CrackWatch dedupe (2026-09-23)
+
+- CrackWatch can publish the same release under multiple Reddit post URLs.
+  The poller dedupes normalized release titles as well as Reddit GUIDs, while
+  still recording duplicate GUIDs so they are not reconsidered every poll.
+
 ## Upstream tracking
 
 Upstream is `eli32-vlc/lumen-agent`; this fork is `FahadBinHussain/lumen-agent`.

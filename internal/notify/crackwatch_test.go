@@ -13,9 +13,9 @@ import (
 func TestParseRetryAfter(t *testing.T) {
 	now := time.Now()
 	cases := []struct {
-		name  string
+		name   string
 		header string
-		want  time.Duration
+		want   time.Duration
 	}{
 		{"delta seconds", "120", 2 * time.Minute},
 		{"http date", now.Add(90 * time.Second).UTC().Format(http.TimeFormat), 90 * time.Second},
@@ -34,6 +34,15 @@ func TestParseRetryAfter(t *testing.T) {
 		if got < c.want-2*time.Second || got > c.want+2*time.Second {
 			t.Errorf("%s: parseRetryAfter(%q) = %v, want ~%v", c.name, c.header, got, c.want)
 		}
+	}
+}
+
+func TestNormalizeCrackTitle(t *testing.T) {
+	if got := normalizeCrackTitle("  SILENT.HILL.Townfall-RUNE  "); got != "silent.hill.townfall-rune" {
+		t.Fatalf("normalizeCrackTitle() = %q", got)
+	}
+	if normalizeCrackTitle("SILENT.HILL.Townfall-RUNE") != normalizeCrackTitle("silent.hill.townfall-RUNE") {
+		t.Fatal("title normalization should be case-insensitive")
 	}
 }
 

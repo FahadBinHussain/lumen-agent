@@ -62,6 +62,26 @@ type dbResult struct {
 	seen map[string]bool
 }
 
+func (s *Service) dbCrackTitles(ctx context.Context) (map[string]bool, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("no dedupe db")
+	}
+	rows, err := s.db.pool.Query(ctx, `SELECT title FROM public.crack_seen`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	for rows.Next() {
+		var title string
+		if err := rows.Scan(&title); err != nil {
+			return nil, err
+		}
+		seen[normalizeCrackTitle(title)] = true
+	}
+	return seen, rows.Err()
+}
+
 // dbQuery returns the set of already-seen ids for the table's id column
 // (inArray semantics of the TS poller).
 func (s *Service) dbQuery(ctx context.Context, table, idCol string, idsFn func() []string) (*dbResult, error) {
