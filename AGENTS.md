@@ -827,6 +827,14 @@ bool). Both are polled, not event-driven.
   warnings, and keep the same `dedupeKey` so retries cannot create duplicate
   queue rows.
 
+## WhatsApp phone pairing (2026-09-23)
+
+- The public pairing page must collect the phone number and send it as
+  `{phone: ...}`; posting `{}` is not enough unless a server-side phone env
+  var exists. Pairing errors are returned as JSON so the page can display the
+  actual backend error instead of failing with a JSON parse exception. Enter
+  the number with its international country code and no leading trunk zero.
+
 ## Upstream tracking
 
 Upstream is `eli32-vlc/lumen-agent`; this fork is `FahadBinHussain/lumen-agent`.
