@@ -1,5 +1,17 @@
 # Element Orion fork (FahadBinHussain/lumen-agent) — agent notes
 
+## Deployment fixes (2026-09-23)
+
+- Production uses the reachable local OpenAI-compatible model server at
+  `49.205.178.204:11434`; the optional remote model catalog points at the live
+  `alchoholpad-litellm.hf.space` gateway, not the retired Render gateway.
+- Windows test runs must not assume `/bin/zsh`; the exec tests use `pwsh` on
+  Windows while production Linux keeps its configured shell.
+- The Messenger cookie upload endpoint accepts the agent-browser cookie
+  snapshot as a plain `{name:value}` JSON map and reloads the connection with a
+  detached context. WhatsApp still requires a phone-side QR/linking action when
+  the persisted Neon session has no device JID.
+
 ## Admin model catalog (2026-08-14)
 
 - Users cannot select models. `llm.model` = the active model (by catalog name

@@ -131,6 +131,9 @@ func (l *Loader) skillSourceDirs() []sourceDir {
 }
 
 func claudeHomeDir() string {
+	if homeDir := strings.TrimSpace(os.Getenv("HOME")); homeDir != "" {
+		return filepath.Join(homeDir, ".claude")
+	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return ""

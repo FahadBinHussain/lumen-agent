@@ -125,10 +125,14 @@ func buildDreamPrompt(cfg config.Config, now time.Time) string {
 
 	memoryPaths := []string{}
 	if memoryRoot != "" {
+		memoryRoot = filepath.ToSlash(memoryRoot)
+		memoryPath := func(name string) string {
+			return filepath.ToSlash(filepath.Join(memoryRoot, name))
+		}
 		memoryPaths = append(memoryPaths,
-			"Primary long-term memory file: "+filepath.Join(memoryRoot, "MEMORY.md")+".",
+			"Primary long-term memory file: "+memoryPath("MEMORY.md")+".",
 			"Memory shard directory to organize: "+memoryRoot+".",
-			"Current and recent shard paths usually include: "+filepath.Join(memoryRoot, agentMemoryShardFileName(now))+" and "+filepath.Join(memoryRoot, agentMemoryShardFileName(now.Add(-12*time.Hour)))+".",
+			"Current and recent shard paths usually include: "+memoryPath(agentMemoryShardFileName(now))+" and "+memoryPath(agentMemoryShardFileName(now.Add(-12*time.Hour)))+".",
 			"During this run, inspect the actual markdown memory files under "+memoryRoot+" and organize the shard set as needed.",
 		)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ func TestHandleExecCommandReturnsAutonomyMetadata(t *testing.T) {
 		cfg: config.Config{
 			App: config.AppConfig{WorkspaceRoot: root},
 			Tools: config.ToolsConfig{
-				ExecShell:             "/bin/zsh",
+				ExecShell:             testExecShell(),
 				ExecTimeout:           "2s",
 				MaxFileBytes:          1 << 20,
 				MaxSearchResults:      20,
@@ -27,7 +28,11 @@ func TestHandleExecCommandReturnsAutonomyMetadata(t *testing.T) {
 		},
 	}
 
-	result, err := registry.handleExecCommand(context.Background(), json.RawMessage(`{"command":"printf 'alpha\nbeta\n'","timeout_seconds":1}`))
+	command := `printf 'alpha\nbeta\n'`
+	if runtime.GOOS == "windows" {
+		command = `Write-Output 'alpha'; Write-Output 'beta'`
+	}
+	result, err := registry.handleExecCommand(context.Background(), json.RawMessage(`{"command":"`+strings.ReplaceAll(command, `\`, `\\`)+`","timeout_seconds":1}`))
 	if err != nil {
 		t.Fatalf("handleExecCommand returned error: %v", err)
 	}
@@ -37,7 +42,11 @@ func TestHandleExecCommandReturnsAutonomyMetadata(t *testing.T) {
 		t.Fatalf("unmarshal result: %v", err)
 	}
 
-	if parsed["command_head"] != "printf" {
+	expectedHead := "printf"
+	if runtime.GOOS == "windows" {
+		expectedHead = "Write-Output"
+	}
+	if parsed["command_head"] != expectedHead {
 		t.Fatalf("unexpected command_head %#v", parsed["command_head"])
 	}
 	if parsed["output_line_count"] != float64(2) {
@@ -61,7 +70,7 @@ func TestHandleExecCommandRejectsProtectedConfigReference(t *testing.T) {
 	cfg := config.Config{
 		App: config.AppConfig{WorkspaceRoot: root},
 		Tools: config.ToolsConfig{
-			ExecShell:             "/bin/zsh",
+			ExecShell:             testExecShell(),
 			ExecTimeout:           "2s",
 			MaxFileBytes:          1 << 20,
 			MaxSearchResults:      20,
@@ -79,4 +88,11 @@ func TestHandleExecCommandRejectsProtectedConfigReference(t *testing.T) {
 	if !strings.Contains(err.Error(), "locked") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func testExecShell() string {
+	if runtime.GOOS == "windows" {
+		return "pwsh"
+	}
+	return "/bin/zsh"
 }

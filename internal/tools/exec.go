@@ -94,7 +94,7 @@ func (r *Registry) handleExecCommand(ctx context.Context, payload json.RawMessag
 	timedCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(timedCtx, r.cfg.Tools.ExecShell, "-lc", input.Command)
+	cmd := exec.CommandContext(timedCtx, r.cfg.Tools.ExecShell, shellCommandArgs(r.cfg.Tools.ExecShell, input.Command)...)
 	cmd.Dir = workingDir
 
 	buffer := newLimitedBuffer(r.cfg.Tools.MaxCommandOutputBytes)
@@ -130,6 +130,17 @@ func (r *Registry) handleExecCommand(ctx context.Context, payload json.RawMessag
 		"last_output_line":  lastNonEmptyLine(buffer.String()),
 		"output":            buffer.String(),
 	})
+}
+
+func shellCommandArgs(shell, command string) []string {
+	switch strings.ToLower(filepath.Base(strings.TrimSpace(shell))) {
+	case "pwsh", "pwsh.exe", "powershell", "powershell.exe":
+		return []string{"-NoProfile", "-Command", command}
+	case "cmd", "cmd.exe":
+		return []string{"/d", "/s", "/c", command}
+	default:
+		return []string{"-lc", command}
+	}
 }
 
 func (r *Registry) allowedCommand(command string) bool {
