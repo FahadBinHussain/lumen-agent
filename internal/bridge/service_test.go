@@ -131,6 +131,29 @@ func TestBridgeNotificationsAuth(t *testing.T) {
 	}
 }
 
+func TestWhatsAppPairErrorsAreJSON(t *testing.T) {
+	cfg := writeTestConfig(t, "")
+	s, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("new bridge: %v", err)
+	}
+	defer s.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1/api/whatsapp/pair", bytes.NewBufferString(`{}`))
+	rec := newRecorder()
+	s.handleWhatsAppPair(rec, req)
+	if rec.status != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.status)
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.body.Bytes(), &resp); err != nil {
+		t.Fatalf("pair error was not JSON: %v; body=%q", err, rec.body.String())
+	}
+	if resp["status"] != "error" || resp["message"] == "" {
+		t.Fatalf("unexpected pair error response: %#v", resp)
+	}
+}
+
 func TestBridgeHistoryRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	cfg := writeTestConfig(t, "")
