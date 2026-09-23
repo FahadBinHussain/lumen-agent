@@ -23,7 +23,10 @@ import (
 	"element-orion/internal/cookies"
 )
 
-const maxMsgLen = 1900
+// Messenger's edit endpoint has shown a lower effective limit than normal
+// sends. Keep a conservative ceiling so edited notifications are not silently
+// truncated by Meta before the continuation messages arrive.
+const maxMsgLen = 900
 
 type Incoming struct {
 	MessageID   string

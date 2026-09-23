@@ -862,6 +862,8 @@ bool). Both are polled, not event-driven.
   silently truncated.
 - Edited notifications use the same behavior: edit the first chunk in place
   and send continuation chunks as new messages.
+- Keep the Messenger chunk ceiling at 900 runes; the edit endpoint has an
+  observed effective limit near 1000 despite the larger normal-send limit.
 
 ## WhatsApp long messages (2026-09-23)
 
