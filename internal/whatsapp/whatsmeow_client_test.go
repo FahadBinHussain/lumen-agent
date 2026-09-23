@@ -1,6 +1,35 @@
 package whatsapp
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
+
+func TestSplitTextUnicodeSafeAndLabeled(t *testing.T) {
+	parts := splitText(strings.Repeat("বাংলা release line with a link https://example.com\n", 120), 4000)
+	if len(parts) < 2 {
+		t.Fatalf("expected multiple parts, got %d", len(parts))
+	}
+	for i, part := range parts {
+		if utf8.RuneCountInString(part) > 4000 {
+			t.Fatalf("part %d exceeds limit: %d runes", i+1, utf8.RuneCountInString(part))
+		}
+		if !strings.HasPrefix(part, "[part ") {
+			t.Fatalf("part %d is missing continuation label: %q", i+1, part[:min(len(part), 20)])
+		}
+		if !utf8.ValidString(part) {
+			t.Fatalf("part %d is invalid UTF-8", i+1)
+		}
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 func TestCleanMentionsFromNames(t *testing.T) {
 	cases := []struct {

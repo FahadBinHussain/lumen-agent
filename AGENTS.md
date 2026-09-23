@@ -861,6 +861,12 @@ bool). Both are polled, not event-driven.
   so Bengali and other multibyte text cannot be cut mid-character or appear
   silently truncated.
 
+## WhatsApp long messages (2026-09-23)
+
+- WhatsApp notifications use Unicode-safe labeled splitting with a
+  conservative 4000-rune chunk size. The WhatsApp API accepts larger
+  messages, but this ceiling avoids silent truncation in older clients.
+
 ## Upstream tracking
 
 Upstream is `eli32-vlc/lumen-agent`; this fork is `FahadBinHussain/lumen-agent`.

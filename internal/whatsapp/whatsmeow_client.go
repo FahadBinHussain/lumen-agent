@@ -13,12 +13,12 @@ import (
 	"github.com/mdp/qrterminal/v3"
 	"github.com/rs/zerolog"
 	"go.mau.fi/whatsmeow"
+	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
-	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	_ "modernc.org/sqlite"
 )
 
@@ -29,9 +29,9 @@ type WhatsmeowClient struct {
 	handler     MessageHandler
 	connected   bool
 
-	mu          sync.Mutex
-	qrCode      string
-	qrRef       string
+	mu           sync.Mutex
+	qrCode       string
+	qrRef        string
 	reconnecting bool
 
 	sentMu  sync.Mutex
@@ -438,19 +438,21 @@ func (w *WhatsmeowClient) SendText(ctx context.Context, to string, text string) 
 
 	jid = w.resolvePN(ctx, jid)
 
-	msg := &waE2E.Message{
-		Conversation: &text,
+	chunks := splitText(text, whatsappMaxTextRunes)
+	var lastID string
+	for _, chunk := range chunks {
+		msg := &waE2E.Message{Conversation: &chunk}
+		src, err := w.client.SendMessage(ctx, jid, msg)
+		if err != nil {
+			return lastID, fmt.Errorf("send message chunk: %w", err)
+		}
+		lastID = string(src.ID)
+		w.recordSent(src.ID)
+		w.noteChat(jid, time.Now())
 	}
 
-	src, err := w.client.SendMessage(ctx, jid, msg)
-	if err != nil {
-		return "", fmt.Errorf("send message: %w", err)
-	}
-	w.recordSent(src.ID)
-	w.noteChat(jid, time.Now())
-
-	w.logger.Info().Str("to", to).Str("text", truncate(text, 50)).Msg("WhatsApp message sent via whatsmeow")
-	return string(src.ID), nil
+	w.logger.Info().Str("to", to).Int("chunks", len(chunks)).Str("text", truncate(text, 50)).Msg("WhatsApp message sent via whatsmeow")
+	return lastID, nil
 }
 
 // EditText replaces an earlier message we sent to the same chat in place
