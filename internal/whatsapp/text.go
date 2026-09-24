@@ -8,10 +8,10 @@ import (
 // Keep WhatsApp notifications below the effective limit of the bridge/client
 // path while preserving complete Unicode characters. Although WhatsApp's
 // documented limit is larger, this conservative ceiling avoids truncation.
-const whatsappMaxTextRunes = 900
+const whatsappMaxTextBytes = 900
 
 func splitText(text string, max int) []string {
-	if max < 1 || utf8.RuneCountInString(text) <= max {
+	if max < 1 || len(text) <= max {
 		return []string{text}
 	}
 
@@ -20,19 +20,32 @@ func splitText(text string, max int) []string {
 	if bodyMax < 1 {
 		bodyMax = max
 	}
-	parts := splitTextRunes(text, bodyMax)
+	parts := splitTextBytes(text, bodyMax)
 	for i := range parts {
 		parts[i] = "[part " + itoa(i+1) + "/" + itoa(len(parts)) + "]\n" + parts[i]
 	}
 	return parts
 }
 
-func splitTextRunes(text string, max int) []string {
+func splitTextBytes(text string, max int) []string {
 	runes := []rune(text)
 	parts := make([]string, 0, (len(runes)/max)+1)
-	for len(runes) > max {
-		cut := max
-		for i := max - 1; i > max/2; i-- {
+	for len(runes) > 0 {
+		cut := 0
+		bytes := 0
+		for cut < len(runes) {
+			n := utf8.RuneLen(runes[cut])
+			if bytes+n > max {
+				break
+			}
+			bytes += n
+			cut++
+		}
+		if cut == len(runes) {
+			parts = append(parts, strings.TrimSpace(string(runes)))
+			break
+		}
+		for i := cut - 1; i > cut/2; i-- {
 			if runes[i] == '\n' || runes[i] == ' ' {
 				cut = i + 1
 				break
@@ -40,9 +53,6 @@ func splitTextRunes(text string, max int) []string {
 		}
 		parts = append(parts, strings.TrimSpace(string(runes[:cut])))
 		runes = []rune(strings.TrimSpace(string(runes[cut:])))
-	}
-	if len(runes) > 0 {
-		parts = append(parts, strings.TrimSpace(string(runes)))
 	}
 	return parts
 }

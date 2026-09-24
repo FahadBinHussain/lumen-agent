@@ -7,13 +7,13 @@ import (
 )
 
 func TestSplitTextUnicodeSafeAndLabeled(t *testing.T) {
-	parts := splitText(strings.Repeat("বাংলা release line with a link https://example.com\n", 120), whatsappMaxTextRunes)
+	parts := splitText(strings.Repeat("বাংলা release line with a link https://example.com\n", 120), whatsappMaxTextBytes)
 	if len(parts) < 2 {
 		t.Fatalf("expected multiple parts, got %d", len(parts))
 	}
 	for i, part := range parts {
-		if utf8.RuneCountInString(part) > whatsappMaxTextRunes {
-			t.Fatalf("part %d exceeds limit: %d runes", i+1, utf8.RuneCountInString(part))
+		if len(part) > whatsappMaxTextBytes {
+			t.Fatalf("part %d exceeds limit: %d bytes", i+1, len(part))
 		}
 		if !strings.HasPrefix(part, "[part ") {
 			t.Fatalf("part %d is missing continuation label: %q", i+1, part[:min(len(part), 20)])

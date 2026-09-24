@@ -862,13 +862,14 @@ bool). Both are polled, not event-driven.
   silently truncated.
 - Edited notifications use the same behavior: edit the first chunk in place
   and send continuation chunks as new messages.
-- Keep the Messenger chunk ceiling at 900 runes; the edit endpoint has an
-  observed effective limit near 1000 despite the larger normal-send limit.
+- Keep the Messenger chunk ceiling at 900 UTF-8 bytes; Bengali characters are
+  multibyte and the edit endpoint has an observed effective limit near 1000
+  bytes despite the larger normal-send limit.
 
 ## WhatsApp long messages (2026-09-23)
 
 - WhatsApp notifications use Unicode-safe labeled splitting with a
-  conservative 900-rune chunk size. The WhatsApp API accepts larger
+  conservative 900-byte chunk size. The WhatsApp API accepts larger
   messages, but the bridge/client path has an observed effective limit near
   1000 characters, so the lower ceiling avoids silent truncation.
 - WhatsApp edited notifications also edit the first chunk and send any

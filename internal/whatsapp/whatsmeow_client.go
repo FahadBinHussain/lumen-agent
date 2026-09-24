@@ -438,7 +438,7 @@ func (w *WhatsmeowClient) SendText(ctx context.Context, to string, text string) 
 
 	jid = w.resolvePN(ctx, jid)
 
-	chunks := splitText(text, whatsappMaxTextRunes)
+	chunks := splitText(text, whatsappMaxTextBytes)
 	var lastID string
 	for _, chunk := range chunks {
 		msg := &waE2E.Message{Conversation: &chunk}
@@ -466,7 +466,7 @@ func (w *WhatsmeowClient) EditText(ctx context.Context, to string, messageID str
 
 	jid = w.resolvePN(ctx, jid)
 
-	chunks := splitText(text, whatsappMaxTextRunes)
+	chunks := splitText(text, whatsappMaxTextBytes)
 	msg := w.client.BuildEdit(jid, types.MessageID(messageID), &waE2E.Message{
 		Conversation: &chunks[0],
 	})

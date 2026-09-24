@@ -26,7 +26,7 @@ import (
 // Messenger's edit endpoint has shown a lower effective limit than normal
 // sends. Keep a conservative ceiling so edited notifications are not silently
 // truncated by Meta before the continuation messages arrive.
-const maxMsgLen = 900
+const maxMsgLen = 900 // bytes, not Unicode characters
 
 type Incoming struct {
 	MessageID   string
@@ -560,7 +560,7 @@ func (c *Client) SendImage(ctx context.Context, threadID int64, imageData []byte
 // splitMessage breaks a long string into Unicode-safe, labeled chunks,
 // preferring to split at newlines or spaces near the max length boundary.
 func splitMessage(text string, max int) []string {
-	if utf8.RuneCountInString(text) <= max {
+	if len(text) <= max {
 		return []string{text}
 	}
 	// Reserve room for the continuation label. This keeps every final
@@ -569,19 +569,32 @@ func splitMessage(text string, max int) []string {
 	if bodyMax < 1 {
 		bodyMax = max
 	}
-	chunks := splitMessageRunes(text, bodyMax)
+	chunks := splitMessageBytes(text, bodyMax)
 	for i := range chunks {
 		chunks[i] = fmt.Sprintf("[part %d/%d]\n%s", i+1, len(chunks), chunks[i])
 	}
 	return chunks
 }
 
-func splitMessageRunes(text string, max int) []string {
+func splitMessageBytes(text string, max int) []string {
 	runes := []rune(text)
 	var chunks []string
-	for len(runes) > max {
-		cut := max
-		for i := max - 1; i > max/2; i-- {
+	for len(runes) > 0 {
+		cut := 0
+		bytes := 0
+		for cut < len(runes) {
+			n := utf8.RuneLen(runes[cut])
+			if bytes+n > max {
+				break
+			}
+			bytes += n
+			cut++
+		}
+		if cut == len(runes) {
+			chunks = append(chunks, strings.TrimSpace(string(runes)))
+			break
+		}
+		for i := cut - 1; i > cut/2; i-- {
 			if runes[i] == '\n' || runes[i] == ' ' {
 				cut = i + 1
 				break
@@ -589,9 +602,6 @@ func splitMessageRunes(text string, max int) []string {
 		}
 		chunks = append(chunks, strings.TrimSpace(string(runes[:cut])))
 		runes = []rune(strings.TrimSpace(string(runes[cut:])))
-	}
-	if len(runes) > 0 {
-		chunks = append(chunks, strings.TrimSpace(string(runes)))
 	}
 	return chunks
 }

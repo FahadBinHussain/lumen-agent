@@ -13,8 +13,8 @@ func TestSplitMessageUnicodeSafeAndLabeled(t *testing.T) {
 		t.Fatal("expected a long message to split")
 	}
 	for i, part := range parts {
-		if utf8.RuneCountInString(part) > maxMsgLen {
-			t.Fatalf("part %d exceeds Messenger limit: %d", i+1, utf8.RuneCountInString(part))
+		if len(part) > maxMsgLen {
+			t.Fatalf("part %d exceeds Messenger limit: %d bytes", i+1, len(part))
 		}
 		if !strings.HasPrefix(part, "[part ") {
 			t.Fatalf("part %d is missing continuation label: %q", i+1, part[:min(len(part), 30)])
