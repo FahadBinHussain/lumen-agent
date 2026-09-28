@@ -132,6 +132,29 @@
   (status stayed empty); fix: `POST /v1/services/<id>/deploys` via curl.
 - Local Windows runs still use config/lumen.yaml (gitignored).
 
+### Lumen keepalive redundancy (2026-09-28)
+
+Lumen is on Render's **Free** plan, so it must have independent external HTTP
+keepalives. The canonical target is `https://lumen-aqyl.onrender.com/api/health`
+(not the local `127.0.0.1:8791` bridge used by the Messenger cookie-health tool).
+
+- **cron-job.org** account `fahadbinhussain001@gmail.com`: job `8265305`,
+  title `render keep-alive - lumen`, GET every 10 minutes, currently enabled.
+- **UptimeRobot** account `fahadbinhussain001@gmail.com`: monitor `804112595`,
+  title `render keep-alive - lumen`, HTTP every 5 minutes, currently STARTED.
+- Keep both providers configured for Lumen. The two-provider setup is deliberate:
+  cron-job.org automatically disables jobs after more than 25 consecutive
+  failures; it has no setting to disable that safety behavior. Keep
+  `onFailure`, `onSuccess`, `onDisable`, and response saving enabled for the
+  cron-job.org Lumen job so failures are observable.
+- Do not mistake `lumen-cookie-health-watch` (a local, Messenger cookie-refresh
+  watchdog) for the Render keepalive. Its `.env.local` must point at the
+  deployed URL for cookie refresh, but it is not the WhatsApp or full-Lumen
+  watchdog.
+- When checking deployment health, verify both external monitors and Render's
+  `/api/health`; a 200 only proves the web process is alive, not that the three
+  platform sessions are connected.
+
 
 ## Merged platforms (2026-08-12): murmur Messenger + WhatsApp ports
 
