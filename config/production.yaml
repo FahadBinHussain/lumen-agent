@@ -14,14 +14,16 @@ app:
 
 llm:
   api_type: openai
-  base_url: http://49.205.178.204:11434/v1
-  api_key: "llama-cpp"
-  api_key_env: ""
-  model: deepseek-v4-flash
+  base_url: https://api.atria-asi.ai/v1
+  api_key: ""
+  api_key_env: ATRIA_API_KEY
+  model: atria-dawn
   models:
-    - name: deepseek-v4-flash
-      model: unsloth/DeepSeek-V4-Flash-0731-GGUF:UD-Q4_K_XL
+    - name: atria-dawn
+      model: Atria-Dawn-Preview
       enabled: true
+      base_url: https://api.atria-asi.ai/v1
+      api_key_env: ATRIA_API_KEY
     - name: mistral-large
       model: admin_mistral_ai_fahadbinhussain001/mistral-large-latest
       enabled: false

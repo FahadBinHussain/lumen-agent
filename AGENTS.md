@@ -2,8 +2,11 @@
 
 ## Deployment fixes (2026-09-23)
 
-- Production uses the reachable local OpenAI-compatible model server at
-  `49.205.178.204:11434`; the optional remote model catalog points at the live
+- Production's active model is `atria-dawn` (`Atria-Dawn-Preview` via Atria ASI
+  `https://api.atria-asi.ai/v1`, key in Render env `ATRIA_API_KEY`, never
+  commit it) since 2026-10-02, when the local deepseek-v4-flash box
+  `49.205.178.204:11434` was found dead (ping + every port failed) and removed
+  from the catalog; the optional remote model catalog entries point at the live
   `alchoholpad-litellm.hf.space` gateway, not the retired Render gateway.
 - Windows test runs must not assume `/bin/zsh`; the exec tests use `pwsh` on
   Windows while production Linux keeps its configured shell.
@@ -25,18 +28,22 @@
   otherwise the top-level `llm.base_url`/`llm.api_key`/`llm.api_key_env` apply.
   Entries are independent providers — this is how the gateway (mistral,
   sambanova deepseek, groq, cohere, gemini via alchoholpad-litellm.hf.space)
-  coexists with the local deepseek-v4-flash server in one catalog.
+  coexists with the active Atria ASI provider (api.atria-asi.ai) in one
+  catalog.
 - Validation: with a catalog present, `llm.model` must match an ENABLED entry
   (by name or model id); every entry needs name+model; at least one enabled;
   duplicate names rejected. Without a catalog, `llm.model` works as before
   (single bare id).
-- production.yaml catalog mirrors the gateway's /v1/models list
-  (alchoholpad-litellm.hf.space): mistral-large (active default), mistral-small,
+- production.yaml catalog: active model is `atria-dawn` = `Atria-Dawn-Preview`
+  via `https://api.atria-asi.ai/v1` with `api_key_env: ATRIA_API_KEY` (Render
+  env, never commit). The disabled gateway entries mirror the gateway's
+  /v1/models list (alchoholpad-litellm.hf.space): mistral-large, mistral-small,
   deepseek-v3.2, deepseek-v3.1, llama-3.3-samba, llama-3.3-groq, command-r,
-  gemini-3.5-flash — each with `base_url: https://alchoholpad-litellm.hf.space/v1`
-  + `api_key_env: LITELLM_API_KEY`. The local deepseek-v4-flash entry uses the
-  top-level local base_url/`llama-cpp` key. When adding a model to the gateway,
-  add a catalog entry here.
+  gemini-3.5-flash - each with `base_url: https://alchoholpad-litellm.hf.space/v1`
+  + `api_key_env: LITELLM_API_KEY`. When adding a model to a provider,
+  add a catalog entry here. The local deepseek-v4-flash entry
+  (`49.205.178.204:11434` llama-cpp box) was REMOVED 2026-10-02 - that box is
+  dead; never reintroduce that address.
 
 ## Persistence: Neon snapshot backup (2026-08-14)
 
