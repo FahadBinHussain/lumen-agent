@@ -444,7 +444,8 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     PER-PROJECT on free, but the org consumption endpoint aggregates the whole
     org (verified 2026-08-29: a fresh project on a quota-dead account starts at
     0 transfer — see automata/neon.com/AGENTS.md). So an org-level egress warning
-    same account resets the bucket.
+    same account resets the bucket. storage reads `peak_data_storage`/
+    `data_storage` with a v3_metrics fallback (2026-10-02 note below).
   - **pending notification queue (added 2026-08-29)**: when the mouth is dead
     (messenger/whatsapp/discord not connected or Render free-tier asleep),
     `POST /api/automation/notifications` no longer drops the message with a
@@ -904,6 +905,23 @@ bool). Both are polled, not event-driven.
   1000 characters, so the lower ceiling avoids silent truncation.
 - WhatsApp edited notifications also edit the first chunk and send any
   continuation chunks separately.
+
+## Neon storage metering v3.2 (2026-10-02)
+
+- Neon migrated free plans to v3.2 metering: the org consumption endpoint's
+  legacy `peak_data_storage`/`data_storage` fields now return 0 and the live
+  components moved to `v3_metrics` (`root_branch_logical_size`,
+  `root_branch_history_size`, `child_branch_change_size`). The storage warning
+  read the legacy fields only → after the migration it silently read 0%
+  forever. The 07:12 UTC warning batch (5 projects fired in the same 6
+  seconds, lumen at 419.86 MB / 82%) was the last legacy reading — lumen's
+  actual storage right after was ~38 MB (7.5%); DB tables measure 12 MB. The
+  419 MB was branch history (retention now shows 6h) reclassified by the
+  migration, not table growth.
+- Fix: `resolveNeonStorage` (internal/notify/neonusage.go, tests in
+  neonusage_test.go) prefers the legacy fields (v3.1 orgs unchanged) and
+  falls back to summing exactly those three v3 metrics; unknown metric names
+  are ignored so a future metric can't inflate the figure.
 
 ## Upstream tracking
 

@@ -250,6 +250,35 @@ type neonOrg struct {
 	Name string `json:"name"`
 }
 
+type neonV3Metric struct {
+	Name  string  `json:"name"`
+	Usage float64 `json:"usage"`
+}
+
+// resolveNeonStorage picks the storage figure for the quota warning.
+// v3.1 metering reports peak_data_storage (fallback data_storage). Neon's
+// free-plan migration to v3.2 (observed 2026-10-02) zeroes those legacy
+// fields and reports the live components in v3_metrics instead — without the
+// fallback the storage warning silently reads 0% forever (the exact kind of
+// silent degradation rule 8 forbids). Only the three known storage metrics
+// are summed so an unrelated future metric can't inflate the figure.
+func resolveNeonStorage(peak, data float64, metrics []neonV3Metric) float64 {
+	if peak != 0 {
+		return peak
+	}
+	if data != 0 {
+		return data
+	}
+	var sum float64
+	for _, m := range metrics {
+		switch m.Name {
+		case "root_branch_logical_size", "root_branch_history_size", "child_branch_change_size":
+			sum += m.Usage
+		}
+	}
+	return sum
+}
+
 // neonEmail resolves the account email for an API key via the /users/me
 // endpoint. Best-effort: empty string on any failure (the warnings still
 // work, they just omit the email).
@@ -347,11 +376,12 @@ func (s *Service) neonConsumption(ctx context.Context, apiKey, orgID string) (ne
 	}
 	var payload struct {
 		Periods []struct {
-			ComputeTime     float64 `json:"compute_time"`
-			PeriodEnd       string  `json:"period_end"`
-			DataTransfer    float64 `json:"data_transfer"`
-			PeakDataStorage float64 `json:"peak_data_storage"`
-			DataStorage     float64 `json:"data_storage"`
+			ComputeTime     float64        `json:"compute_time"`
+			PeriodEnd       string         `json:"period_end"`
+			DataTransfer    float64        `json:"data_transfer"`
+			PeakDataStorage float64        `json:"peak_data_storage"`
+			DataStorage     float64        `json:"data_storage"`
+			V3Metrics       []neonV3Metric `json:"v3_metrics"`
 		} `json:"periods"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
@@ -364,10 +394,7 @@ func (s *Service) neonConsumption(ctx context.Context, apiKey, orgID string) (ne
 		u.Left = round2((360000 - last.ComputeTime) / 3600)
 		u.QuotaReset = last.PeriodEnd
 		// storage: 0.5 GB free per project = 536870912 bytes
-		storage := last.PeakDataStorage
-		if storage == 0 {
-			storage = last.DataStorage
-		}
+		storage := resolveNeonStorage(last.PeakDataStorage, last.DataStorage, last.V3Metrics)
 		u.StorageUsed = round2(storage / 1048576) // MB
 		u.StoragePct = round2((storage / 536870912) * 100)
 		// egress: 5 GB free per month = 5368709120 bytes
