@@ -1102,7 +1102,7 @@ func (s *Service) userPromptFromMessage(message *discordgo.MessageCreate) inboun
 		Kind:         promptKindUser,
 		Content:      content,
 		RawContent:   rawContent,
-		UserParts:    buildUserMessageParts(content, attachments, s.cfg.LLM.VisionEnabled),
+		UserParts:    buildUserMessageParts(content, attachments, s.cfg.Vision.Enabled),
 		AuthorID:     strings.TrimSpace(message.Author.ID),
 		GuildID:      message.GuildID,
 		ChannelID:    message.ChannelID,
@@ -1294,7 +1294,7 @@ func (s *Service) prepareInboundAttachments(message *discordgo.Message) []downlo
 				}
 			} else {
 				item.LocalPath = localPath
-				if item.IsImage && s.cfg.LLM.VisionEnabled {
+				if item.IsImage && s.cfg.Vision.Enabled {
 					modelURL, err := modelImageURLFromPath(localPath)
 					if err != nil {
 						if s.audit != nil {

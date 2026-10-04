@@ -964,7 +964,51 @@ bool). Both are polled, not event-driven.
   falls back to summing exactly those three v3 metrics; unknown metric names
   are ignored so a future metric can't inflate the figure.
 
-## Upstream tracking
+## Vision: image descriptions via the opencode CLI (2026-10-04)
+
+- Goal: make `llm` (text-only `Atria-Dawn-Preview`) "see" Discord image
+  attachments. New top-level config section `vision:` (replaces
+  `llm.vision_enabled`, removed) + `internal/vision` package +
+  `agent.Runner.describeImages` (internal/agent/agent.go) which swaps every
+  `image_url` content part for a `[attached image N of M] <description>`
+  text part before the chat model is called. Image parts with
+  `vision.enabled: false` now FAIL LOUDLY instead of being dropped.
+- **opencode zen free models have no plain HTTP door**: direct
+  `POST https://opencode.ai/zen/v1/chat/completions` (model
+  `mimo-v2.6-flash-free`, docs: https://opencode.ai/docs/zen) returns
+  `403 FreeTierError: OpenCode's free tier can only be used from within
+  OpenCode` — with or without auth (no Zen key exists on this machine:
+  `opencode auth list` = 0 credentials) and UA spoofing does not help.
+- **Two hard rules found by bisection (3/3 deterministic each way):**
+  1. `opencode run -m opencode/mimo-v2.6-flash-free ...` (DEFAULT agent)
+     always works, even with a completely fresh config/data dir.
+  2. `opencode run --agent <custom-agent>` ALWAYS gets the 403, even with
+     the same config dir that works with `-m`. So a lean custom vision
+     agent (fewer tokens) is NOT possible — every describe call pays the
+     default agent's ~20k input tokens and ~40-45s.
+  A `permission:` block in a custom config dir also correlated with 403;
+  plain `agent:`/`tools:` blocks plus `-m` were fine.
+- The default path is ALSO intermittently 403 (server-side, bursts), which
+  is why `vision.max_attempts` (default 3, 1s/3s backoff) exists; exhausting
+  them fails the turn loudly.
+- Call shape used by `internal/vision`:
+  `opencode run -m <model> --format json "<prompt>" -f <image>` — flags must
+  come before the positional prompt, otherwise the variadic `-f` swallows it
+  ("File not found: <your prompt>"). Output is newline-delimited JSON:
+  collect `{"type":"text","part":{"type":"text","text":...}}`, surface
+  `{"type":"error","error":{"data":{"message":...}}}`.
+- Dockerfile installs the pinned CLI
+  (`ARG OPENCODE_VERSION=v1.18.34`, `opencode-linux-x64.tar.gz` →
+  `/usr/local/bin/opencode`, 185MB, needs GLIBC ≤2.30 = fine on
+  bookworm-slim) and runs `opencode --version` during build so a broken
+  download fails the build, not the first image. Bump by changing the ARG.
+- Validation: `config.validate()` fails boot when `vision.enabled` is true
+  and `vision.binary` is not on PATH (deliberately loud).
+- Live check (costs one free-tier call, ~45s):
+  `OPENCODE_VISION_LIVE=1 go test -count=1 -run TestDescribeLive ./internal/vision/`
+  — draws a solid red PNG, expects the description to say "red".
+
+
 
 Upstream is `eli32-vlc/lumen-agent`; this fork is `FahadBinHussain/lumen-agent`.
 All merge work is additive (new internal packages + config fields) — no upstream

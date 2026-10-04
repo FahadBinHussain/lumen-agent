@@ -280,7 +280,6 @@ llm:
   base_url: https://api.openai.com/v1
   api_key_env: OPENAI_API_KEY
   model: gpt-5.4
-  vision_enabled: false
   reasoning_effort: medium
   max_thinking_token: off
   temperature: 0.4
@@ -295,7 +294,7 @@ llm:
 What matters here:
 
 - `model` decides the base brain
-- `vision_enabled` controls whether image attachments are also forwarded as multimodal input
+- the top-level `vision` section describes image attachments through the opencode CLI, so a text-only model still sees them
 - `reasoning_effort: off` omits reasoning fields, while `none` is sent literally for providers that understand it
 - `max_thinking_token` sets a provider thinking budget, or `off` to omit it
 - `max_tokens` is reply budget
@@ -507,13 +506,20 @@ llm:
   base_url: https://api.openai.com/v1
   api_key_env: OPENAI_API_KEY
   model: gpt-5.4
-  vision_enabled: false
   reasoning_effort: medium
   max_thinking_token: off
   temperature: 0.4
   max_tokens: 3200
   context_window_tokens: 28000
   inject_message_timestamps: true
+
+vision:
+  enabled: false
+  binary: opencode
+  model: opencode/mimo-v2.6-flash-free
+  prompt: "Describe this image in full detail for a chat companion: any visible text verbatim first, then the objects, people, layout, colors and context. Reply with the description only, no preamble."
+  timeout: 120s
+  max_attempts: 3
 
 discord:
   token_mode: bot

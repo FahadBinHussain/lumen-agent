@@ -292,8 +292,8 @@ func TestUserPromptFromMessageWithVisionEnabledDownloadsAndBuildsImageParts(t *t
 	attachmentsDir := filepath.Join(t.TempDir(), "incoming")
 	service := &Service{
 		cfg: config.Config{
-			LLM: config.LLMConfig{
-				VisionEnabled: true,
+			Vision: config.VisionConfig{
+				Enabled: true,
 			},
 			Discord: config.DiscordConfig{
 				DownloadIncomingAttachments: false,
@@ -348,9 +348,6 @@ func TestUserPromptFromMessageWithoutVisionDownloadsImageButDoesNotBuildParts(t 
 	attachmentsDir := filepath.Join(t.TempDir(), "incoming")
 	service := &Service{
 		cfg: config.Config{
-			LLM: config.LLMConfig{
-				VisionEnabled: false,
-			},
 			Discord: config.DiscordConfig{
 				DownloadIncomingAttachments: false,
 				IncomingAttachmentsDir:      attachmentsDir,

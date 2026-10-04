@@ -114,9 +114,6 @@ Key fields:
 - `model`
   Main model used for normal chat unless overridden
 
-- `vision_enabled`
-  If `true`, image attachments are sent to the model as multimodal input as well as downloaded for tool use
-
 - `reasoning_effort`
   Passed through when the provider supports it. Use `off` to omit the provider reasoning field entirely, or `none` to send `none` literally.
 
@@ -166,10 +163,43 @@ Important behavior notes:
 - `reasoning_effort` only matters on providers that support it
 - `reasoning_effort: off` omits provider reasoning fields entirely, while `reasoning_effort: none` is sent literally as `none`
 - `max_thinking_token: off` omits the field; any non-negative integer is passed through
-- `vision_enabled` is the switch that turns image attachments into multimodal model input
+- image attachments become model input through the top-level `vision` section
 - custom `headers` can be useful for provider gateways or compatibility layers
 - `kimi-no-think` only affects `llm.api_type: openai` and injects `chat_template_kwargs.thinking: false` into the request body
 - `glm-no-think` only affects `llm.api_type: openai` and injects `thinking.type: disabled` plus `clear_thinking: true` into the request body
+
+### `vision`
+
+Turns image attachments into text the chat model can reason about.
+
+When `enabled` is `true`, every image that arrives (Discord attachments
+today) is described by shelling out to the opencode CLI
+(`vision.binary`, default `opencode`) with `vision.model`
+(default `opencode/mimo-v2.6-flash-free`, free tier), and the resulting
+description is injected into the user message before `llm` is called. The
+chat model itself never needs to be multimodal.
+
+Key fields:
+
+- `enabled`
+  Master switch. When `false`, image attachments stay tool-only (downloaded
+  and rewritten into the prompt, never described)
+- `binary`
+  Executable that must be on `PATH`; validation fails boot loudly when
+  `enabled` is `true` and the binary is missing
+- `model`
+  `provider/model` id passed to `opencode run -m`. Free zen models only
+  answer requests made from within opencode itself, and only through
+  opencode's default agent (a custom `--agent` is rejected with
+  `FreeTierError` 403), so this runs the CLI instead of calling an HTTP API
+- `prompt`
+  The description request sent with the image
+- `timeout`
+  Per-attempt budget (default `120s`)
+- `max_attempts`
+  Attempts per image (default `3`); opencode's free tier intermittently
+  answers `FreeTierError` and those retries absorb it. Exhausting them
+  fails the turn loudly instead of dropping the image
 
 ### `tools`
 
@@ -318,9 +348,9 @@ If `download_incoming_attachments` is enabled, uploaded files are written to dis
 Image behavior is slightly stronger than the general attachment rule:
 
 - image attachments are always downloaded into `incoming_attachments_dir`
-- if `llm.vision_enabled` is `true`, those same images are also sent to the model as image input
-- non-JPEG images are converted to JPEG before they are sent to the model for compatibility
-- if `llm.vision_enabled` is `false`, images stay tool-only and are not forwarded as multimodal input
+- if `vision.enabled` is `true`, those same images are described by the `vision` section and the description is sent to the model as text
+- non-JPEG images are converted to JPEG before they are described
+- if `vision.enabled` is `false`, images stay tool-only and are not forwarded to the model
 
 #### Attachment flow
 

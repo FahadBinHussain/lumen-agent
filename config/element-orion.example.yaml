@@ -18,7 +18,6 @@ llm:
   api_key: ""
   api_key_env: OPENAI_API_KEY
   model: gpt-5.4
-  vision_enabled: false
   reasoning_effort: medium
   max_thinking_token: off
   temperature: 0.4
@@ -164,6 +163,18 @@ image_gen:
   output_dir: ./.element-orion/generated
   search_limit: 6
   content_filter: pg-13
+
+# Image describer: shells out to the opencode CLI (opencode free-tier models
+# only answer requests made from within opencode, and only through its
+# default agent), turns the image into text, and hands that text to llm.
+# vision.binary must be on PATH when enabled.
+vision:
+  enabled: false
+  binary: opencode
+  model: opencode/mimo-v2.6-flash-free
+  prompt: "Describe this image in full detail for a chat companion: any visible text verbatim first, then the objects, people, layout, colors and context. Reply with the description only, no preamble."
+  timeout: 120s
+  max_attempts: 3
 
 heartbeat:
   every: 30m

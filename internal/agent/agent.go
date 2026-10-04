@@ -13,6 +13,7 @@ import (
 	"element-orion/internal/secrets"
 	"element-orion/internal/skills"
 	"element-orion/internal/tools"
+	"element-orion/internal/vision"
 )
 
 type chatClient interface {
@@ -49,6 +50,7 @@ type Runner struct {
 	registry *tools.Registry
 	skills   *skills.Loader
 	secrets  *secrets.Store
+	vision   *vision.Describer
 }
 
 type ContextUsageEstimate struct {
@@ -68,12 +70,17 @@ func NewRunner(cfg config.Config, client chatClient, registry *tools.Registry) *
 	if err != nil {
 		store = nil
 	}
+	var describer *vision.Describer
+	if cfg.Vision.Enabled {
+		describer = vision.New(cfg.Vision)
+	}
 	return &Runner{
 		cfg:      cfg,
 		client:   client,
 		registry: registry,
 		skills:   skills.NewLoader(cfg),
 		secrets:  store,
+		vision:   describer,
 	}
 }
 
@@ -112,12 +119,64 @@ func (r *Runner) SnapshotSkills() []skills.Summary {
 	return r.skills.Snapshot()
 }
 
+// describeImages replaces image content parts with text descriptions from
+// the configured vision describer, so a text-only chat model still "sees"
+// what the user sent. Image parts arriving while vision is off are a config
+// bug and fail loudly instead of being dropped.
+func (r *Runner) describeImages(ctx context.Context, parts []llm.ContentPart, emit func(Event)) ([]llm.ContentPart, error) {
+	imageCount := 0
+	for _, part := range parts {
+		if part.Type == llm.ContentPartImageURL {
+			imageCount++
+		}
+	}
+	if imageCount == 0 {
+		return parts, nil
+	}
+	if r.vision == nil {
+		return nil, fmt.Errorf("received %d image(s) but vision.enabled is false - set vision.enabled (and vision.binary/model) to describe images", imageCount)
+	}
+
+	result := make([]llm.ContentPart, 0, len(parts))
+	index := 0
+	for _, part := range parts {
+		if part.Type != llm.ContentPartImageURL {
+			result = append(result, part)
+			continue
+		}
+		index++
+		emit(Event{
+			Kind:    EventStatus,
+			Message: fmt.Sprintf("Describing image %d/%d via %s", index, imageCount, r.cfg.Vision.Model),
+			Time:    time.Now(),
+		})
+		description, err := r.vision.Describe(ctx, part.ImageURL)
+		if err != nil {
+			return nil, fmt.Errorf("image %d of %d: %w", index, imageCount, err)
+		}
+		result = append(result, llm.ContentPart{
+			Type: llm.ContentPartText,
+			Text: fmt.Sprintf("[attached image %d of %d] %s", index, imageCount, description),
+		})
+		emit(Event{
+			Kind:    EventStatus,
+			Message: fmt.Sprintf("Image %d/%d described (%d chars)", index, imageCount, len(description)),
+			Time:    time.Now(),
+		})
+	}
+	return result, nil
+}
+
 func (r *Runner) Run(ctx context.Context, history []llm.Message, userPrompt string, conversation ConversationContext, emit func(Event)) ([]llm.Message, error) {
 	initialUserTime := time.Now().UTC()
+	userParts, err := r.describeImages(ctx, conversation.UserParts, emit)
+	if err != nil {
+		return nil, err
+	}
 	workingHistory := append(cloneMessages(history), llm.Message{
 		Role:      "user",
 		Content:   userPrompt,
-		Parts:     conversation.UserParts,
+		Parts:     userParts,
 		Timestamp: r.messageTimestamp(initialUserTime),
 	})
 

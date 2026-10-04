@@ -64,7 +64,6 @@ llm:
       enabled: false
       base_url: https://alchoholpad-litellm.hf.space/v1
       api_key_env: LITELLM_API_KEY
-  vision_enabled: false
   reasoning_effort: off
   max_thinking_token: off
   temperature: 0.4
@@ -210,6 +209,14 @@ image_gen:
   enabled: false
   model: cloudflare/@cf/black-forest-labs/flux-1-schnell
   output_dir: ./.element-orion/generated
+
+vision:
+  enabled: true
+  binary: opencode
+  model: opencode/mimo-v2.6-flash-free
+  prompt: "Describe this image in full detail for a chat companion: any visible text verbatim first, then the objects, people, layout, colors and context. Reply with the description only, no preamble."
+  timeout: 120s
+  max_attempts: 3
 
 heartbeat:
   every: 30m

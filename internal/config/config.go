@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -26,6 +27,7 @@ type Config struct {
 	Persistence     PersistenceConfig     `yaml:"persistence"`
 	GIFs            GIFConfig             `yaml:"gifs"`
 	ImageGen        ImageGenConfig        `yaml:"image_gen"`
+	Vision          VisionConfig          `yaml:"vision"`
 	Heartbeat       HeartbeatConfig       `yaml:"heartbeat"`
 	DreamMode       DreamModeConfig       `yaml:"dream_mode"`
 	EventWebhook    EventWebhookConfig    `yaml:"event_webhook"`
@@ -69,7 +71,6 @@ type LLMConfig struct {
 	APIKeyEnv               string            `yaml:"api_key_env"`
 	Model                   string            `yaml:"model"`
 	Models                  []LLMModelEntry   `yaml:"models"`
-	VisionEnabled           bool              `yaml:"vision_enabled"`
 	ReasoningEffort         string            `yaml:"reasoning_effort"`
 	MaxThinkingToken        string            `yaml:"max_thinking_token"`
 	Temperature             float64           `yaml:"temperature"`
@@ -410,6 +411,22 @@ type ImageGenConfig struct {
 	Model     string `yaml:"model"`
 	OutputDir string `yaml:"output_dir"`
 }
+
+// VisionConfig drives the image describer. Descriptions are produced by
+// shelling out to the opencode CLI (its free-tier models only accept requests
+// made from within opencode itself, and only through the DEFAULT agent --
+// a custom `--agent` gets rejected with FreeTierError 403), then the text
+// description is handed to the normal chat model.
+type VisionConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	Binary      string `yaml:"binary"`
+	Model       string `yaml:"model"`
+	Prompt      string `yaml:"prompt"`
+	Timeout     string `yaml:"timeout"`
+	MaxAttempts int    `yaml:"max_attempts"`
+}
+
+const defaultVisionPrompt = "Describe this image in full detail for a chat companion: any visible text verbatim first, then the objects, people, layout, colors and context. Reply with the description only, no preamble."
 
 type HeartbeatConfig struct {
 	Every             string                     `yaml:"every"`
@@ -939,6 +956,25 @@ func (c *Config) resolvePaths() error {
 	if c.ImageGen.OutputDir == "" {
 		c.ImageGen.OutputDir = ".element-orion/generated"
 	}
+	c.Vision.Binary = strings.TrimSpace(c.Vision.Binary)
+	if c.Vision.Binary == "" {
+		c.Vision.Binary = "opencode"
+	}
+	c.Vision.Model = strings.TrimSpace(c.Vision.Model)
+	if c.Vision.Model == "" {
+		c.Vision.Model = "opencode/mimo-v2.6-flash-free"
+	}
+	c.Vision.Prompt = strings.TrimSpace(c.Vision.Prompt)
+	if c.Vision.Prompt == "" {
+		c.Vision.Prompt = defaultVisionPrompt
+	}
+	c.Vision.Timeout = strings.TrimSpace(c.Vision.Timeout)
+	if c.Vision.Timeout == "" {
+		c.Vision.Timeout = "120s"
+	}
+	if c.Vision.MaxAttempts <= 0 {
+		c.Vision.MaxAttempts = 3
+	}
 	switch c.GIFs.ContentFilter {
 	case "off":
 		c.GIFs.ContentFilter = "r"
@@ -1125,6 +1161,26 @@ func (c Config) validate() error {
 		}
 		if _, ok := c.LLM.ActiveModelEntry(); !ok {
 			return fmt.Errorf("llm.model %q must match an enabled llm.models entry (by name or model id)", c.LLM.Model)
+		}
+	}
+	if c.Vision.Enabled {
+		if strings.TrimSpace(c.Vision.Binary) == "" {
+			return fmt.Errorf("vision.binary must be set when vision.enabled is true")
+		}
+		if strings.TrimSpace(c.Vision.Model) == "" {
+			return fmt.Errorf("vision.model must be set when vision.enabled is true")
+		}
+		if strings.TrimSpace(c.Vision.Prompt) == "" {
+			return fmt.Errorf("vision.prompt must be set when vision.enabled is true")
+		}
+		if timeout, err := time.ParseDuration(c.Vision.Timeout); err != nil || timeout <= 0 {
+			return fmt.Errorf("vision.timeout must be a positive duration, got %q", c.Vision.Timeout)
+		}
+		if c.Vision.MaxAttempts <= 0 {
+			return fmt.Errorf("vision.max_attempts must be a positive integer when vision.enabled is true")
+		}
+		if _, err := exec.LookPath(c.Vision.Binary); err != nil {
+			return fmt.Errorf("vision.enabled is true but vision.binary %q was not found on PATH: %w", c.Vision.Binary, err)
 		}
 	}
 	if c.LLM.ReasoningEffort != "" && !slices.Contains([]string{"off", "none", "minimal", "low", "medium", "high", "xhigh"}, c.LLM.ReasoningEffort) {
@@ -1564,6 +1620,14 @@ func (c Config) LLMTimeout() time.Duration {
 	timeout, err := time.ParseDuration(c.LLM.Timeout)
 	if err != nil || timeout <= 0 {
 		return 180 * time.Second
+	}
+	return timeout
+}
+
+func (c Config) VisionTimeout() time.Duration {
+	timeout, err := time.ParseDuration(c.Vision.Timeout)
+	if err != nil || timeout <= 0 {
+		return 120 * time.Second
 	}
 	return timeout
 }
