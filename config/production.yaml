@@ -211,7 +211,11 @@ image_gen:
   output_dir: ./.element-orion/generated
 
 vision:
-  enabled: true
+  # OFF on Render free: a single opencode describe peaks at ~716 MB RSS and
+  # the instance has 512 MB total (0.1 CPU) - the first image would OOM-kill
+  # lumen itself. Only turn this on when vision runs off-box (separate
+  # endpoint below) or the instance plan changes.
+  enabled: false
   binary: opencode
   model: opencode/mimo-v2.6-flash-free
   prompt: "Describe this image in full detail for a chat companion: any visible text verbatim first, then the objects, people, layout, colors and context. Reply with the description only, no preamble."

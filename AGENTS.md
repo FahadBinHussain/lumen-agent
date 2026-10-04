@@ -1007,6 +1007,16 @@ bool). Both are polled, not event-driven.
 - Live check (costs one free-tier call, ~45s):
   `OPENCODE_VISION_LIVE=1 go test -count=1 -run TestDescribeLive ./internal/vision/`
   — draws a solid red PNG, expects the description to say "red".
+- **Render free canNOT host the opencode describe (measured 2026-10-04)**:
+  one image describe peaks at **~716 MB RSS** (sampled process tree during a
+  live run), while the free instance is **0.1 CPU / 512 MB for the whole
+  service** (Go runtime + tailscaled included) — the first image would
+  OOM-kill lumen itself, not just the describe. A second free Render service
+  is also impossible: free gives 750 instance-hours/month and lumen alone
+  already consumes ~744h, so any sibling service suspends the whole
+  workspace. `vision.enabled` therefore ships **false in production.yaml**;
+  the feature is proven and wired end-to-end locally, and only flips on once
+  describe runs off-box (separate free endpoint) or the plan changes.
 
 
 

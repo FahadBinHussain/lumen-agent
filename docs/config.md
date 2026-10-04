@@ -179,6 +179,11 @@ today) is described by shelling out to the opencode CLI
 description is injected into the user message before `llm` is called. The
 chat model itself never needs to be multimodal.
 
+> **Not on Render free.** One describe peaks at ~716 MB RSS while a free
+> instance is 0.1 CPU / 512 MB for the entire service, so `enabled: true`
+> there OOM-kills lumen itself on the first image. Production ships it
+> disabled until the describer runs off-box.
+
 Key fields:
 
 - `enabled`
