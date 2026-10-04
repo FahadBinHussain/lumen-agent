@@ -16,25 +16,25 @@ import (
 // Config holds the notify pollers' settings. All default to disabled; enable
 // per-poller during cutover when lumen takes over a feed.
 type Config struct {
-	WebhookURL    string          `yaml:"webhook_url"`
-	WebhookToken  string          `yaml:"webhook_token"`
-	WebhookTokenEnv string        `yaml:"webhook_token_env"`
-	DatabaseURL   string          `yaml:"database_url"`
-	DatabaseURLEnv string         `yaml:"database_url_env"`
-	SteamUpdates  SteamUpdatesCfg  `yaml:"steam_updates"`
-	FreeGames     FreeGamesCfg     `yaml:"free_games"`
-	NeonUsage     NeonUsageCfg     `yaml:"neon_usage"`
-	Supabase      SupabaseCfg      `yaml:"supabase"`
-	CrackWatch    CrackWatchCfg    `yaml:"crack_watch"`
+	WebhookURL      string          `yaml:"webhook_url"`
+	WebhookToken    string          `yaml:"webhook_token"`
+	WebhookTokenEnv string          `yaml:"webhook_token_env"`
+	DatabaseURL     string          `yaml:"database_url"`
+	DatabaseURLEnv  string          `yaml:"database_url_env"`
+	SteamUpdates    SteamUpdatesCfg `yaml:"steam_updates"`
+	FreeGames       FreeGamesCfg    `yaml:"free_games"`
+	NeonUsage       NeonUsageCfg    `yaml:"neon_usage"`
+	Supabase        SupabaseCfg     `yaml:"supabase"`
+	CrackWatch      CrackWatchCfg   `yaml:"crack_watch"`
 }
 
 type SteamUpdatesCfg struct {
-	Enabled     bool   `yaml:"enabled"`
-	Interval    string `yaml:"interval"`
-	AppIDs      string `yaml:"app_ids"`
-	ThreadIDs   string `yaml:"thread_ids"`
-	MaxAgeDays  int    `yaml:"max_age_days"`
-	WebhookURL  string `yaml:"webhook_url"`
+	Enabled    bool   `yaml:"enabled"`
+	Interval   string `yaml:"interval"`
+	AppIDs     string `yaml:"app_ids"`
+	ThreadIDs  string `yaml:"thread_ids"`
+	MaxAgeDays int    `yaml:"max_age_days"`
+	WebhookURL string `yaml:"webhook_url"`
 }
 
 type FreeGamesCfg struct {
@@ -80,16 +80,16 @@ type NeonExportCfg struct {
 // SupabaseCfg watches supabase project quotas. tokens live in lumen's own Neon
 // app_state table (see supabase.go), NOT env vars.
 type SupabaseCfg struct {
-	Enabled       bool     `yaml:"enabled"`
-	Interval      string   `yaml:"interval"`
-	ThreadID      string   `yaml:"thread_id"`
-	AppStateTable string   `yaml:"app_state_table"`
-	ProjectRefs   []string `yaml:"project_refs"`
-	EgressThreshold float64 `yaml:"egress_threshold"`
-	DBThreshold     float64 `yaml:"db_threshold"`
-	AppStateDatabaseURL    string `yaml:"app_state_database_url"`
-	AppStateDatabaseURLEnv string `yaml:"app_state_database_url_env"`
-	StatePath              string `yaml:"state_path"`
+	Enabled                bool     `yaml:"enabled"`
+	Interval               string   `yaml:"interval"`
+	ThreadID               string   `yaml:"thread_id"`
+	AppStateTable          string   `yaml:"app_state_table"`
+	ProjectRefs            []string `yaml:"project_refs"`
+	EgressThreshold        float64  `yaml:"egress_threshold"`
+	DBThreshold            float64  `yaml:"db_threshold"`
+	AppStateDatabaseURL    string   `yaml:"app_state_database_url"`
+	AppStateDatabaseURLEnv string   `yaml:"app_state_database_url_env"`
+	StatePath              string   `yaml:"state_path"`
 }
 
 // Service runs the ported Vercel pollers (steam-updates, free-games) and the
@@ -97,19 +97,20 @@ type SupabaseCfg struct {
 //   - murmur/vercel/app/api/steam-updates/route.ts
 //   - murmur/vercel/app/api/free-games/route.ts
 //   - murmur/scripts/murmur.ps1 Check-NeonUsage + mainframe/neon-hours-table.ps1
-// All gated off by default (copy-only until cutover).
+//
+// All gated off by default in code; production.yaml enables them on Render.
 type Service struct {
-	cfg       Config
-	client    *http.Client
-	mu        sync.Mutex
-	db        *dedupeDB
-	appState  *appStateDB
-	neonState map[string]string // orgId -> period reset yyyy-MM-dd (state file persisted)
-	statePath string
-	supabaseState map[string]string // dedupeKey -> date (supabase watcher)
+	cfg               Config
+	client            *http.Client
+	mu                sync.Mutex
+	db                *dedupeDB
+	appState          *appStateDB
+	neonState         map[string]string // orgId -> period reset yyyy-MM-dd (state file persisted)
+	statePath         string
+	supabaseState     map[string]string // dedupeKey -> date (supabase watcher)
 	supabaseStatePath string
-	lastExport time.Time // when the last neon export batch was pushed (export_interval throttle)
-	toucher   func()    // persist callback; fires after state file writes so Neon snapshot syncs promptly
+	lastExport        time.Time // when the last neon export batch was pushed (export_interval throttle)
+	toucher           func()    // persist callback; fires after state file writes so Neon snapshot syncs promptly
 }
 
 func New(ctx context.Context, cfg Config) (*Service, error) {
@@ -180,11 +181,11 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		cfg.DatabaseURL = strings.TrimSpace(os.Getenv(cfg.DatabaseURLEnv))
 	}
 	s := &Service{
-		cfg:       cfg,
-		client:    &http.Client{Timeout: 60 * time.Second},
-		neonState: map[string]string{},
-		statePath: cfg.NeonUsage.StatePath,
-		supabaseState: map[string]string{},
+		cfg:               cfg,
+		client:            &http.Client{Timeout: 60 * time.Second},
+		neonState:         map[string]string{},
+		statePath:         cfg.NeonUsage.StatePath,
+		supabaseState:     map[string]string{},
 		supabaseStatePath: cfg.Supabase.StatePath,
 	}
 	if (cfg.SteamUpdates.Enabled || cfg.FreeGames.Enabled || cfg.CrackWatch.Enabled) && cfg.DatabaseURL != "" {

@@ -257,8 +257,9 @@ type HealthWatchConfig struct {
 	DiscordChannelID string `yaml:"discord_channel_id"`
 }
 
-// NotifyConfig mirrors the murmur Vercel pollers' env surface. Copy-only for
-// now: all pollers default to disabled; flip enabled flags at cutover.
+// NotifyConfig mirrors the murmur Vercel pollers' env surface. All pollers
+// default to disabled in code; production.yaml flips the enabled flags on
+// Render (all four pollers live there since 2026-09).
 type NotifyConfig struct {
 	Enabled         bool             `yaml:"enabled"`
 	WebhookURL      string           `yaml:"webhook_url"`

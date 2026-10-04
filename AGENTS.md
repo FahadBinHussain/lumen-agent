@@ -201,9 +201,9 @@ Bridge HTTP endpoints:
 - `POST /api/cookies/upload` — murmur-cookie-refresher.mjs contract (only mounted
   when messenger.enabled). Writes cookies file + reloads the messagix client.
   Auth: same secret handling as notifications (X-HF-Authorization or
-  Authorization: Bearer; no-op when bridge.secret unset). NOT enabled yet on
-  this box — messenger.enabled stays false until user picks the messenger
-  account (they plan a different FB account than the murmur one).
+  Authorization: Bearer; no-op when bridge.secret unset). Live on Render —
+  `messenger.enabled: true` in production.yaml and the watchdog's
+  murmur-cookie-refresher.mjs hits this endpoint on every refresh.
 - `GET /api/health` — always 200; body since 2026-10-04 is JSON
   `{"status":"ok","platforms":{"messenger":bool,"whatsapp":bool,"discord":bool}}`
   (live `isPlatformConnected` flags) so external watchers can tell web-process
@@ -409,8 +409,10 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     URL; `notify.webhook_url` overrides). steam/free-games need
     `notify.database_url` (or DATABASE_URL env) for the dedupe tables;
     neon_usage needs `notify.neon_usage.api_key_env` (env var names holding
-    Neon API keys) + `thread_id` + optional `state_path`. NOT wired yet on
-    this box — copy only until cutover (mirrors bnp_enabled approach).
+    Neon API keys) + `thread_id` + optional `state_path`. Wired on Render:
+    steam_updates, free_games, neon_usage (and crack_watch below) are all
+    `enabled: true` in production.yaml (code defaults stay false; local
+    lumen.yaml keeps them off).
   - **crack_watch poller (added 2026-08-24)**: `internal/notify/crackwatch.go`
     polls `https://www.reddit.com/r/CrackWatch/.rss` (Atom) for scene releases.
     Keeps only `Game-GROUP` posts (regex `-([A-Z0-9]{2,10})$` — drops "Daily
@@ -517,8 +519,8 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
   is backed up to Neon so re-pairs survive machine moves.
 - Old EO instance on this machine (PID 10772, since 2026-08-11) ran the
   pre-merge binary; replaced 2026-08-12 by the merged build (serve with
-  config/lumen.yaml, bridge on 127.0.0.1:8791). messenger + whatsapp still
-  disabled until user provisions the channels.
+  config/lumen.yaml, bridge on 127.0.0.1:8791). messenger + whatsapp were
+  unprovisioned back then; both are live on Render now.
 
 ## Test threads (2026-08-14)
 
@@ -593,8 +595,9 @@ notes): ~90% covered. Remaining gaps and how they're handled:
 - **WhatsApp session carry-over**: NOT portable — murmur's wacli store is a
   different format than lumen's whatsmeow.db. Expect a fresh QR pairing at
   cutover (lumen logs `events.QR`); new sessions persist to lumen Neon.
-- **Messenger account**: user plans a different FB account than murmur's —
-  `messenger.enabled` stays false. **bridge.secret SET (2026-08-14)**:
+- **Messenger account**: live on Render — `messenger.enabled: true` since
+  2026-08, dedicated FB account with cookies refreshed from the agent-browser
+  vault (murmur's account is not used). **bridge.secret SET (2026-08-14)**:
   `ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET` on Render = the HF profile token
   from the local mainframe hf profile (the one the refresher sends as Bearer,
   verified by sha256). The Vercel poller project (murmur, prj_EWeinTGTbfW5iC2bciQ65ZuA4WyZ)
