@@ -301,6 +301,21 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
   00:13, 00:31 local, each delivery ~3s after a socket drop). Fix: `relay()`
   dedups on `MessageID` (map with 24h retention, pruned on growth >500). Keep
   both guards — the time guard still protects against fresh-boot history delivery.
+- **Messenger permanent-error auto-reconnect (added 2026-10-04)**: messagix
+  `Event_PermanentError` used to be terminal — the client logged it and gave
+  up forever, so the 2026-10-03 drop (edge RST → reconnect refused, `unknown
+  connection code 24`) left messenger dead 17h while health-watch falsely
+  reported "auto-retrying, will come back on its own". Now the event arms
+  `armReconnect` (single-flight): full `ReloadCookies`-equivalent reload +
+  relog 60s after the error, then every 5m until the socket is actually up;
+  the 60s keepalive tick arms the same cycle if the socket dies with no
+  permanent-error event, and it now starts once (`keepaliveOnce`) instead of
+  leaking a ticker per Ready/reload. `ReloadCookies` is serialized with
+  `reloadMu` so an external cookie upload and an auto-reconnect can't rebuild
+  the client concurrently. Retry loop never gives up (transient refusals heal
+  in ~1m; cookie rotation needs the external watchdog's fresh cookies, worst
+  case one watchdog interval). Delays/`reloadFn` are injectable fields for
+  the tests in `reconnect_test.go`.
 - `exec_command` tool is POSIX-only (upstream `exec.Command(shell, "-lc", ...)`) —
   keep it disabled/`pwsh`-only on Windows; the merge plan documents this constraint.
 - Superseded murmur bits (better-native replacements, added 2026-08-12):

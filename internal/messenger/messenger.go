@@ -65,6 +65,19 @@ type Client struct {
 
 	connMu    sync.Mutex
 	connected bool
+
+	// auto-reconnect (2026-10-04): a messagix permanent error used to be
+	// terminal - the client logged it and gave up forever, so a single
+	// refused reconnect (connection code 24) left messenger dead until an
+	// external refresh (the 2026-10-03 17h outage). armReconnect keeps a
+	// full reload+relog cycle going until the socket is back.
+	reconnMu        sync.Mutex
+	reconnScheduled bool
+	reconnectDelay  time.Duration // first attempt after a permanent error
+	retryDelay      time.Duration // backoff between failed attempts
+	reloadFn        func(context.Context) error
+	reloadMu        sync.Mutex // serializes ReloadCookies (external upload vs auto-reconnect)
+	keepaliveOnce   sync.Once  // one keepalive ticker across reloads
 }
 
 // IsConnected reports whether the MQTT socket is currently up (Ready or
@@ -97,15 +110,19 @@ func New(cookiesPath string, handler Handler) (*Client, error) {
 		MayConnectToDGW: false,
 	})
 
-	return &Client{
-		client:      client,
-		platform:    types.Messenger,
-		handler:     handler,
-		cookiesPath: cookiesPath,
-		startTime:   time.Now(),
-		seen:        make(map[string]time.Time),
-		threads:     make(map[int64]ThreadInfo),
-	}, nil
+	cl := &Client{
+		client:         client,
+		platform:       types.Messenger,
+		handler:        handler,
+		cookiesPath:    cookiesPath,
+		startTime:      time.Now(),
+		seen:           make(map[string]time.Time),
+		threads:        make(map[int64]ThreadInfo),
+		reconnectDelay: 60 * time.Second,
+		retryDelay:     5 * time.Minute,
+	}
+	cl.reloadFn = cl.ReloadCookies
+	return cl, nil
 }
 
 func (c *Client) SetHandler(handler Handler) {
@@ -137,6 +154,8 @@ func (c *Client) Start(ctx context.Context) error {
 }
 
 func (c *Client) ReloadCookies(ctx context.Context) error {
+	c.reloadMu.Lock()
+	defer c.reloadMu.Unlock()
 	c.setConnected(false)
 	cookieMap, err := cookies.LoadFromFile(c.cookiesPath)
 	if err != nil {
@@ -168,30 +187,88 @@ func (c *Client) Disconnect() {
 	c.client.Disconnect()
 }
 
+// armReconnect schedules one auto-reconnect attempt unless one is already
+// pending or the socket is back up. The timer path (attemptReconnect) is the
+// only thing that clears the pending flag, so events + keepalive ticks can
+// call this freely without stacking attempts.
+func (c *Client) armReconnect(reason string, delay time.Duration) {
+	c.reconnMu.Lock()
+	if c.reconnScheduled || c.IsConnected() {
+		c.reconnMu.Unlock()
+		return
+	}
+	c.reconnScheduled = true
+	c.reconnMu.Unlock()
+	log.Printf("messenger: auto-reconnect armed in %s (%s)", delay, reason)
+	time.AfterFunc(delay, c.attemptReconnect)
+}
+
+// attemptReconnect does a full reload+relog cycle (same path as the cookie
+// upload endpoint, but with the cookies already on disk) and re-arms itself
+// until the socket is actually up. Never gives up: a refused reconnect used
+// to be terminal (17h dead, 2026-10-03), now it retries every retryDelay
+// while the external cookie watchdog can still push fresh cookies on top.
+func (c *Client) attemptReconnect() {
+	c.reconnMu.Lock()
+	c.reconnScheduled = false
+	c.reconnMu.Unlock()
+	if c.IsConnected() {
+		return
+	}
+	log.Printf("messenger: auto-reconnect: reloading cookies and relogging")
+	// Background ctx on purpose: must not be canceled when the caller that
+	// triggered the event returns (same trap as the old cookie-upload bug).
+	if err := c.reloadFn(context.Background()); err != nil {
+		log.Printf("messenger: auto-reconnect reload failed: %v (retrying in %s)", err, c.retryDelay)
+		c.armReconnect("reload failed", c.retryDelay)
+		return
+	}
+	// the MQTT connect after a reload is async - give it a moment before
+	// deciding the reload didn't actually help.
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) && !c.IsConnected() {
+		time.Sleep(time.Second)
+	}
+	if c.IsConnected() {
+		log.Printf("messenger: auto-reconnect succeeded")
+		return
+	}
+	log.Printf("messenger: auto-reconnect relogged but socket still down (retrying in %s)", c.retryDelay)
+	c.armReconnect("socket still down after relog", c.retryDelay)
+}
+
 func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any) {
 	return func(evtCtx context.Context, evt any) {
 		switch e := evt.(type) {
 		case *messagix.Event_Ready:
 			c.setConnected(true)
 			log.Printf("messenger: MQTT connected (code %s)", e.ConnectionCode)
-			go func() {
-				ticker := time.NewTicker(60 * time.Second)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-ticker.C:
-						_, err := c.client.ExecuteTasks(ctx, &socket.ReportAppStateTask{
-							AppState:  table.FOREGROUND,
-							RequestID: fmt.Sprintf("keepalive-%d", time.Now().UnixMilli()),
-						})
-						if err != nil {
-							log.Printf("messenger: foreground keepalive failed: %v", err)
+			c.keepaliveOnce.Do(func() {
+				go func() {
+					ticker := time.NewTicker(60 * time.Second)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case <-ticker.C:
+							_, err := c.client.ExecuteTasks(ctx, &socket.ReportAppStateTask{
+								AppState:  table.FOREGROUND,
+								RequestID: fmt.Sprintf("keepalive-%d", time.Now().UnixMilli()),
+							})
+							if err != nil {
+								log.Printf("messenger: foreground keepalive failed: %v", err)
+							}
+							// safety net: if the socket is still down when the
+							// keepalive fires, arm the full reconnect (covers
+							// deaths that produced no permanent-error event).
+							if !c.IsConnected() {
+								c.armReconnect("keepalive sees disconnected", c.retryDelay)
+							}
 						}
 					}
-				}
-			}()
+				}()
+			})
 
 		case *messagix.Event_PublishResponse:
 			for _, th := range e.Table.LSDeleteThenInsertThread {
@@ -260,6 +337,7 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 		case *messagix.Event_PermanentError:
 			c.setConnected(false)
 			log.Printf("messenger: permanent error: %v", e.Err)
+			c.armReconnect("permanent error", c.reconnectDelay)
 
 		case *messagix.Event_Reconnected:
 			c.setConnected(true)
