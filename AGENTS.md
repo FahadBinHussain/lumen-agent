@@ -204,7 +204,11 @@ Bridge HTTP endpoints:
   Authorization: Bearer; no-op when bridge.secret unset). NOT enabled yet on
   this box — messenger.enabled stays false until user picks the messenger
   account (they plan a different FB account than the murmur one).
-- `GET /api/health`.
+- `GET /api/health` — always 200; body since 2026-10-04 is JSON
+  `{"status":"ok","platforms":{"messenger":bool,"whatsapp":bool,"discord":bool}}`
+  (live `isPlatformConnected` flags) so external watchers can tell web-process
+  alive from mouth connected. The local cookie-health watchdog gates its
+  auto-refresh on `platforms.messenger`.
 
 Trigger semantics (ported from murmur): Messenger replies when the message starts
 with `/ai`, is a reply to one of our messages, or mentions our uid (mentions are
@@ -752,9 +756,11 @@ bool). Both are polled, not event-driven.
   the device out (needs manual phone re-pair, watcher could only alert).
   The cookie-health watch exists only because messenger cookie refresh is an
   ACTIVE laptop-side heal (agent-browser vault push); WhatsApp is
-  passive-wait, so no watch. bridge `/api/health` returns bare "ok" — it does
-  NOT expose WhatsApp state, and `WhatsmeowClient.IsConnected()` is not
-  surfaced anywhere. `TS_AUTHKEY` = the fleet reusable authkey (mainframe
+  passive-wait, so no watch. bridge `/api/health` returned bare "ok" until
+  2026-10-04 — it now returns JSON with the three platform `IsConnected`
+  flags (messenger/whatsapp/discord), which is also what the cookie-health
+  watchdog reads to detect a dead messenger (the 2026-10-04 17h outage read
+  healthy on every prior check). `TS_AUTHKEY` = the fleet reusable authkey (mainframe
   tailscale profile; since 2026-08-17 the validated vault key, also saved to
   the mainframe tailscale profile's authkey.txt; the old fleet key expired
   and every fresh boot failed with `invalid key: API key k2bx6Qw2KB11CNTRL

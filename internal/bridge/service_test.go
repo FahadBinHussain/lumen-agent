@@ -250,11 +250,27 @@ bridge:
 	for time.Now().Before(deadline) {
 		resp, err := http.Get("http://127.0.0.1:18791/api/health")
 		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return
+			var body struct {
+				Status    string          `json:"status"`
+				Platforms map[string]bool `json:"platforms"`
 			}
-			t.Fatalf("health returned %d", resp.StatusCode)
+			decErr := json.NewDecoder(resp.Body).Decode(&body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("health returned %d", resp.StatusCode)
+			}
+			if decErr != nil {
+				t.Fatalf("health body not JSON: %v", decErr)
+			}
+			if body.Status != "ok" {
+				t.Fatalf("health status = %q, want ok", body.Status)
+			}
+			for _, p := range []string{"messenger", "whatsapp", "discord"} {
+				if _, ok := body.Platforms[p]; !ok {
+					t.Fatalf("health platforms missing %q: %+v", p, body.Platforms)
+				}
+			}
+			return
 		}
 		lastErr = err
 		time.Sleep(50 * time.Millisecond)

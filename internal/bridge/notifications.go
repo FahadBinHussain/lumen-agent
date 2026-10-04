@@ -47,8 +47,21 @@ func (s *Service) serveHTTP(ctx context.Context) error {
 	mux.HandleFunc("/api/whatsapp/session/upload", s.handleWhatsAppSessionUpload)
 	mux.HandleFunc("/api/whatsapp/groups", s.handleWhatsAppGroups)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+		// platform states ride along so external watchers (cookie-health
+		// watchdog, uptime checks) can tell "web process alive" apart from
+		// "mouth connected" — a bare 200 used to read healthy while
+		// messenger was down for 17h (2026-10-04). always 200; monitors
+		// that keyword-match still find "ok" in the body.
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "ok",
+			"platforms": map[string]bool{
+				"messenger": s.isPlatformConnected("messenger"),
+				"whatsapp":  s.isPlatformConnected("whatsapp"),
+				"discord":   s.isPlatformConnected("discord"),
+			},
+		})
 	})
 
 	server := &http.Server{
