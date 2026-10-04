@@ -316,6 +316,23 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
   in ~1m; cookie rotation needs the external watchdog's fresh cookies, worst
   case one watchdog interval). Delays/`reloadFn` are injectable fields for
   the tests in `reconnect_test.go`.
+- **Meta rejects messages containing literal `scrape.do` (found 2026-10-04)**:
+  Facebook silently refuses a send whose text contains `scrape.do` (dailybnp's
+  fetch-route error dumps include `scrape.do returned HTTP 401`) — the task
+  executes with no transport error, but Meta answers with an error response
+  (Render logs: `insertMessageSendErrorForMessage` data `[19,"1404006"]` +
+  `Facebook server log: Write error response from server`). `SendText` gets
+  no optimistic-replace entry → returns "" → the BNP worker acks
+  `messenger send returned no message id` → infinite retry with the same
+  rejection (one outbox row burned 103 attempts across 10-03/10-04).
+  Bisected on the test thread: pipes, `->`, brackets, parens, `HTTP 401/403`,
+  bare word `scrape`, URLs, and 2151-char messages all pass; ONLY the bare
+  domain `scrape.do` triggers the reject (thread-independent). `SendText` now
+  logs `send returned no message id (otid=..., replaces=...)` on this silent
+  path instead of returning "". Fix belongs in the message PRODUCER
+  (dailybnp must not emit bare `scrape.do` in message text — rewrite as
+  `scrapedo`); do NOT sanitize silently on the send side. Diagnostic filter:
+  `text=insertMessageSendError` on the Render logs API.
 - `exec_command` tool is POSIX-only (upstream `exec.Command(shell, "-lc", ...)`) —
   keep it disabled/`pwsh`-only on Windows; the merge plan documents this constraint.
 - Superseded murmur bits (better-native replacements, added 2026-08-12):

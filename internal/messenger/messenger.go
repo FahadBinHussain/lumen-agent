@@ -527,6 +527,13 @@ func (c *Client) SendText(ctx context.Context, threadID int64, text string) stri
 					}
 				}
 			}
+			if lastMsgID == "" {
+				n := 0
+				if resp != nil {
+					n = len(resp.LSReplaceOptimsiticMessage)
+				}
+				log.Printf("messenger: send chunk returned no message id (otid=%d, replaces=%d) — Meta may have rejected the message", otid, n)
+			}
 		}
 		return lastMsgID
 	}
@@ -555,6 +562,13 @@ func (c *Client) SendText(ctx context.Context, threadID int64, text string) stri
 				break
 			}
 		}
+	}
+	if msgID == "" {
+		n := 0
+		if resp != nil {
+			n = len(resp.LSReplaceOptimsiticMessage)
+		}
+		log.Printf("messenger: send returned no message id (otid=%d, replaces=%d) — Meta may have rejected the message", otid, n)
 	}
 	return msgID
 }
