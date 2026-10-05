@@ -1017,11 +1017,21 @@ bool). Both are polled, not event-driven.
   the image), `timeout`, `max_attempts`, `proxy_url` (optional egress).
   The system prompt is intentionally NOT configurable - the gate needs it
   verbatim. `prompt_context.go` reports `Vision engine: <model>`.
-- **Datacenter egress risk (untested 2026-10-05)**: every gate probe so far
-  ran from the home IP. If Render's egress gets FreeTierError, set
-  `proxy_url: socks5://127.0.0.1:1055` in production.yaml (tailscale socks
-  = home IP, same path WhatsApp uses) and redeploy - the error message
-  shows status + body, so the diagnosis is one log line.
+- **Datacenter egress: TESTED OK (2026-10-05)** - the gate accepts Render's
+  egress. Full Discord E2E from the live service: image message in the test
+  channel (1537650032441032765) -> `describeImages` HTTP from the Render
+  container -> 200 (no FreeTierError, no proxy) -> reply landed describing
+  the solid red PNG as "a solid deep crimson rectangle... flat color
+  swatch". `proxy_url: socks5://127.0.0.1:1055` was NOT needed and stays
+  off; if a future 403 burst ever becomes permanent, that remains the flip.
+- **Gotcha - unconstrained image prompts can die silently**: the first E2E
+  attempt ("describe the attached image") streamed thinking ("there's a
+  vision tool available...") and then the run ended with NO final reply and
+  NO [chat error] - the model hallucinated a vision tool (none exists in
+  `tools.enabled`) and the run died in the tool path, placeholder deleted.
+  Re-running with "do not call any tools" replied correctly in ~60s. When
+  testing vision, keep the prompt tool-free until the hallucinated-tool
+  silent-death path is investigated separately.
 - Live check (costs one free-tier call, ~45s):
   `OPENCODE_VISION_LIVE=1 go test -count=1 -run TestDescribeLive ./internal/vision/`
   - draws a solid red PNG, expects the description to say "red". Unit tests
