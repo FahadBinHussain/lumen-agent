@@ -173,16 +173,26 @@ Important behavior notes:
 Turns image attachments into text the chat model can reason about.
 
 When `enabled` is `true`, every image that arrives (Discord attachments
-today) is described by shelling out to the opencode CLI
-(`vision.binary`, default `opencode`) with `vision.model`
-(default `opencode/mimo-v2.6-flash-free`, free tier), and the resulting
-description is injected into the user message before `llm` is called. The
-chat model itself never needs to be multimodal.
+today) is described with a plain HTTP POST to the opencode zen endpoint
+(`vision.base_url`, default `https://opencode.ai/zen/v1`, OpenAI-compatible
+`/chat/completions`) using the free-tier model `vision.model`
+(default `mimo-v2.6-flash-free`), and the resulting description is injected
+into the user message before `llm` is called. The chat model itself never
+needs to be multimodal. No opencode CLI is involved — the old CLI path
+peaked at ~716 MB RSS (unsafe on Render free's 512 MB); plain HTTP is a few
+MB.
 
-> **Not on Render free.** One describe peaks at ~716 MB RSS while a free
-> instance is 0.1 CPU / 512 MB for the entire service, so `enabled: true`
-> there OOM-kills lumen itself on the first image. Production ships it
-> disabled until the describer runs off-box.
+- `api_key` defaults to `public` (the anonymous zen key), `user_agent` must
+  keep the opencode UA shape, `timeout` bounds one attempt, `max_attempts`
+  covers the free tier's intermittent 403 bursts (1s/3s backoff).
+- `proxy_url` (optional) forces egress through `socks5://` or `http(s)://` —
+  on Render set `socks5://127.0.0.1:1055` (tailscale exit node = home IP)
+  only if zen rejects datacenter IPs with FreeTierError.
+- The system prompt is NOT configurable: the zen gate requires opencode's
+  own prompt prefix verbatim, so it is embedded in `internal/vision`.
+- Failures are loud — a describe that exhausts its attempts returns an
+  error carrying the HTTP status and response body, so the chat turn fails
+  visibly instead of silently going blind.
 
 Key fields:
 

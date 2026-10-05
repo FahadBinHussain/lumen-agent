@@ -294,7 +294,7 @@ llm:
 What matters here:
 
 - `model` decides the base brain
-- the top-level `vision` section describes image attachments through the opencode CLI, so a text-only model still sees them
+- the top-level `vision` section describes image attachments with a direct HTTP call to opencode zen's free tier (mimo-v2.6-flash-free), so a text-only model still sees them
 - `reasoning_effort: off` omits reasoning fields, while `none` is sent literally for providers that understand it
 - `max_thinking_token` sets a provider thinking budget, or `off` to omit it
 - `max_tokens` is reply budget
@@ -515,8 +515,10 @@ llm:
 
 vision:
   enabled: false
-  binary: opencode
-  model: opencode/mimo-v2.6-flash-free
+  base_url: https://opencode.ai/zen/v1
+  api_key: public
+  user_agent: "opencode/1.18.25 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
+  model: mimo-v2.6-flash-free
   prompt: "Describe this image in full detail for a chat companion: any visible text verbatim first, then the objects, people, layout, colors and context. Reply with the description only, no preamble."
   timeout: 120s
   max_attempts: 3

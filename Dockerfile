@@ -14,13 +14,6 @@ COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 RUN wget -qO- https://pkgs.tailscale.com/stable/tailscale_1.102.2_amd64.tgz | tar -xz --strip-components=1 -C /tmp && \
     cp /tmp/tailscale /tmp/tailscaled /app/ && chmod +x /app/tailscale /app/tailscaled && rm -rf /tmp/tailscale*
-# opencode CLI: the vision describer (vision.binary/model in config). Free-tier
-# zen models only answer requests made from within opencode itself.
-ARG OPENCODE_VERSION=v1.18.34
-RUN wget -qO /tmp/opencode.tar.gz https://github.com/anomalyco/opencode/releases/download/${OPENCODE_VERSION}/opencode-linux-x64.tar.gz && \
-    tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin opencode && \
-    chmod +x /usr/local/bin/opencode && rm /tmp/opencode.tar.gz && \
-    /usr/local/bin/opencode --version
 ENV PORT=7860
 ENV ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET=
 EXPOSE 7860

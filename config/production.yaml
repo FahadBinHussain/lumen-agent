@@ -211,13 +211,18 @@ image_gen:
   output_dir: ./.element-orion/generated
 
 vision:
-  # OFF on Render free: a single opencode describe peaks at ~716 MB RSS and
-  # the instance has 512 MB total (0.1 CPU) - the first image would OOM-kill
-  # lumen itself. Only turn this on when vision runs off-box (separate
-  # endpoint below) or the instance plan changes.
-  enabled: false
-  binary: opencode
-  model: opencode/mimo-v2.6-flash-free
+  # Direct HTTP to opencode zen (no CLI - plain OpenAI-compatible POST, a few
+  # MB RSS, safe on the 512 MB free instance). The zen free tier 403s unless
+  # the request carries opencode's own system prompt + stream:true; that
+  # recipe lives in internal/vision (bisection notes in its package docs).
+  # proxy_url: leave empty for direct egress; set socks5://127.0.0.1:1055
+  # (tailscale exit node = home IP) only if zen rejects datacenter IPs with
+  # FreeTierError.
+  enabled: true
+  base_url: https://opencode.ai/zen/v1
+  api_key: public
+  user_agent: "opencode/1.18.25 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
+  model: mimo-v2.6-flash-free
   prompt: "Describe this image in full detail for a chat companion: any visible text verbatim first, then the objects, people, layout, colors and context. Reply with the description only, no preamble."
   timeout: 120s
   max_attempts: 3

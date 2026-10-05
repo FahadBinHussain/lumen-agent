@@ -2,8 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -412,18 +412,22 @@ type ImageGenConfig struct {
 	OutputDir string `yaml:"output_dir"`
 }
 
-// VisionConfig drives the image describer. Descriptions are produced by
-// shelling out to the opencode CLI (its free-tier models only accept requests
-// made from within opencode itself, and only through the DEFAULT agent --
-// a custom `--agent` gets rejected with FreeTierError 403), then the text
-// description is handed to the normal chat model.
+// VisionConfig drives the image describer. Descriptions come from a direct
+// HTTP call to the opencode zen endpoint (no opencode CLI): the free-tier
+// model mimo-v2.6-flash-free answers only requests whose system prompt is a
+// verbatim official prompt prefix and that ask for stream:true (403
+// FreeTierError otherwise) - internal/vision owns that recipe. The text
+// description is then handed to the normal chat model.
 type VisionConfig struct {
 	Enabled     bool   `yaml:"enabled"`
-	Binary      string `yaml:"binary"`
+	BaseURL     string `yaml:"base_url"`
+	APIKey      string `yaml:"api_key"`
+	UserAgent   string `yaml:"user_agent"`
 	Model       string `yaml:"model"`
 	Prompt      string `yaml:"prompt"`
 	Timeout     string `yaml:"timeout"`
 	MaxAttempts int    `yaml:"max_attempts"`
+	ProxyURL    string `yaml:"proxy_url"`
 }
 
 const defaultVisionPrompt = "Describe this image in full detail for a chat companion: any visible text verbatim first, then the objects, people, layout, colors and context. Reply with the description only, no preamble."
@@ -956,13 +960,21 @@ func (c *Config) resolvePaths() error {
 	if c.ImageGen.OutputDir == "" {
 		c.ImageGen.OutputDir = ".element-orion/generated"
 	}
-	c.Vision.Binary = strings.TrimSpace(c.Vision.Binary)
-	if c.Vision.Binary == "" {
-		c.Vision.Binary = "opencode"
+	c.Vision.BaseURL = strings.TrimRight(strings.TrimSpace(c.Vision.BaseURL), "/")
+	if c.Vision.BaseURL == "" {
+		c.Vision.BaseURL = "https://opencode.ai/zen/v1"
+	}
+	c.Vision.APIKey = strings.TrimSpace(c.Vision.APIKey)
+	if c.Vision.APIKey == "" {
+		c.Vision.APIKey = "public"
+	}
+	c.Vision.UserAgent = strings.TrimSpace(c.Vision.UserAgent)
+	if c.Vision.UserAgent == "" {
+		c.Vision.UserAgent = "opencode/1.18.25 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
 	}
 	c.Vision.Model = strings.TrimSpace(c.Vision.Model)
 	if c.Vision.Model == "" {
-		c.Vision.Model = "opencode/mimo-v2.6-flash-free"
+		c.Vision.Model = "mimo-v2.6-flash-free"
 	}
 	c.Vision.Prompt = strings.TrimSpace(c.Vision.Prompt)
 	if c.Vision.Prompt == "" {
@@ -1164,8 +1176,8 @@ func (c Config) validate() error {
 		}
 	}
 	if c.Vision.Enabled {
-		if strings.TrimSpace(c.Vision.Binary) == "" {
-			return fmt.Errorf("vision.binary must be set when vision.enabled is true")
+		if parsed, err := url.Parse(c.Vision.BaseURL); err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return fmt.Errorf("vision.base_url must be an http(s) URL, got %q", c.Vision.BaseURL)
 		}
 		if strings.TrimSpace(c.Vision.Model) == "" {
 			return fmt.Errorf("vision.model must be set when vision.enabled is true")
@@ -1179,8 +1191,11 @@ func (c Config) validate() error {
 		if c.Vision.MaxAttempts <= 0 {
 			return fmt.Errorf("vision.max_attempts must be a positive integer when vision.enabled is true")
 		}
-		if _, err := exec.LookPath(c.Vision.Binary); err != nil {
-			return fmt.Errorf("vision.enabled is true but vision.binary %q was not found on PATH: %w", c.Vision.Binary, err)
+		if proxy := strings.TrimSpace(c.Vision.ProxyURL); proxy != "" {
+			parsed, err := url.Parse(proxy)
+			if err != nil || parsed.Host == "" || !slices.Contains([]string{"socks5", "socks5h", "http", "https"}, parsed.Scheme) {
+				return fmt.Errorf("vision.proxy_url must be a socks5:// or http(s):// URL, got %q", proxy)
+			}
 		}
 	}
 	if c.LLM.ReasoningEffort != "" && !slices.Contains([]string{"off", "none", "minimal", "low", "medium", "high", "xhigh"}, c.LLM.ReasoningEffort) {

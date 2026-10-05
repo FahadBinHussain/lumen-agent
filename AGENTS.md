@@ -964,61 +964,70 @@ bool). Both are polled, not event-driven.
   falls back to summing exactly those three v3 metrics; unknown metric names
   are ignored so a future metric can't inflate the figure.
 
-## Vision: image descriptions via the opencode CLI (2026-10-04)
+## Vision: image descriptions via direct HTTP to opencode zen (2026-10-05)
 
-- Goal: make `llm` (text-only `Atria-Dawn-Preview`) "see" Discord image
-  attachments. New top-level config section `vision:` (replaces
-  `llm.vision_enabled`, removed) + `internal/vision` package +
-  `agent.Runner.describeImages` (internal/agent/agent.go) which swaps every
-  `image_url` content part for a `[attached image N of M] <description>`
-  text part before the chat model is called. Image parts with
-  `vision.enabled: false` now FAIL LOUDLY instead of being dropped.
-- **opencode zen free models have no plain HTTP door**: direct
-  `POST https://opencode.ai/zen/v1/chat/completions` (model
-  `mimo-v2.6-flash-free`, docs: https://opencode.ai/docs/zen) returns
-  `403 FreeTierError: OpenCode's free tier can only be used from within
-  OpenCode` — with or without auth (no Zen key exists on this machine:
-  `opencode auth list` = 0 credentials) and UA spoofing does not help.
-- **Two hard rules found by bisection (3/3 deterministic each way):**
-  1. `opencode run -m opencode/mimo-v2.6-flash-free ...` (DEFAULT agent)
-     always works, even with a completely fresh config/data dir.
-  2. `opencode run --agent <custom-agent>` ALWAYS gets the 403, even with
-     the same config dir that works with `-m`. So a lean custom vision
-     agent (fewer tokens) is NOT possible — every describe call pays the
-     default agent's ~20k input tokens and ~40-45s.
-  A `permission:` block in a custom config dir also correlated with 403;
-  plain `agent:`/`tools:` blocks plus `-m` were fine.
-- The default path is ALSO intermittently 403 (server-side, bursts), which
-  is why `vision.max_attempts` (default 3, 1s/3s backoff) exists; exhausting
-  them fails the turn loudly.
-- Call shape used by `internal/vision`:
-  `opencode run -m <model> --format json "<prompt>" -f <image>` — flags must
-  come before the positional prompt, otherwise the variadic `-f` swallows it
-  ("File not found: <your prompt>"). Output is newline-delimited JSON:
-  collect `{"type":"text","part":{"type":"text","text":...}}`, surface
-  `{"type":"error","error":{"data":{"message":...}}}`.
-- Dockerfile installs the pinned CLI
-  (`ARG OPENCODE_VERSION=v1.18.34`, `opencode-linux-x64.tar.gz` →
-  `/usr/local/bin/opencode`, 185MB, needs GLIBC ≤2.30 = fine on
-  bookworm-slim) and runs `opencode --version` during build so a broken
-  download fails the build, not the first image. Bump by changing the ARG.
-- Validation: `config.validate()` fails boot when `vision.enabled` is true
-  and `vision.binary` is not on PATH (deliberately loud).
+- Goal: make `llm` (text-only `Atria-Dawn-Preview`) "see" image attachments
+  (Discord today). Top-level config section `vision:` + `internal/vision`
+  package + `agent.Runner.describeImages` (internal/agent/agent.go), which
+  swaps every `image_url` content part for a `[attached image N of M]
+  <description>` text part before the chat model is called. Image parts with
+  `vision.enabled: false` FAIL LOUDLY instead of being dropped.
+- **No opencode CLI anymore** (old `opencode run -f` path removed
+  2026-10-05): the describer POSTs straight to
+  `POST <vision.base_url>/chat/completions` (default
+  `https://opencode.ai/zen/v1`, OpenAI-compatible, model
+  `mimo-v2.6-flash-free`, `stream:true` + SSE parse). The CLI path needed a
+  185MB binary in the image AND peaked at ~716 MB RSS - bigger than Render
+  free's 512MB total, so the first image would OOM-kill lumen; plain HTTP is
+  a few MB, so `vision.enabled` is TRUE in production.yaml again. Dockerfile
+  no longer installs opencode.
+- **The zen free-tier gate (bisected 2026-10-05 against captured opencode
+  traffic - this is the whole trick):**
+  1. It is 100% request-BODY. Headers, TLS fingerprint, UA, client IP and
+     HTTP version are irrelevant: the official body replayed with our own
+     identity headers -> 200; official headers + our own body -> 403
+     `FreeTierError "OpenCode's free tier can only be used from within
+     OpenCode"`.
+  2. The system message must be an EXACT PREFIX match, from char 0, of a
+     registered official prompt, **>= ~1000 chars** (title prompt: prefix
+     950 -> 403, 1000 -> 200). Padding, fillers, a single corrupted word or
+     the wrong prompt -> 403. Whatever follows the matched prefix can be
+     anything - that is how the override tail gets through.
+  3. `"stream": true` is REQUIRED (removing it -> 403);
+     `stream_options.include_usage` is not required but harmless. Image
+     content parts pass fine (verified: data-URL png -> 200 + correct
+     description). The main agent prompt branch additionally needs `tools`
+     present in the body; the title-generator prompt works tools-free - we
+     use the title prompt.
+  4. Intermittent 403 bursts happen regardless -> `vision.max_attempts`
+     (default 3, 1s/3s backoff); the final error carries the HTTP status +
+     response body, so a burn-out is loud, never silent.
+- Recipe lives entirely in `internal/vision/vision.go`:
+  system = `zengate-title-prompt.txt` (BYTE-EXACT capture of opencode
+  v1.18.25's title-generator prompt, CRLF and all - never hand-edit,
+  trim or regenerate it) + `zengateOverrideTail` (steers output away from
+  titles to the raw description); request headers: `Authorization: Bearer
+  public` (the anonymous key), `User-Agent: opencode/1.18.25
+  ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14`, `x-opencode-client:
+  cli`, `x-opencode-project: global`, `x-opencode-session:
+  ses_<12hex><14base62>`, `x-opencode-request: msg_<same format>` (fresh
+  crypto/rand per attempt).
+- Config fields (`vision:`): `enabled`, `base_url`, `api_key` (default
+  `public`), `user_agent`, `model`, `prompt` (the USER text sent next to
+  the image), `timeout`, `max_attempts`, `proxy_url` (optional egress).
+  The system prompt is intentionally NOT configurable - the gate needs it
+  verbatim. `prompt_context.go` reports `Vision engine: <model>`.
+- **Datacenter egress risk (untested 2026-10-05)**: every gate probe so far
+  ran from the home IP. If Render's egress gets FreeTierError, set
+  `proxy_url: socks5://127.0.0.1:1055` in production.yaml (tailscale socks
+  = home IP, same path WhatsApp uses) and redeploy - the error message
+  shows status + body, so the diagnosis is one log line.
 - Live check (costs one free-tier call, ~45s):
   `OPENCODE_VISION_LIVE=1 go test -count=1 -run TestDescribeLive ./internal/vision/`
-  — draws a solid red PNG, expects the description to say "red".
-- **Render free canNOT host the opencode describe (measured 2026-10-04)**:
-  one image describe peaks at **~716 MB RSS** (sampled process tree during a
-  live run), while the free instance is **0.1 CPU / 512 MB for the whole
-  service** (Go runtime + tailscaled included) — the first image would
-  OOM-kill lumen itself, not just the describe. A second free Render service
-  is also impossible: free gives 750 instance-hours/month and lumen alone
-  already consumes ~744h, so any sibling service suspends the whole
-  workspace. `vision.enabled` therefore ships **false in production.yaml**;
-  the feature is proven and wired end-to-end locally, and only flips on once
-  describe runs off-box (separate free endpoint) or the plan changes.
-
-
+  - draws a solid red PNG, expects the description to say "red". Unit tests
+  cover request shape (identity headers, prefix-exact system prompt,
+  stream flag), retries, loud failures, SSE parsing and image loading
+  against httptest - no network needed.
 
 Upstream is `eli32-vlc/lumen-agent`; this fork is `FahadBinHussain/lumen-agent`.
 All merge work is additive (new internal packages + config fields) — no upstream

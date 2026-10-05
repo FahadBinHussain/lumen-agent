@@ -134,7 +134,7 @@ func (r *Runner) describeImages(ctx context.Context, parts []llm.ContentPart, em
 		return parts, nil
 	}
 	if r.vision == nil {
-		return nil, fmt.Errorf("received %d image(s) but vision.enabled is false - set vision.enabled (and vision.binary/model) to describe images", imageCount)
+		return nil, fmt.Errorf("received %d image(s) but vision.enabled is false - set vision.enabled (and vision.base_url/model) to describe images", imageCount)
 	}
 
 	result := make([]llm.ContentPart, 0, len(parts))

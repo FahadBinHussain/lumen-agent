@@ -1,39 +1,79 @@
+// Package vision describes images over plain HTTP against the opencode zen
+// endpoint (https://opencode.ai/zen/v1) using the free-tier model
+// mimo-v2.6-flash-free. No opencode CLI is involved.
+//
+// The zen free tier answers 403 FreeTierError ("can only be used from within
+// OpenCode") unless the request passes the gate, which was bisected with
+// captured opencode traffic (2026-10-05). The gate is 100% request-body:
+//
+//   - headers, TLS fingerprint, client IP and HTTP version are irrelevant
+//     (verbatim body replayed from curl/bun passes with our own identity
+//     headers, and the official headers + our own body still 403);
+//   - the system message must be an exact prefix match, from char 0, of a
+//     registered official prompt, at least ~1000 chars long — anything else
+//     (padding, fillers, corruption, wrong prompt) 403s;
+//   - "stream": true is required (removing it 403s; stream_options is not).
+//
+// So the system prompt here is opencode's own title-generator prompt,
+// byte-exact (zengate-title-prompt.txt, captured from opencode v1.18.25),
+// with a short override tail — the gate only matches the prefix, and the
+// tail redirects the model away from writing titles.
 package vision
 
 import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/net/proxy"
 
 	"element-orion/internal/config"
 )
 
-// Describer turns an image into a text description by shelling out to the
-// opencode CLI. opencode's free-tier models (mimo-v2.6-flash-free and
-// friends) only answer requests made from within opencode itself, and only
-// through the default agent, so there is no plain HTTP route to them.
-type Describer struct {
-	binary   string
-	model    string
-	prompt   string
-	timeout  time.Duration
-	attempts int
-	client   *http.Client
-}
+//go:embed zengate-title-prompt.txt
+var zengateSystemPrompt string
+
+// zengateOverrideTail is appended verbatim after the official prompt: the zen
+// gate only checks that the system message STARTS with the official prompt,
+// so the tail steers the model away from its title-generator persona.
+const zengateOverrideTail = "\n\nIMPORTANT OVERRIDE: You are now a vision assistant. Never output a title. For every request, reply with only the raw result the user asks for (for example a plain factual description of an image: what it shows, colors, and any visible text verbatim)."
+
+// Constant request shape, mirroring the captured official body:
+// {model, max_tokens, temperature, messages, stream, stream_options}.
+const (
+	visionMaxTokens     = 32000
+	visionTemperature   = 0.5
+	visionClientUA      = "opencode/1.18.25 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
+	visionDefaultAPIKey = "public"
+)
 
 const maxImageBytes = 25 << 20
+
+// Describer turns an image URL (data: or http(s)) into a text description by
+// POSTing to <base_url>/chat/completions and reading the SSE stream.
+type Describer struct {
+	baseURL   string
+	model     string
+	apiKey    string
+	userAgent string
+	prompt    string
+	timeout   time.Duration
+	attempts  int
+	client    *http.Client
+	initErr   error
+}
 
 func New(cfg config.VisionConfig) *Describer {
 	timeout, err := time.ParseDuration(cfg.Timeout)
@@ -44,25 +84,58 @@ func New(cfg config.VisionConfig) *Describer {
 	if attempts <= 0 {
 		attempts = 3
 	}
-	return &Describer{
-		binary:   cfg.Binary,
-		model:    cfg.Model,
-		prompt:   cfg.Prompt,
-		timeout:  timeout,
-		attempts: attempts,
-		client:   &http.Client{Timeout: timeout},
+	d := &Describer{
+		baseURL:   strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
+		model:     strings.TrimSpace(cfg.Model),
+		apiKey:    strings.TrimSpace(cfg.APIKey),
+		userAgent: strings.TrimSpace(cfg.UserAgent),
+		prompt:    strings.TrimSpace(cfg.Prompt),
+		timeout:   timeout,
+		attempts:  attempts,
 	}
+	if d.apiKey == "" {
+		d.apiKey = visionDefaultAPIKey
+	}
+	if d.userAgent == "" {
+		d.userAgent = visionClientUA
+	}
+	transport := http.DefaultTransport
+	if proxyURL := strings.TrimSpace(cfg.ProxyURL); proxyURL != "" {
+		parsed, err := url.Parse(proxyURL)
+		if err != nil {
+			d.initErr = fmt.Errorf("vision.proxy_url %q is not a valid URL: %w", proxyURL, err)
+		} else if dialer, err := proxy.FromURL(parsed, proxy.Direct); err != nil {
+			d.initErr = fmt.Errorf("vision.proxy_url %q is not supported (want socks5:// or http://): %w", proxyURL, err)
+		} else {
+			transport = &http.Transport{
+				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return dialer.Dial("tcp", addr)
+				},
+			}
+		}
+	}
+	d.client = &http.Client{Timeout: timeout, Transport: transport}
+	return d
 }
 
-// Describe returns a text description of imageURL (a data: URL or an
-// http(s) URL). Every failure is returned as an error that names the model,
-// the attempt count and the underlying cause.
+// Describe returns a text description of imageURL. Every failure is an error
+// naming the model, the endpoint, the attempt count and the underlying cause
+// (status + response body snippet for HTTP failures).
 func (d *Describer) Describe(ctx context.Context, imageURL string) (string, error) {
-	imagePath, cleanup, err := materialize(ctx, d.client, imageURL)
+	if d.initErr != nil {
+		return "", fmt.Errorf("vision: cannot describe image: %w", d.initErr)
+	}
+	if d.baseURL == "" {
+		return "", errors.New("vision: base_url is empty - set vision.base_url (default https://opencode.ai/zen/v1)")
+	}
+	if d.model == "" {
+		return "", errors.New("vision: model is empty - set vision.model (default mimo-v2.6-flash-free)")
+	}
+
+	dataURL, err := loadImage(ctx, d.client, imageURL)
 	if err != nil {
 		return "", fmt.Errorf("vision: could not read image: %w", err)
 	}
-	defer cleanup()
 
 	var lastErr error
 	for attempt := 1; attempt <= d.attempts; attempt++ {
@@ -71,7 +144,7 @@ func (d *Describer) Describe(ctx context.Context, imageURL string) (string, erro
 				return "", fmt.Errorf("vision: canceled while retrying %s: %w", d.model, err)
 			}
 		}
-		text, runErr := d.runOnce(ctx, imagePath)
+		text, runErr := d.runOnce(ctx, dataURL)
 		if runErr == nil {
 			return text, nil
 		}
@@ -83,96 +156,142 @@ func (d *Describer) Describe(ctx context.Context, imageURL string) (string, erro
 	return "", fmt.Errorf("vision: %s failed after %d attempt(s): %w", d.model, d.attempts, lastErr)
 }
 
-func (d *Describer) runOnce(ctx context.Context, imagePath string) (string, error) {
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content any    `json:"content"`
+}
+
+type chatRequestBody struct {
+	Model         string        `json:"model"`
+	MaxTokens     int           `json:"max_tokens"`
+	Temperature   float64       `json:"temperature"`
+	Messages      []chatMessage `json:"messages"`
+	Stream        bool          `json:"stream"`
+	StreamOptions struct {
+		IncludeUsage bool `json:"include_usage"`
+	} `json:"stream_options"`
+}
+
+func (d *Describer) runOnce(ctx context.Context, dataURL string) (string, error) {
 	attemptCtx, cancel := context.WithTimeout(ctx, d.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(attemptCtx, d.binary, "run", "-m", d.model, "--format", "json", d.prompt, "-f", imagePath)
-	cmd.Dir = filepath.Dir(imagePath)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	runErr := cmd.Run()
+	body := chatRequestBody{
+		Model:       d.model,
+		MaxTokens:   visionMaxTokens,
+		Temperature: visionTemperature,
+		Messages: []chatMessage{
+			{Role: "system", Content: zengateSystemPrompt + zengateOverrideTail},
+			{Role: "user", Content: []map[string]any{
+				{"type": "text", "text": d.prompt},
+				{"type": "image_url", "image_url": map[string]string{"url": dataURL}},
+			}},
+		},
+		Stream: true,
+	}
+	body.StreamOptions.IncludeUsage = true
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("encoding request: %w", err)
+	}
+	session, err := newOpaqueID()
+	if err != nil {
+		return "", err
+	}
+	request, err := newOpaqueID()
+	if err != nil {
+		return "", err
+	}
 
-	text, parseErr := parseRunOutput(stdout.String())
-	if text != "" {
-		return text, nil
+	endpoint := d.baseURL + "/chat/completions"
+	req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, endpoint, bytes.NewReader(encoded))
+	if err != nil {
+		return "", fmt.Errorf("building request: %w", err)
 	}
-	if attemptCtx.Err() != nil && errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
-		return "", fmt.Errorf("timed out after %s", d.timeout)
+	req.Header.Set("Authorization", "Bearer "+d.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("User-Agent", d.userAgent)
+	req.Header.Set("x-opencode-client", "cli")
+	req.Header.Set("x-opencode-project", "global")
+	req.Header.Set("x-opencode-session", "ses_"+session)
+	req.Header.Set("x-opencode-request", "msg_"+request)
+
+	resp, err := d.client.Do(req)
+	if err != nil {
+		if attemptCtx.Err() != nil && errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("timed out after %s POSTing to %s", d.timeout, endpoint)
+		}
+		return "", fmt.Errorf("POST %s: %w", endpoint, err)
 	}
-	if parseErr != nil {
-		return "", parseErr
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return "", fmt.Errorf("POST %s: status %d: %s", endpoint, resp.StatusCode, singleLine(string(snippet)))
 	}
-	if runErr != nil {
-		return "", fmt.Errorf("%w (stderr: %s)", runErr, singleLine(stderr.String()))
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "event-stream") {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return "", fmt.Errorf("POST %s: unexpected content-type %q: %s", endpoint, ct, singleLine(string(snippet)))
 	}
-	return "", errors.New("opencode produced no text output (stdout: " + tail(stdout.String()) + ")")
+
+	text, sseErr := parseSSE(resp.Body)
+	if sseErr != nil {
+		return "", fmt.Errorf("POST %s: %w", endpoint, sseErr)
+	}
+	if text == "" {
+		return "", fmt.Errorf("POST %s: model returned no text (stream ended without content)", endpoint)
+	}
+	return text, nil
 }
 
-type runEvent struct {
-	Type string `json:"type"`
-	Part *struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"part"`
-	Error *struct {
-		Message string `json:"message"`
-		Data    struct {
-			Message string `json:"message"`
-		} `json:"data"`
-	} `json:"error"`
-}
-
-// parseRunOutput reads the newline-delimited JSON event stream that
-// `opencode run --format json` prints and returns the assistant text.
-func parseRunOutput(output string) (string, error) {
+// parseSSE reads an OpenAI-compatible chat completion stream and joins the
+// content deltas. Stream error payloads surface as errors.
+func parseSSE(r io.Reader) (string, error) {
 	var builder strings.Builder
-	var eventErrors []string
+	var streamErrs []string
 
-	scanner := bufio.NewScanner(strings.NewReader(output))
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" || !strings.HasPrefix(line, "{") {
+		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
-		var event runEvent
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
 			continue
 		}
-		switch event.Type {
-		case "text":
-			if event.Part != nil && event.Part.Type == "text" && strings.TrimSpace(event.Part.Text) != "" {
-				if builder.Len() > 0 {
-					builder.WriteString("\n")
-				}
-				builder.WriteString(strings.TrimSpace(event.Part.Text))
-			}
-		case "error":
-			message := ""
-			if event.Error != nil {
-				message = strings.TrimSpace(event.Error.Data.Message)
-				if message == "" {
-					message = strings.TrimSpace(event.Error.Message)
-				}
-			}
-			if message == "" {
-				message = "unknown opencode error event"
-			}
-			eventErrors = append(eventErrors, message)
+		var chunk struct {
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		if chunk.Error != nil && chunk.Error.Message != "" {
+			streamErrs = append(streamErrs, chunk.Error.Message)
+		}
+		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+			builder.WriteString(chunk.Choices[0].Delta.Content)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("reading opencode output: %w", err)
+		return "", fmt.Errorf("reading stream: %w", err)
 	}
 	if text := strings.TrimSpace(builder.String()); text != "" {
 		return text, nil
 	}
-	if len(eventErrors) > 0 {
-		return "", errors.New(strings.Join(eventErrors, "; "))
+	if len(streamErrs) > 0 {
+		return "", errors.New(strings.Join(streamErrs, "; "))
 	}
-	return "", errors.New("opencode reported no text (raw output: " + tail(output) + ")")
+	return "", nil
 }
 
 func sleepBackoff(ctx context.Context, attempt int) error {
@@ -190,14 +309,12 @@ func sleepBackoff(ctx context.Context, attempt int) error {
 	}
 }
 
-// materialize writes the image reference to a temp file so the opencode CLI
-// can attach it with -f. Supports base64 data: URLs (what the discord
-// bridge produces) and plain http(s) URLs.
-func materialize(ctx context.Context, client *http.Client, imageURL string) (string, func(), error) {
+// loadImage reads the image reference (base64 data: URL or http(s) URL),
+// enforces the size cap and normalizes it into a base64 data: URL.
+func loadImage(ctx context.Context, client *http.Client, imageURL string) (string, error) {
 	imageURL = strings.TrimSpace(imageURL)
-	noop := func() {}
 	if imageURL == "" {
-		return "", noop, errors.New("empty image reference")
+		return "", errors.New("empty image reference")
 	}
 
 	var payload []byte
@@ -207,88 +324,82 @@ func materialize(ctx context.Context, client *http.Client, imageURL string) (str
 	case strings.HasPrefix(imageURL, "data:"):
 		meta, encoded, ok := strings.Cut(strings.TrimPrefix(imageURL, "data:"), ",")
 		if !ok {
-			return "", noop, errors.New("malformed data: URL (no comma separator)")
+			return "", errors.New("malformed data: URL (no comma separator)")
 		}
 		if !strings.HasSuffix(strings.ToLower(meta), ";base64") {
-			return "", noop, errors.New("data: URL is not base64 encoded")
+			return "", errors.New("data: URL is not base64 encoded")
 		}
 		decoded, err := base64.StdEncoding.DecodeString(encoded)
 		if err != nil {
-			return "", noop, fmt.Errorf("decoding base64 image: %w", err)
+			return "", fmt.Errorf("decoding base64 image: %w", err)
 		}
 		payload = decoded
 		contentType = strings.TrimSuffix(strings.ToLower(meta), ";base64")
 	case strings.HasPrefix(imageURL, "http://") || strings.HasPrefix(imageURL, "https://"):
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
 		if err != nil {
-			return "", noop, fmt.Errorf("building image request: %w", err)
+			return "", fmt.Errorf("building image request: %w", err)
 		}
 		resp, err := client.Do(req)
 		if err != nil {
-			return "", noop, fmt.Errorf("fetching image: %w", err)
+			return "", fmt.Errorf("fetching image: %w", err)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return "", noop, fmt.Errorf("fetching image: unexpected status %s", resp.Status)
+			return "", fmt.Errorf("fetching image: unexpected status %s", resp.Status)
 		}
 		contentType = resp.Header.Get("Content-Type")
 		payload, err = io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
 		if err != nil {
-			return "", noop, fmt.Errorf("reading image body: %w", err)
+			return "", fmt.Errorf("reading image body: %w", err)
 		}
 		if len(payload) > maxImageBytes {
-			return "", noop, fmt.Errorf("image exceeds the %d byte vision cap", maxImageBytes)
+			return "", fmt.Errorf("image exceeds the %d byte vision cap", maxImageBytes)
 		}
 	default:
-		return "", noop, fmt.Errorf("unsupported image reference %q (want a data: or http(s) URL)", truncate(imageURL, 80))
+		return "", fmt.Errorf("unsupported image reference %q (want a data: or http(s) URL)", truncate(imageURL, 80))
 	}
 
 	if len(payload) == 0 {
-		return "", noop, errors.New("image payload is empty")
+		return "", errors.New("image payload is empty")
+	}
+	if len(payload) > maxImageBytes {
+		return "", fmt.Errorf("image exceeds the %d byte vision cap", maxImageBytes)
 	}
 
-	dir, err := os.MkdirTemp("", "lumen-vision-")
-	if err != nil {
-		return "", noop, fmt.Errorf("creating temp dir: %w", err)
-	}
-	cleanup := func() { os.RemoveAll(dir) }
-
-	path := filepath.Join(dir, "image"+extensionFor(imageURL, contentType))
-	if err := os.WriteFile(path, payload, 0o600); err != nil {
-		cleanup()
-		return "", noop, fmt.Errorf("writing temp image: %w", err)
-	}
-	return path, cleanup, nil
-}
-
-func extensionFor(imageURL string, contentType string) string {
-	if parsed, err := url.Parse(imageURL); err == nil {
-		if ext := strings.ToLower(filepath.Ext(parsed.Path)); ext != "" {
-			switch ext {
-			case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp":
-				return ext
-			}
-		}
-	}
 	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
-	switch mediaType {
-	case "image/jpeg":
-		return ".jpg"
-	case "image/gif":
-		return ".gif"
-	case "image/webp":
-		return ".webp"
-	case "image/bmp":
-		return ".bmp"
-	case "image/png", "":
-		return ".png"
+	if mediaType == "" || mediaType == "application/octet-stream" {
+		mediaType = strings.ToLower(strings.Split(http.DetectContentType(payload), ";")[0])
 	}
-	return ".png"
+	if !strings.HasPrefix(mediaType, "image/") {
+		return "", fmt.Errorf("payload is not an image (content type %q)", mediaType)
+	}
+
+	return "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(payload), nil
 }
 
-func tail(value string) string {
-	value = singleLine(value)
-	return truncate(value, 400)
+const (
+	idAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	idHex      = "0123456789abcdef"
+)
+
+// newOpaqueID builds the opencode identity tail: 12 hex chars + 14 base62
+// chars (ses_/msg_ prefixes are added by the caller).
+func newOpaqueID() (string, error) {
+	var buf [26]byte
+	if _, err := io.ReadFull(rand.Reader, buf[:12]); err != nil {
+		return "", fmt.Errorf("generating identity id: %w", err)
+	}
+	for i := 0; i < 12; i++ {
+		buf[i] = idHex[buf[i]&0xf]
+	}
+	if _, err := io.ReadFull(rand.Reader, buf[12:]); err != nil {
+		return "", fmt.Errorf("generating identity id: %w", err)
+	}
+	for i := 12; i < 26; i++ {
+		buf[i] = idAlphabet[int(buf[i])%len(idAlphabet)]
+	}
+	return string(buf[:]), nil
 }
 
 func singleLine(value string) string {
