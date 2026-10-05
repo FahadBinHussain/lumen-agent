@@ -37,22 +37,22 @@ import (
 )
 
 const (
-	newCommandName         = "new"
-	statusCommandName      = "status"
-	memoryCommandName      = "memory"
-	compactCommandName     = "compact"
-	stopCommandName        = "stop"
-	secretCommandName      = "secret"
-	typingInterval         = 8 * time.Second
-	promptQueueSize        = 16
-	cancelReplyText        = "The active session was reset before I could finish. Send your message again when you're ready."
-	errorReplyText         = "I hit an error while working on that."
-	timeoutReplyText       = "The request timed out before I could finish. I kept your session state. Please try again, or increase llm.timeout and/or lower llm.context_window_tokens."
-	queuedReplyText        = "I'm still working through earlier messages in this session. Wait for my reply, then send the next one."
-	emergencyStopDoneReply = "Emergency stop complete. I canceled the active session in this channel."
-	emergencyStopIdleReply = "No active session was running in this channel."
-	chunkPauseMin          = 450 * time.Millisecond
-	chunkPauseJitter       = 900 * time.Millisecond
+	newCommandName                   = "new"
+	statusCommandName                = "status"
+	memoryCommandName                = "memory"
+	compactCommandName               = "compact"
+	stopCommandName                  = "stop"
+	secretCommandName                = "secret"
+	typingInterval                   = 8 * time.Second
+	promptQueueSize                  = 16
+	cancelReplyText                  = "The active session was reset before I could finish. Send your message again when you're ready."
+	errorReplyText                   = "I hit an error while working on that."
+	timeoutReplyText                 = "The request timed out before I could finish. I kept your session state. Please try again, or increase llm.timeout and/or lower llm.context_window_tokens."
+	queuedReplyText                  = "I'm still working through earlier messages in this session. Wait for my reply, then send the next one."
+	emergencyStopDoneReply           = "Emergency stop complete. I canceled the active session in this channel."
+	emergencyStopIdleReply           = "No active session was running in this channel."
+	chunkPauseMin                    = 450 * time.Millisecond
+	chunkPauseJitter                 = 900 * time.Millisecond
 	backgroundNotificationBatchDelay = 3 * time.Second
 )
 
@@ -83,10 +83,10 @@ type Service struct {
 	heartbeatMu         sync.Mutex
 	scheduledWakeups    *scheduledWakeupManager
 	channelTypeResolver func(channelID string) (discordgo.ChannelType, error)
-	
+
 	// For batching background task notifications
 	backgroundNotificationBatches map[string]*backgroundNotificationBatch
-	batchMu                    sync.Mutex
+	batchMu                       sync.Mutex
 
 	connMu    sync.RWMutex
 	connected bool
@@ -389,7 +389,7 @@ func (s *Service) Run(ctx context.Context) error {
 func (s *Service) shutdown() {
 	// Process any pending background notification batches
 	s.processAllPendingBatches()
-	
+
 	s.cancelAllSessions()
 	s.cancelAllBackgroundTasks()
 	if err := s.discord.Close(); err != nil {
@@ -1022,11 +1022,23 @@ func (s *Service) processPrompt(state *sessionState, prompt inboundPrompt) {
 		if silentReason != "" {
 			s.audit.Write("silent_reply", state.ID, map[string]any{"silent_reason": silentReason})
 		}
-		// fork: upstream posted a hardcoded "Done." fallback here; send
-		// nothing instead (2026-08-14), and clear the thinking placeholder
-		// so silent turns don't leave a stray "thinking..." (2026-08-18).
-		if anim != nil {
-			anim.discard(s)
+		if silent {
+			// model explicitly chose silence (<NO_REPLY>) - intentional, keep
+			// it quiet; clear the thinking placeholder so the turn doesn't
+			// leave a stray "thinking..." (2026-08-18).
+			if anim != nil {
+				anim.discard(s)
+			}
+			return
+		}
+		// fork fix 2026-10-05: a non-<NO_REPLY> turn that produced no text
+		// used to discard the placeholder silently here, so a run could die
+		// with no reply and no error (observed on unconstrained image prompts
+		// and /status-shaped prompts). An empty non-silent turn is a bug -
+		// surface it loudly in the channel instead of blanking.
+		notice := emptyReplyNoticeText(silentReason)
+		if sendErr := s.sendReplyWithAnim(prompt, anim, notice); sendErr != nil {
+			s.audit.Write("error", state.ID, map[string]any{"op": "send_empty_reply_notice", "error": sendErr.Error()})
 		}
 		return
 	}
@@ -2681,6 +2693,19 @@ func formatRunErrorForDiscord(err error) string {
 	return prefix + "\n\nError: " + summary
 }
 
+// emptyReplyNoticeText is the loud replacement for the old silent discard:
+// a turn that ended without <NO_REPLY> and without any reply text is a bug,
+// so it gets the same error-shaped channel message every other failure path
+// uses, carrying the classifySilentTurn reason (empty_reply or
+// no_assistant_message).
+func emptyReplyNoticeText(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "empty_reply"
+	}
+	return formatRunErrorForDiscord(fmt.Errorf("run ended without a reply (%s)", reason))
+}
+
 func newSessionID(now time.Time) string {
 	var suffix [4]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
@@ -2841,8 +2866,6 @@ func (s *Service) createConsolidatedBackgroundPrompt(notifications []backgroundN
 	builder.WriteString("Use these handoffs to continue naturally.")
 	return builder.String()
 }
-
-
 
 func (s *Service) processAllPendingBatches() {
 	s.batchMu.Lock()

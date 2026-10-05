@@ -471,3 +471,18 @@ func TestGuildMemoryShardPathUsesSessionDir(t *testing.T) {
 		}
 	}
 }
+
+func TestEmptyReplyNoticeTextIsLoudAndNamesReason(t *testing.T) {
+	notice := emptyReplyNoticeText("empty_reply")
+	if !strings.Contains(notice, errorReplyText) {
+		t.Fatalf("expected notice to reuse the loud error prefix, got %q", notice)
+	}
+	if !strings.Contains(notice, "run ended without a reply (empty_reply)") {
+		t.Fatalf("expected notice to name the reason, got %q", notice)
+	}
+
+	fallback := emptyReplyNoticeText("")
+	if !strings.Contains(fallback, "run ended without a reply (empty_reply)") {
+		t.Fatalf("expected blank reason to fall back to empty_reply, got %q", fallback)
+	}
+}

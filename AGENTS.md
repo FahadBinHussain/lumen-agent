@@ -1024,14 +1024,30 @@ bool). Both are polled, not event-driven.
   the solid red PNG as "a solid deep crimson rectangle... flat color
   swatch". `proxy_url: socks5://127.0.0.1:1055` was NOT needed and stays
   off; if a future 403 burst ever becomes permanent, that remains the flip.
-- **Gotcha - unconstrained image prompts can die silently**: the first E2E
+- **Gotcha - silent run death (FIXED 2026-10-05)**: the first vision E2E
   attempt ("describe the attached image") streamed thinking ("there's a
   vision tool available...") and then the run ended with NO final reply and
-  NO [chat error] - the model hallucinated a vision tool (none exists in
-  `tools.enabled`) and the run died in the tool path, placeholder deleted.
-  Re-running with "do not call any tools" replied correctly in ~60s. When
-  testing vision, keep the prompt tool-free until the hallucinated-tool
-  silent-death path is investigated separately.
+  NO [chat error] - placeholder deleted, channel blank. Same death on a text
+  `/ai /status` prompt. Two causes, both closed:
+  1. `internal/discordbot/service.go` collapsed `<NO_REPLY>` and empty
+     replies into ONE silent-discard branch, so any turn where the model
+     ended with reasoning + tool calls but no final text
+     (`empty_reply` / `no_assistant_message` per `classifySilentTurn`)
+     vanished with zero trace. Now only `<NO_REPLY>` (model explicitly
+     choosing silence) discards; an empty non-silent turn goes loud through
+     `emptyReplyNoticeText` -> `formatRunErrorForDiscord`
+     ("run ended without a reply (empty_reply)") + still audits.
+  2. `agent.Run`'s model/tool loop was UNBOUNDED - `app.max_agent_loops`
+     (documented "model/tool rounds per turn", default 12, production 32)
+     was defined + validated but NEVER READ, so a hallucinated-tool loop
+     could run until the turn died. Now counted: past the cap Run returns
+     "agent stopped after N model/tool rounds (app.max_agent_loops=N)" ->
+     the existing loud error-reply path.
+  Tests: `TestRunStopsAtMaxAgentLoops`, `TestEmptyReplyNoticeTextIsLoudAndNamesReason`.
+  Note: `/ai /status`-shaped TEXT prompts in Discord never dispatch commands -
+  discordbot registers slash APPLICATION commands (`syncCommands`); text
+  command dispatch is bridge-only (whatsapp/messenger). Such text always
+  falls through to the agent.
 - Live check (costs one free-tier call, ~45s):
   `OPENCODE_VISION_LIVE=1 go test -count=1 -run TestDescribeLive ./internal/vision/`
   - draws a solid red PNG, expects the description to say "red". Unit tests

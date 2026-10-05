@@ -36,9 +36,9 @@ func (f *fakeChatClient) Chat(_ context.Context, req llm.Request) (llm.Message, 
 
 type fakeStreamingChatClient struct {
 	*fakeChatClient
-	streamErr  error
+	streamErr   error
 	streamCalls int
-	deltas     []llm.StreamDelta
+	deltas      []llm.StreamDelta
 }
 
 func (f *fakeStreamingChatClient) StreamChat(_ context.Context, req llm.Request, onDelta func(llm.StreamDelta)) (llm.Message, error) {
@@ -263,6 +263,61 @@ func TestChatWithRetryStopsAtMaxAttempts(t *testing.T) {
 	}
 	if client.calls != 3 {
 		t.Fatalf("expected 3 chat attempts, got %d", client.calls)
+	}
+}
+
+func TestRunStopsAtMaxAgentLoops(t *testing.T) {
+	cfg := config.Config{
+		App: config.AppConfig{
+			WorkspaceRoot:       t.TempDir(),
+			MaxAgentLoops:       3,
+			MaxToolCallsPerTurn: 1,
+		},
+		LLM: config.LLMConfig{
+			Model:               "test-model",
+			MaxTokens:           128,
+			ContextWindowTokens: 512,
+		},
+		Tools: config.ToolsConfig{
+			Enabled:               []string{},
+			ExecShell:             "/bin/zsh",
+			ExecTimeout:           "1s",
+			MaxFileBytes:          1 << 20,
+			MaxSearchResults:      20,
+			MaxCommandOutputBytes: 4096,
+		},
+	}
+
+	registry, err := tools.NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+	defer registry.Close()
+
+	toolCallMsg := llm.Message{
+		Role: "assistant",
+		ToolCalls: []llm.ToolCall{{
+			ID:       "call_1",
+			Type:     "function",
+			Function: llm.ToolFunctionCall{Name: "read_file", Arguments: `{"path":"x.txt"}`},
+		}},
+	}
+	client := &fakeChatClient{results: []fakeChatResult{
+		{message: toolCallMsg},
+		{message: toolCallMsg},
+		{message: toolCallMsg},
+	}}
+
+	runner := &Runner{cfg: cfg, client: client, registry: registry}
+	_, err = runner.Run(context.Background(), nil, "hello", ConversationContext{}, func(Event) {})
+	if err == nil {
+		t.Fatal("expected Run to fail loudly at the app.max_agent_loops limit")
+	}
+	if !strings.Contains(err.Error(), "app.max_agent_loops=3") {
+		t.Fatalf("expected error to name app.max_agent_loops=3, got %v", err)
+	}
+	if client.calls != 3 {
+		t.Fatalf("expected exactly 3 model rounds before the cap, got %d", client.calls)
 	}
 }
 

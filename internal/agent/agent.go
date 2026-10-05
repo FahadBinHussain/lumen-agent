@@ -189,7 +189,17 @@ func (r *Runner) Run(ctx context.Context, history []llm.Message, userPrompt stri
 		return nil, err
 	}
 
+	// fork fix 2026-10-05: this loop was unbounded - app.max_agent_loops was
+	// defined, validated and documented ("model/tool rounds per turn") but
+	// never read here, so a model that kept emitting tool calls (e.g.
+	// hallucinated vision tools) looped until the turn died with no reply.
+	rounds := 0
 	for {
+		if limit := r.cfg.App.MaxAgentLoops; limit > 0 && rounds >= limit {
+			emit(Event{Kind: EventStatus, Message: "Round limit reached", Time: time.Now()})
+			return workingHistory, fmt.Errorf("agent stopped after %d model/tool rounds (app.max_agent_loops=%d)", rounds, limit)
+		}
+
 		emit(Event{Kind: EventStatus, Message: "Contacting model", Time: time.Now()})
 
 		modelStart := time.Now()
@@ -209,6 +219,7 @@ func (r *Runner) Run(ctx context.Context, history []llm.Message, userPrompt stri
 			emit(Event{Kind: EventStatus, Message: "Request failed", Time: time.Now()})
 			return workingHistory, err
 		}
+		rounds++
 
 		responseTime := time.Now().UTC()
 		assistantMessage := llm.Message{
@@ -381,7 +392,7 @@ func (r *Runner) executeSingleToolCall(ctx context.Context, history []llm.Messag
 			DurationMS: durationMS,
 			Success:    false,
 		})
-		// Restore original arguments for history consistency if needed, 
+		// Restore original arguments for history consistency if needed,
 		// but actually tool calls in history should probably keep placeholders
 		call.Function.Arguments = originalArguments
 		return toolExecutionResult{Call: call, Result: result, Err: err}
