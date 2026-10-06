@@ -35,6 +35,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -73,6 +74,15 @@ type Describer struct {
 	attempts  int
 	client    *http.Client
 	initErr   error
+
+	// health stats, guarded by mu: written by Describe, read by Health
+	// (the /api/health endpoint) from other goroutines.
+	mu                  sync.Mutex
+	calls               int
+	consecutiveFailures int
+	lastErr             string
+	lastErrAt           time.Time
+	lastOKAt            time.Time
 }
 
 func New(cfg config.VisionConfig) *Describer {
@@ -120,8 +130,98 @@ func New(cfg config.VisionConfig) *Describer {
 
 // Describe returns a text description of imageURL. Every failure is an error
 // naming the model, the endpoint, the attempt count and the underlying cause
-// (status + response body snippet for HTTP failures).
+// (status + response body snippet for HTTP failures). Each call is recorded
+// for Health().
 func (d *Describer) Describe(ctx context.Context, imageURL string) (string, error) {
+	text, err := d.describe(ctx, imageURL)
+	d.record(err)
+	return text, err
+}
+
+// HealthStatus is the single word /api/health reports for the vision engine.
+type HealthStatus string
+
+const (
+	StatusDisabled      HealthStatus = "disabled"      // vision.enabled=false (no describer exists)
+	StatusNeverCalled   HealthStatus = "never_called"  // enabled, no Describe call since boot
+	StatusOK            HealthStatus = "ok"            // last Describe call succeeded
+	StatusDegraded      HealthStatus = "degraded"      // last Describe call failed (retries burned)
+	StatusMisconfigured HealthStatus = "misconfigured" // describer cannot ever work (bad proxy/base/model)
+)
+
+// Health is a point-in-time snapshot of the vision engine for /api/health.
+type Health struct {
+	Enabled             bool         `json:"enabled"`
+	Status              HealthStatus `json:"status"`
+	Model               string       `json:"model,omitempty"`
+	BaseURL             string       `json:"base_url,omitempty"`
+	Calls               int          `json:"calls"`
+	ConsecutiveFailures int          `json:"consecutive_failures"`
+	LastError           string       `json:"last_error,omitempty"`
+	LastErrorAt         *time.Time   `json:"last_error_at,omitempty"`
+	LastSuccessAt       *time.Time   `json:"last_success_at,omitempty"`
+}
+
+// record files the outcome of one Describe call.
+func (d *Describer) record(err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.calls++
+	if err == nil {
+		d.lastOKAt = time.Now().UTC()
+		d.consecutiveFailures = 0
+		return
+	}
+	d.consecutiveFailures++
+	d.lastErr = err.Error()
+	d.lastErrAt = time.Now().UTC()
+}
+
+// Health snapshots the stats for /api/health. Status is loud by design:
+// a describer that can never work reports misconfigured, a describer whose
+// last call burned all retries reports degraded — never a blanket "ok".
+func (d *Describer) Health() Health {
+	h := Health{Enabled: true, Model: d.model, BaseURL: d.baseURL}
+	if d.initErr != nil {
+		h.Status = StatusMisconfigured
+		h.LastError = d.initErr.Error()
+		return h
+	}
+	if d.baseURL == "" {
+		h.Status = StatusMisconfigured
+		h.LastError = "vision.base_url is empty - set vision.base_url (default https://opencode.ai/zen/v1)"
+		return h
+	}
+	if d.model == "" {
+		h.Status = StatusMisconfigured
+		h.LastError = "vision.model is empty - set vision.model (default mimo-v2.6-flash-free)"
+		return h
+	}
+	d.mu.Lock()
+	h.Calls = d.calls
+	h.ConsecutiveFailures = d.consecutiveFailures
+	h.LastError = d.lastErr
+	if !d.lastErrAt.IsZero() {
+		t := d.lastErrAt
+		h.LastErrorAt = &t
+	}
+	if !d.lastOKAt.IsZero() {
+		t := d.lastOKAt
+		h.LastSuccessAt = &t
+	}
+	d.mu.Unlock()
+	switch {
+	case h.Calls == 0:
+		h.Status = StatusNeverCalled
+	case h.ConsecutiveFailures > 0:
+		h.Status = StatusDegraded
+	default:
+		h.Status = StatusOK
+	}
+	return h
+}
+
+func (d *Describer) describe(ctx context.Context, imageURL string) (string, error) {
 	if d.initErr != nil {
 		return "", fmt.Errorf("vision: cannot describe image: %w", d.initErr)
 	}

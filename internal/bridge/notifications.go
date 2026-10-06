@@ -16,6 +16,7 @@ import (
 	"github.com/skip2/go-qrcode"
 
 	"element-orion/internal/cookies"
+	"element-orion/internal/vision"
 )
 
 type notificationRequest struct {
@@ -27,6 +28,30 @@ type notificationRequest struct {
 	URL       string `json:"url"`
 	Platform  string `json:"platform"`
 	Route     string `json:"route"`
+}
+
+// visionHealth reports the vision engine's state for /api/health: the runner's
+// live describer snapshot when wired, and a loud misconfigured status when
+// vision.enabled is set but no runner carries a describer (never a quiet
+// "disabled" that hides the wiring gap).
+func (s *Service) visionHealth() vision.Health {
+	if s.runner != nil {
+		h := s.runner.VisionHealth()
+		if !h.Enabled && s.cfg.Vision.Enabled {
+			h.Enabled = true
+			h.Status = vision.StatusMisconfigured
+			h.LastError = "vision.enabled is set but the agent runner has no describer wired"
+		}
+		return h
+	}
+	if s.cfg.Vision.Enabled {
+		return vision.Health{
+			Enabled:   true,
+			Status:    vision.StatusMisconfigured,
+			LastError: "vision.enabled is set but the bridge has no agent runner",
+		}
+	}
+	return vision.Health{Enabled: false, Status: vision.StatusDisabled}
 }
 
 func (s *Service) serveHTTP(ctx context.Context) error {
@@ -61,6 +86,7 @@ func (s *Service) serveHTTP(ctx context.Context) error {
 				"whatsapp":  s.isPlatformConnected("whatsapp"),
 				"discord":   s.isPlatformConnected("discord"),
 			},
+			"vision": s.visionHealth(),
 		})
 	})
 

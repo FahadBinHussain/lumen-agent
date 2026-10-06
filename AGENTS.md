@@ -205,10 +205,17 @@ Bridge HTTP endpoints:
   `messenger.enabled: true` in production.yaml and the watchdog's
   murmur-cookie-refresher.mjs hits this endpoint on every refresh.
 - `GET /api/health` — always 200; body since 2026-10-04 is JSON
-  `{"status":"ok","platforms":{"messenger":bool,"whatsapp":bool,"discord":bool}}`
-  (live `isPlatformConnected` flags) so external watchers can tell web-process
-  alive from mouth connected. The local cookie-health watchdog gates its
-  auto-refresh on `platforms.messenger`.
+  `{"status":"ok","platforms":{"messenger":bool,"whatsapp":bool,"discord":bool},
+  "vision":{...}}` (live `isPlatformConnected` flags) so external watchers can
+  tell web-process alive from mouth connected. The local cookie-health watchdog
+  gates its auto-refresh on `platforms.messenger`.
+  The `vision` object (added 2026-10-06) reports the image-describer engine:
+  `{enabled, status, model, base_url, calls, consecutive_failures, last_error,
+  last_error_at, last_success_at}` with `status` one of `disabled` /
+  `never_called` / `ok` / `degraded` / `misconfigured` — degraded means the
+  last Describe call burned all retries, misconfigured means the describer can
+  never work (bad proxy/base/model, or `vision.enabled` with no runner wired).
+  Stats reset on every deploy (in-process, never persisted).
 
 Trigger semantics (ported from murmur): Messenger replies when the message starts
 with `/ai`, is a reply to one of our messages, or mentions our uid (mentions are

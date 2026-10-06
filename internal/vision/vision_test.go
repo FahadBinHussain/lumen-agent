@@ -95,6 +95,70 @@ func TestDescribeRejectsBadProxyLoudly(t *testing.T) {
 	}
 }
 
+func TestHealthTracksDescribeOutcomes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, sseBody("solid red square"))
+	}))
+	defer srv.Close()
+
+	d := New(testConfig(srv.URL))
+
+	h := d.Health()
+	if h.Status != StatusNeverCalled || h.Calls != 0 || !h.Enabled {
+		t.Fatalf("fresh health = %+v, want enabled never_called calls=0", h)
+	}
+
+	if _, err := d.Describe(context.Background(), redDataURL(t)); err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+	h = d.Health()
+	if h.Status != StatusOK || h.Calls != 1 || h.ConsecutiveFailures != 0 {
+		t.Fatalf("health after success = %+v, want ok calls=1 consecutive=0", h)
+	}
+	if h.LastSuccessAt == nil || h.LastErrorAt != nil {
+		t.Fatalf("timestamps after success = last_success %v last_error %v, want success set and error nil", h.LastSuccessAt, h.LastErrorAt)
+	}
+}
+
+func TestHealthDegradedAfterFailedDescribe(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		io.WriteString(w, `{"type":"error","error":{"type":"FreeTierError","message":"nope"}}`)
+	}))
+	defer srv.Close()
+
+	cfg := testConfig(srv.URL)
+	cfg.MaxAttempts = 1
+	d := New(cfg)
+
+	if _, err := d.Describe(context.Background(), redDataURL(t)); err == nil {
+		t.Fatal("Describe should fail against the 403 server")
+	}
+	h := d.Health()
+	if h.Status != StatusDegraded {
+		t.Fatalf("status = %q, want degraded", h.Status)
+	}
+	if h.Calls != 1 || h.ConsecutiveFailures != 1 {
+		t.Fatalf("calls/consecutive = %d/%d, want 1/1", h.Calls, h.ConsecutiveFailures)
+	}
+	if h.LastError == "" || h.LastErrorAt == nil {
+		t.Fatalf("last_error = %q last_error_at = %v, both must be set", h.LastError, h.LastErrorAt)
+	}
+}
+
+func TestHealthMisconfiguredIsLoud(t *testing.T) {
+	bad := New(config.VisionConfig{ProxyURL: "ftp://not-a-supported-proxy"})
+	if h := bad.Health(); h.Status != StatusMisconfigured || !strings.Contains(h.LastError, "proxy_url") {
+		t.Fatalf("bad-proxy health = %+v, want misconfigured naming proxy_url", h)
+	}
+
+	empty := &Describer{}
+	if h := empty.Health(); h.Status != StatusMisconfigured || !strings.Contains(h.LastError, "base_url") {
+		t.Fatalf("empty health = %+v, want misconfigured naming base_url", h)
+	}
+}
+
 func TestDescribeRequestShape(t *testing.T) {
 	type captured struct {
 		method, path, authorization, userAgent string

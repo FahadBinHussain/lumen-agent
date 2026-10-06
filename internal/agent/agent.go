@@ -91,6 +91,15 @@ func (r *Runner) Secrets() *secrets.Store {
 	return r.secrets
 }
 
+// VisionHealth snapshots the vision engine for /api/health. A nil runner or
+// a nil describer means vision.enabled was false — report "disabled" plainly.
+func (r *Runner) VisionHealth() vision.Health {
+	if r == nil || r.vision == nil {
+		return vision.Health{Enabled: false, Status: vision.StatusDisabled}
+	}
+	return r.vision.Health()
+}
+
 func (r *Runner) SetBackgroundTaskManager(manager tools.BackgroundTaskManager) {
 	if r == nil || r.registry == nil {
 		return

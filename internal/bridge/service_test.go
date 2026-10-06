@@ -13,6 +13,7 @@ import (
 
 	"element-orion/internal/config"
 	"element-orion/internal/llm"
+	"element-orion/internal/vision"
 	"element-orion/internal/whatsapp"
 )
 
@@ -253,6 +254,10 @@ bridge:
 			var body struct {
 				Status    string          `json:"status"`
 				Platforms map[string]bool `json:"platforms"`
+				Vision    struct {
+					Enabled bool   `json:"enabled"`
+					Status  string `json:"status"`
+				} `json:"vision"`
 			}
 			decErr := json.NewDecoder(resp.Body).Decode(&body)
 			resp.Body.Close()
@@ -270,12 +275,32 @@ bridge:
 					t.Fatalf("health platforms missing %q: %+v", p, body.Platforms)
 				}
 			}
+			// vision rides along: this config has vision.enabled unset and no
+			// runner wired, so it must read the plain "disabled" state.
+			if body.Vision.Status != "disabled" || body.Vision.Enabled {
+				t.Fatalf("health vision = %+v, want disabled/enabled=false", body.Vision)
+			}
 			return
 		}
 		lastErr = err
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("health never answered: %v", lastErr)
+}
+
+func TestVisionHealthLoudWhenEnabledWithoutRunner(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Vision.Enabled = true
+	s := &Service{cfg: cfg}
+	h := s.visionHealth()
+	if h.Status != vision.StatusMisconfigured || !h.Enabled || h.LastError == "" {
+		t.Fatalf("vision health = %+v, want enabled misconfigured naming the wiring gap", h)
+	}
+
+	disabled := &Service{cfg: config.Config{}}
+	if h := disabled.visionHealth(); h.Status != vision.StatusDisabled || h.Enabled {
+		t.Fatalf("vision health (disabled config) = %+v, want plain disabled", h)
+	}
 }
 
 func TestConfigRejectsBadBridgePath(t *testing.T) {
