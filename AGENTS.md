@@ -299,6 +299,13 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
 
 ## Platform gotchas
 
+- **git push fails with `bash: /dev/tty: No such device or address` / `could not read
+  Username for 'https://github.com'`** (hit 2026-10-06): this clone had a LOCAL
+  `credential.helper=` (empty value) in `.git/config`, which overrides the scoop git
+  system config and kills `git-credential-manager.exe`. fix:
+  `git config --unset-all credential.helper` in the repo, then `git push -u origin <branch>`
+  (the branch had no upstream yet either). other clones were unaffected - it is per-repo.
+
 - **Messenger redelivery ghost replies (fixed 2026-08-15, commit 38dac85)**: Meta
   redelivers messages that were queued while the MQTT socket was down — they
   arrive again on reconnect with their ORIGINAL send timestamp. The murmur-style
