@@ -117,8 +117,8 @@
   default DATABASE_URL, interval, exclude). Enabled in production.yaml; DSN
   comes from the DATABASE_URL Render env var. Validation fails startup when
   enabled without a resolvable URL — by design, so a missing env var is loud.
-- Neon project: `lumen` / aged-fire-12399795, org "Ratul"
-  (org-plain-glade-16980612), OWNS ACCOUNT (mainframe neon profile holding it,
+- Neon project: `lumen` / silent-math-00638479, org
+  (org-rapid-base-02276796), OWNS ACCOUNT (mainframe neon profile holding it,
   neon profile), aws-us-west-2, pg 17. Connection URI via
   neon-account.ps1 / mainframe api-key. Never commit the DSN.
 
@@ -863,8 +863,8 @@ bool). Both are polled, not event-driven.
   psql via the one-shot socks relay `C:\tmp\socks5-fwd.ps1` (listens
   127.0.0.1:5433, accepts multiple connections, CopyToAsync — never Start-Job,
   streams can't cross runspaces). psql hits 127.0.0.1:5433 and MUST pass the
-  endpoint ID since SNI is lost: `?options=endpoint%3Dep-divine-sunset-a67l3n4m`.
-  Neon project `lumen` = `aged-fire-12399795`, branch `br-damp-sea-a6c1ccfj`,
+  endpoint ID since SNI is lost: `?options=endpoint%3Dep-green-lab-aroopq6v`.
+  Neon project `lumen` = `silent-math-00638479`, branch `br-raspy-bar-ar7024bl`,
   db `neondb`, user `neondb_owner`.
 - **Identity files (fixed 2026-08-17, commit TBD)**: the prompt loader reads
   `IDENTITY.md`/`USER.md`/`SOUL.md` from the WORKSPACE ROOT (`/app/config/` on
@@ -1055,7 +1055,11 @@ bool). Both are polled, not event-driven.
   stream flag), retries, loud failures, SSE parsing and image loading
   against httptest - no network needed.
 
-Upstream is `eli32-vlc/lumen-agent`; this fork is `FahadBinHussain/lumen-agent`.
+Upstream is `PUT-Request/Element-Orion` (canonical as of 2026-09-04; the old
+path `eli32-vlc/lumen-agent` redirects — the author moved all their projects
+into the new `PUT Request` org that day and restored the original
+Element-Orion name; upstream's last commit is 2026-05-15, so there is nothing
+to rebase from). This fork is `FahadBinHussain/lumen-agent`.
 All merge work is additive (new internal packages + config fields) — no upstream
 files modified except `cmd/element-orion/main.go` (bridge wiring) and
 `internal/config/config.go` (new sections). Rebase/merge from upstream stays
