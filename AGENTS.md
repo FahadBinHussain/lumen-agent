@@ -10,7 +10,7 @@
   `alchoholpad-litellm.hf.space` gateway, not the retired Render gateway.
 - Windows test runs must not assume `/bin/zsh`; the exec tests use `pwsh` on
   Windows while production Linux keeps its configured shell.
-- The Messenger cookie upload endpoint accepts the agent-browser cookie
+- The Messenger cookie upload endpoint accepts the mainframe cookie-vault
   snapshot as a plain `{name:value}` JSON map and reloads the connection with a
   detached context. WhatsApp still requires a phone-side QR/linking action when
   the persisted Neon session has no device JID.
@@ -74,7 +74,7 @@
   NOT optional state**: `bridge.New` → `messenger.New` errors when the file is
   missing and main exits 1 → deploy `update_failed` / 503 crash loop. It is an
   account linkage like whatsapp_sessions — keep the row, or rebuild it from
-  the agent-browser vault
+  the mainframe cookie vault
   (`%APPDATA%\mainframe\accounts\agent-browser\cookies\<fb-account-email>.cookies.json`,
   REQUIRED_COOKIES = `c_user`/`xs`/`datr` → plain `{name:value}` JSON, 163
   bytes) and `INSERT INTO lumen_snapshots (path, data, sha256) VALUES
@@ -510,7 +510,7 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
   regression, never wave it through as "pre-existing".
 - Messagix needs a full cookie set (`cookies.GetMissing` fails startup otherwise);
   refresh via `/api/cookies/upload` (murmur-cookie-refresher.mjs) without restart.
-  Cookie source on this machine: agent-browser lightweight cookie vault
+  Cookie source on this machine: mainframe lightweight cookie vault
   (`%APPDATA%\mainframe\accounts\agent-browser\cookies\<email>.cookies.json`,
   saved with `agent-browser-account.ps1 cookies save <email>`), converted to the
   plain `{name:value}` map. The refresher is browserless since 2026-08-12 —
@@ -598,7 +598,7 @@ notes): ~90% covered. Remaining gaps and how they're handled:
   different format than lumen's whatsmeow.db. Expect a fresh QR pairing at
   cutover (lumen logs `events.QR`); new sessions persist to lumen Neon.
 - **Messenger account**: live on Render — `messenger.enabled: true` since
-  2026-08, dedicated FB account with cookies refreshed from the agent-browser
+  2026-08, dedicated FB account with cookies refreshed from the mainframe
   vault (murmur's account is not used). **bridge.secret SET (2026-08-14)**:
   `ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET` on Render = the HF profile token
   from the local mainframe hf profile (the one the refresher sends as Bearer,
@@ -792,7 +792,7 @@ bool). Both are polled, not event-driven.
   path heals once the laptop returns. Non-auto-heal cases: WhatsApp logging
   the device out (needs manual phone re-pair, watcher could only alert).
   The cookie-health watch exists only because messenger cookie refresh is an
-  ACTIVE laptop-side heal (agent-browser vault push); WhatsApp is
+  ACTIVE laptop-side heal (mainframe cookie-vault push); WhatsApp is
   passive-wait, so no watch. bridge `/api/health` returned bare "ok" until
   2026-10-04 — it now returns JSON with the three platform `IsConnected`
   flags (messenger/whatsapp/discord), which is also what the cookie-health
