@@ -517,12 +517,11 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
   regression, never wave it through as "pre-existing".
 - Messagix needs a full cookie set (`cookies.GetMissing` fails startup otherwise);
   refresh via `/api/cookies/upload` (murmur-cookie-refresher.mjs) without restart.
-  Cookie source on this machine: mainframe lightweight cookie vault
-  (`%APPDATA%\mainframe\accounts\agent-browser\cookies\<email>.cookies.json`,
-  saved with `agent-browser-account.ps1 cookies save <email>`), converted to the
-  plain `{name:value}` map. The refresher is browserless since 2026-08-12 —
-  point it at the local bridge with `MURMUR_HF_SPACE_URL=http://127.0.0.1:8791`
-  and pick the account via `AGENT_BROWSER_EMAIL`.
+  Since 2026-10-06 the refresher reads cookies LIVE from the running real Edge via
+  the browser-use skill (CDP `Network.getCookies` on `MURMUR_REFRESH_FB_URL`,
+  default `https://www.messenger.com`) - no cookie vault, no saved snapshot, no
+  per-account env. Point it at the local bridge with
+  `MURMUR_HF_SPACE_URL=http://127.0.0.1:8791` and `HF_EMAIL` for the token.
 - whatsmeow: first run has no device — QR is logged (`events.QR`) for phone scan;
   after linking, the device store file (`whatsmeow.db` under `whatsapp.store_dir`)
   is backed up to Neon so re-pairs survive machine moves.
