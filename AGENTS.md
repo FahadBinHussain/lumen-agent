@@ -505,14 +505,9 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     same as the POST, returns `{pending:[], count}`).
   - model-catalog listing (/ai models etc.) intentionally dropped — the fork
     uses the single `llm.model` config.
-- Pre-existing test failures on this machine (NOT caused by the merge, verified):
-  - `internal/discordbot` heartbeat test hardcodes Linux path `/workspace/lumen/...`
-  - `internal/agent` `TestSystemPromptIncludesSharedChannelSilenceGuidance`
-    expects an upstream silence-guidance string the fork prompt no longer contains
-  - `internal/skills` test expects `.claude` workspace skills fixtures
-  - `internal/tools` exec test needs `/bin/zsh`
-  - Passing packages: config, eventwebhook, bridge, dashboard, heartbeatstate,
-    httpaux, llm, sandbox, secrets.
+- The full test suite (`go test ./...`) is green on Windows (verified
+  2026-10-05) — there are NO pre-existing failures; any red test is a real
+  regression, never wave it through as "pre-existing".
 - Messagix needs a full cookie set (`cookies.GetMissing` fails startup otherwise);
   refresh via `/api/cookies/upload` (murmur-cookie-refresher.mjs) without restart.
   Cookie source on this machine: agent-browser lightweight cookie vault
