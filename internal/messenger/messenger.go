@@ -271,6 +271,17 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 			})
 
 		case *messagix.Event_PublishResponse:
+			// Arrival observability (2026-10-08): no incoming message ever
+			// produced a log line unless it triggered a reply, so "Meta never
+			// pushed it" and "decode dropped it" and "handler ignored it" were
+			// indistinguishable. Log every publish response's table summary.
+			if e.Table == nil {
+				log.Printf("messenger: publish resp (topic=%s) nil table", e.Topic)
+				break
+			}
+			up, ins := e.Table.WrapMessages()
+			log.Printf("messenger: publish resp (topic=%s): threads=%d insert_msgs=%d upsert_msgs=%d",
+				e.Topic, len(e.Table.LSDeleteThenInsertThread), len(ins), len(up))
 			for _, th := range e.Table.LSDeleteThenInsertThread {
 				if th == nil || th.GetThreadKey() == 0 {
 					continue
@@ -285,8 +296,7 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 				c.upsertThread(info)
 			}
 
-			upsertMessages, insertMessages := e.Table.WrapMessages()
-			for _, msg := range insertMessages {
+			for _, msg := range ins {
 				if msg == nil || msg.LSInsertMessage == nil {
 					continue
 				}
@@ -307,7 +317,7 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 				})
 			}
 
-			for threadID, upsert := range upsertMessages {
+			for threadID, upsert := range up {
 				for _, msg := range upsert.Messages {
 					if msg == nil || msg.LSInsertMessage == nil {
 						continue
