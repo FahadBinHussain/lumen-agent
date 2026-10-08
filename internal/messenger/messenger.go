@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -280,8 +281,9 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 				break
 			}
 			up, ins := e.Table.WrapMessages()
-			log.Printf("messenger: publish resp (topic=%s): threads=%d insert_msgs=%d upsert_msgs=%d",
-				e.Topic, len(e.Table.LSDeleteThenInsertThread), len(ins), len(up))
+			log.Printf("messenger: publish resp (topic=%s): threads=%d insert_msgs=%d upsert_msgs=%d table=[%s] payload=%.800s",
+				e.Topic, len(e.Table.LSDeleteThenInsertThread), len(ins), len(up),
+				nonEmptyTableFields(e.Table), e.Data.Payload)
 			for _, th := range e.Table.LSDeleteThenInsertThread {
 				if th == nil || th.GetThreadKey() == 0 {
 					continue
@@ -440,6 +442,31 @@ func (c *Client) relay(ctx context.Context, msg Incoming) {
 	if c.handler != nil {
 		c.handler(ctx, msg)
 	}
+}
+
+// nonEmptyTableFields names every non-empty LSTable field with its row count.
+// WrapMessages only reads a handful of message fields; when Meta delivers
+// message rows through a newer op (e.g. LSDeleteThenInsertMessage) the wrap
+// count stays 0 and the message silently vanishes — this dump names the field
+// that actually carries it (added 2026-10-08 for the "bot ignores /ai hi"
+// investigation).
+func nonEmptyTableFields(t *table.LSTable) string {
+	if t == nil {
+		return "nil"
+	}
+	v := reflect.ValueOf(t).Elem()
+	typ := v.Type()
+	parts := make([]string, 0, 8)
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Field(i)
+		if f.Kind() == reflect.Slice && f.Len() > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", typ.Field(i).Name, f.Len()))
+		}
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ",")
 }
 
 func parseMentionIDs(raw string) []int64 {
