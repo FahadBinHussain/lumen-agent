@@ -392,11 +392,17 @@ func (c *Client) NudgeThreadSync(ctx context.Context) {
 }
 
 func (c *Client) relay(ctx context.Context, msg Incoming) {
+	// Arrival/drop logging (added 2026-10-08): every incoming messenger message
+	// was invisible in Render logs unless it triggered a reply, which made
+	// "bot not responding" impossible to diagnose. These three lines make the
+	// path observable: arrival is logged in the bridge handler, drops here.
 	if msg.SenderID == c.uid || msg.SenderID == 0 {
+		log.Printf("messenger: relay drop: self or zero sender (sender=%d uid=%d thread=%d text=%.80q)", msg.SenderID, c.uid, msg.ThreadID, msg.Text)
 		return
 	}
 	ts := time.UnixMilli(msg.Timestamp)
 	if !ts.IsZero() && ts.Before(c.startTime.Add(-5*time.Second)) {
+		log.Printf("messenger: relay drop: stale timestamp %s (client started %s, thread=%d text=%.80q)", ts.Format(time.RFC3339), c.startTime.Format(time.RFC3339), msg.ThreadID, msg.Text)
 		return
 	}
 	// Meta redelivers messages that were queued during a socket drop (the

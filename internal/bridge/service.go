@@ -319,6 +319,10 @@ func (s *Service) handleMessengerMessage(ctx context.Context, msg messenger.Inco
 	}
 
 	text := strings.TrimSpace(msg.Text)
+	// Log arrivals unconditionally (2026-10-08): the trigger/no-trigger
+	// decision below used to be silent, so an unanswered /ai and an ignored
+	// plain message looked identical in Render logs.
+	log.Printf("messenger: got message from %d in thread %s (%d chars): %.80q", msg.SenderID, threadID, len(text), text)
 	if text == "" {
 		return
 	}
