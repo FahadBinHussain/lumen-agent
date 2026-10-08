@@ -16,7 +16,7 @@ import (
 
 // checkNeonUsage is a faithful Go port of murmur/scripts/murmur.ps1
 // Check-NeonUsage + Send-NeonUsageWarning, querying the Neon REST API the same
-// way mainframe/neon-hours-table.ps1 does (org consumption endpoint, period
+// way automata-private/neon.com/neon-hours-table.ps1 does (org consumption endpoint, period
 // data from the LAST period entry). API keys come from the configured env var
 // names (HF space secrets), mirroring mainframe's per-account api-key files.
 func (s *Service) checkNeonUsage(ctx context.Context) error {

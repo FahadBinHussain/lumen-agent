@@ -96,7 +96,7 @@ type SupabaseCfg struct {
 // neon usage warning check. Faithful ports of
 //   - murmur/vercel/app/api/steam-updates/route.ts
 //   - murmur/vercel/app/api/free-games/route.ts
-//   - murmur/scripts/murmur.ps1 Check-NeonUsage + mainframe/neon-hours-table.ps1
+//   - murmur/scripts/murmur.ps1 Check-NeonUsage + automata-private/neon.com/neon-hours-table.ps1
 //
 // All gated off by default in code; production.yaml enables them on Render.
 type Service struct {
