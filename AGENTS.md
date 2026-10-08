@@ -512,6 +512,28 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     same as the POST, returns `{pending:[], count}`).
   - model-catalog listing (/ai models etc.) intentionally dropped — the fork
     uses the single `llm.model` config.
+- **messagix V4 sync migration (2026-10-08)**: Meta switched lightspeed sync
+  blocks to `executeFirstBlockForSyncTransactionV4` (V1 + a `CurrentSeqID`
+  field inserted at index 4). The pinned June mautrix-meta didn't know the op
+  (`Unknown dependency in sp` -> `Skipping dependency with no reference` ->
+  `No transactions found`) so the connect-time sync's `HandleEvent` never
+  fired: entire sync tables (including queued inbound `upsertMessage` rows)
+  were silently dropped, cursors stayed `last_applied_cursor: null` forever,
+  and inbound messages died for weeks while typing indicators (unchanged op)
+  kept flowing. Fixed by bumping to mautrix-meta **v0.2609.0** (+ go 1.26.0,
+  Dockerfile `golang:1.26`, and a local `replace github.com/imroc/req/v3 =>
+  github.com/beeper/req/v3@...` because a dependency's replace does not
+  propagate). Event API changed with the bump - handler cases are now
+  `ConnectedEvent` (was `Event_Ready`, no `ConnectionCode` field),
+  `*table.LSTable` (was `Event_PublishResponse`; call
+  `client.PostHandlePublishResponse(tbl)` after processing to advance
+  cursors), `TransientDisconnectEvent`, `PermanentErrorEvent`,
+  `ReconnectedEvent`; an unknown event type is logged LOUDLY, never dropped.
+  Also: the Render log API truncates messages at exactly 100000 chars and
+  zerolog puts `message` last, so `text=` searches miss the message key on
+  huge responses - prefer timestamp-windowed raw pulls when a log line "isn't
+  there". No runtime patching of the June structs is possible: field indexes
+  shift after V4's insert, so mapping V4 onto V1 misaligns cursors silently.
 - The full test suite (`go test ./...`) is green on Windows (verified
   2026-10-05) — there are NO pre-existing failures; any red test is a real
   regression, never wave it through as "pre-existing".

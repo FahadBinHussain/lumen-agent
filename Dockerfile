@@ -1,4 +1,4 @@
-FROM golang:1.25 AS builder
+FROM golang:1.26 AS builder
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
@@ -18,3 +18,4 @@ ENV PORT=7860
 ENV ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET=
 EXPOSE 7860
 CMD ["/bin/sh", "/app/entrypoint.sh"]
+

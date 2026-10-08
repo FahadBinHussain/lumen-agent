@@ -17,6 +17,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"go.mau.fi/mautrix-meta/pkg/messagix"
+	"go.mau.fi/mautrix-meta/pkg/messagix/httpclient"
 	"go.mau.fi/mautrix-meta/pkg/messagix/socket"
 	"go.mau.fi/mautrix-meta/pkg/messagix/table"
 	"go.mau.fi/mautrix-meta/pkg/messagix/types"
@@ -107,9 +108,7 @@ func New(cookiesPath string, handler Handler) (*Client, error) {
 	}
 
 	logger := zerolog.New(os.Stderr).With().Str("component", "messagix").Timestamp().Logger()
-	client := messagix.NewClient(c, logger, &messagix.Config{
-		MayConnectToDGW: false,
-	})
+	client := messagix.NewClient(c, logger, &messagix.Config{})
 
 	cl := &Client{
 		client:         client,
@@ -170,9 +169,7 @@ func (c *Client) ReloadCookies(ctx context.Context) error {
 
 	c.client.Disconnect()
 	logger := zerolog.New(os.Stderr).With().Str("component", "messagix").Timestamp().Logger()
-	c.client = messagix.NewClient(cc, logger, &messagix.Config{
-		MayConnectToDGW: false,
-	})
+	c.client = messagix.NewClient(cc, logger, &messagix.Config{})
 
 	userInfo, _, err := c.client.LoadMessagesPage(ctx)
 	if err != nil {
@@ -241,9 +238,9 @@ func (c *Client) attemptReconnect() {
 func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any) {
 	return func(evtCtx context.Context, evt any) {
 		switch e := evt.(type) {
-		case *messagix.Event_Ready:
+		case *messagix.ConnectedEvent:
 			c.setConnected(true)
-			log.Printf("messenger: MQTT connected (code %s)", e.ConnectionCode)
+			log.Printf("messenger: MQTT connected")
 			c.keepaliveOnce.Do(func() {
 				go func() {
 					ticker := time.NewTicker(60 * time.Second)
@@ -271,20 +268,22 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 				}()
 			})
 
-		case *messagix.Event_PublishResponse:
+		case *table.LSTable:
 			// Arrival observability (2026-10-08): no incoming message ever
 			// produced a log line unless it triggered a reply, so "Meta never
 			// pushed it" and "decode dropped it" and "handler ignored it" were
-			// indistinguishable. Log every publish response's table summary.
-			if e.Table == nil {
-				log.Printf("messenger: publish resp (topic=%s) nil table", e.Topic)
+			// indistinguishable. Log every incoming table's summary. Since
+			// mautrix-meta v0.2609, both live deltas and connect-time sync
+			// responses arrive here as raw *table.LSTable.
+			if e == nil {
+				log.Printf("messenger: publish resp: nil table")
 				break
 			}
-			up, ins := e.Table.WrapMessages()
-			log.Printf("messenger: publish resp (topic=%s): threads=%d insert_msgs=%d upsert_msgs=%d table=[%s] payload=%.800s",
-				e.Topic, len(e.Table.LSDeleteThenInsertThread), len(ins), len(up),
-				nonEmptyTableFields(e.Table), e.Data.Payload)
-			for _, th := range e.Table.LSDeleteThenInsertThread {
+			up, ins := e.WrapMessages()
+			log.Printf("messenger: publish resp: threads=%d insert_msgs=%d upsert_msgs=%d table=[%s]",
+				len(e.LSDeleteThenInsertThread), len(ins), len(up),
+				nonEmptyTableFields(e))
+			for _, th := range e.LSDeleteThenInsertThread {
 				if th == nil || th.GetThreadKey() == 0 {
 					continue
 				}
@@ -341,19 +340,28 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 					})
 				}
 			}
+			// Advance sync cursors carried in the table (mirrors upstream
+			// connector); without this, Meta sees a client that never acks
+			// its transactions.
+			c.client.PostHandlePublishResponse(e)
 
-		case *messagix.Event_SocketError:
+		case *messagix.TransientDisconnectEvent:
 			c.setConnected(false)
 			log.Printf("messenger: socket error (attempts %d): %v", e.ConnectionAttempts, e.Err)
 
-		case *messagix.Event_PermanentError:
+		case *messagix.PermanentErrorEvent:
 			c.setConnected(false)
 			log.Printf("messenger: permanent error: %v", e.Err)
 			c.armReconnect("permanent error", c.reconnectDelay)
 
-		case *messagix.Event_Reconnected:
+		case *messagix.ReconnectedEvent:
 			c.setConnected(true)
 			log.Printf("messenger: MQTT reconnected")
+
+		default:
+			// Never swallow silently: an unknown event type means inbound
+			// messages could vanish without a trace.
+			log.Printf("messenger: UNRECOGNIZED messagix event type %T", evt)
 		}
 	}
 }
@@ -658,7 +666,7 @@ func (c *Client) DeleteMessage(ctx context.Context, messageID string) error {
 }
 
 func (c *Client) SendImage(ctx context.Context, threadID int64, imageData []byte, mimeType string) error {
-	resp, err := c.client.SendMercuryUploadRequest(ctx, threadID, &messagix.MercuryUploadMedia{
+	resp, err := c.client.GetHTTP().SendMercuryUploadRequest(ctx, threadID, &httpclient.MercuryUploadMedia{
 		Filename:  "image.png",
 		MimeType:  mimeType,
 		MediaData: imageData,
