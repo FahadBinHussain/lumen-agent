@@ -125,6 +125,26 @@ func (s *Service) serveHTTP(ctx context.Context) error {
 	}
 }
 
+// scopedDedupeKey turns a per-item dedupe key into a per-DESTINATION key so
+// one feed item fan-out (same key, several threads) can be delivered to every
+// thread instead of only the first one. Format: "<key>|route:<name>" or
+// "<key>|<platform>:<threadID>" (platform defaults to messenger, matching the
+// handler). Empty key stays empty (the dedupe path stays off).
+func scopedDedupeKey(key, route, platform, threadID string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	if route != "" {
+		return key + "|route:" + route
+	}
+	platform = strings.TrimSpace(strings.ToLower(platform))
+	if platform == "" {
+		platform = "messenger"
+	}
+	return key + "|" + platform + ":" + strings.TrimSpace(threadID)
+}
+
 func (s *Service) handleAutomationNotification(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -157,6 +177,16 @@ func (s *Service) handleAutomationNotification(w http.ResponseWriter, r *http.Re
 	// a single platform/threadId. checked before the threadId requirement
 	// (routes carry their own targets).
 	route := strings.TrimSpace(req.Route)
+
+	// Scope the dedupe key per DESTINATION before anything reads it. A poller
+	// loops its thread_ids and POSTs the SAME key once per thread (free-games
+	// = "30738305889116993,953525124128433"), so an unscoped key let the first
+	// thread's delivery dedupe every later thread out of BOTH gates: the
+	// notification_deliveries check here and the unique-indexed pending queue
+	// (ON CONFLICT (dedupe_key) DO NOTHING). Result: the second free-games
+	// group got nothing since the 2026-09-23 deliveries dedupe landed
+	// (fixed 2026-10-08). Keeps same-thread retries deduped as before.
+	req.DedupeKey = scopedDedupeKey(req.DedupeKey, route, req.Platform, req.ThreadID)
 
 	// Pollers provide a dedupe key. Queue those notifications before trying to
 	// send them: the Neon row is the durable source of truth, and drainPending

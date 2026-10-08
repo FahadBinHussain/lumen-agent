@@ -927,6 +927,20 @@ bool). Both are polled, not event-driven.
   restart or redeploy from sending the same quota-period warning again.
 - Pending rows store the already-rendered notification text with an empty
   title; otherwise the queue drain prepends the title a second time.
+- **GOTCHA (fixed 2026-10-08): dedupe keys are per-DESTINATION, never bare
+  per-item.** A poller loops its `thread_ids` and POSTs the same `dedupeKey`
+  once per thread (free-games = `30738305889116993,953525124128433`), and a
+  bare key let the FIRST thread's delivery dedupe every later thread out of
+  both gates: `IsDelivered(dedupe_key)` in the handler AND the
+  `pending_notifications` unique index (`ON CONFLICT (dedupe_key) DO NOTHING`)
+  — so the 2nd free-games group got nothing from the day this dedupe shipped
+  (2026-09-23) until `scopedDedupeKey()` (`internal/bridge/notifications.go`)
+  rewrote the key to `<key>|<platform>:<threadID>` (route posts:
+  `<key>|route:<name>`) before any dedupe read. Symptom of a regression here:
+  one subscribed thread receives feed posts, the other(s) are silent while
+  every poller/log looks green (the skipped POST answers `deduped: true`).
+  Keep the scoping if you touch the handler; same-thread retries must stay
+  stable (`TestScopedDedupeKeyIsPerDestination`).
 
 ## CrackWatch dedupe (2026-09-23)
 

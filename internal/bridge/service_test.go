@@ -96,6 +96,37 @@ func TestBridgeNotificationsEndpoint(t *testing.T) {
 	}
 }
 
+// TestScopedDedupeKeyIsPerDestination covers the 2026-10-08 bug: one feed
+// item posted to two free-games threads with the SAME key was delivered only
+// to the first thread (the second POST read the first thread's delivery row
+// and returned deduped). The key must be unique per destination while staying
+// stable for retries of the same destination.
+func TestScopedDedupeKeyIsPerDestination(t *testing.T) {
+	key := "guid-123"
+	threadA := scopedDedupeKey(key, "", "messenger", "30738305889116993")
+	threadB := scopedDedupeKey(key, "", "messenger", "953525124128433")
+	if threadA == threadB {
+		t.Fatalf("two destinations must not share a dedupe key: %q", threadA)
+	}
+	// same destination must stay stable (retries stay deduped)
+	if again := scopedDedupeKey(key, "", "messenger", "30738305889116993"); again != threadA {
+		t.Fatalf("same destination key changed: %q != %q", again, threadA)
+	}
+	// platform default mirrors the handler (messenger)
+	if def := scopedDedupeKey(key, "", "", "30738305889116993"); def != threadA {
+		t.Fatalf("empty platform must default to messenger: %q != %q", def, threadA)
+	}
+	// route mode scopes on the route name
+	routeKey := scopedDedupeKey(key, "bnp", "", "")
+	if routeKey == threadA || routeKey != scopedDedupeKey(key, "bnp", "", "") {
+		t.Fatalf("route key wrong: %q", routeKey)
+	}
+	// empty key keeps the dedupe path off
+	if got := scopedDedupeKey("", "", "messenger", "1"); got != "" {
+		t.Fatalf("empty key must stay empty, got %q", got)
+	}
+}
+
 func TestBridgeNotificationsAuth(t *testing.T) {
 	cfg := writeTestConfig(t, "  secret: hunter2\n  secret_env: \"\"\n")
 	s, err := New(cfg, nil)
