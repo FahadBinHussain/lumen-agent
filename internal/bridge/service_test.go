@@ -207,6 +207,13 @@ func TestWhatsAppQRPageNeverShowsBrokenImage(t *testing.T) {
 	if !strings.Contains(whatsappPairPage, "placeholder('waiting for a fresh QR") {
 		t.Fatal("status=waiting must show a visible placeholder with the reason")
 	}
+	// A query-only relative URL ('?format=png&t=...') REPLACES the page's
+	// whole query string, dropping the token -> the png endpoint answers 401
+	// -> onerror forever ("QR image failed to load" on a QR-live page, the
+	// 2026-10-09 report). The token must be part of the img URL.
+	if !strings.Contains(whatsappPairPage, `'?format=png&token='+encodeURIComponent(token)`) {
+		t.Fatal("QR png URL must carry the pairing token (query-only relative URLs drop it)")
+	}
 }
 
 func TestWhatsAppQRAuthAndStateAreJSON(t *testing.T) {
