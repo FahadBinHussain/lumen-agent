@@ -1,9 +1,15 @@
 package whatsapp
 
 import (
+	"context"
+	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
+
+	"github.com/rs/zerolog"
 )
 
 func TestSplitTextUnicodeSafeAndLabeled(t *testing.T) {
@@ -50,5 +56,45 @@ func TestCleanMentionsFromNames(t *testing.T) {
 		if got := cleanMentionsFromNames(tc.text, tc.names); got != tc.want {
 			t.Errorf("%s: cleanMentionsFromNames(%q, %v) = %q, want %q", tc.name, tc.text, tc.names, got, tc.want)
 		}
+	}
+}
+
+// TestScheduleReconnectRetriesUntilConnectSucceeds pins the 2026-10-09 bug:
+// one failed reconnect after a logout used to kill the chain for good (QR page
+// stuck on "waiting" forever). A failed connect must be retried; only a
+// successful one may release the single-flight flag.
+func TestScheduleReconnectRetriesUntilConnectSucceeds(t *testing.T) {
+	old := reconnectRetryDelay
+	reconnectRetryDelay = time.Millisecond
+	defer func() { reconnectRetryDelay = old }()
+
+	var calls int32
+	w := &WhatsmeowClient{
+		logger: zerolog.Nop(),
+		connectFn: func(context.Context) error {
+			if atomic.AddInt32(&calls, 1) < 3 {
+				return errors.New("socks connect tcp 127.0.0.1:1055->web.whatsapp.com:443: general SOCKS server failure")
+			}
+			return nil
+		},
+	}
+
+	w.scheduleReconnect()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		w.mu.Lock()
+		running := w.reconnecting
+		w.mu.Unlock()
+		if !running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("reconnect loop never finished: connect calls=%d", atomic.LoadInt32(&calls))
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&calls); got < 3 {
+		t.Fatalf("expected at least 3 connect attempts (failures retried), got %d", got)
 	}
 }

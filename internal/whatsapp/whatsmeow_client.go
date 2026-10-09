@@ -34,6 +34,10 @@ type WhatsmeowClient struct {
 	qrRef        string
 	reconnecting bool
 
+	// connectFn is the dial scheduleReconnect uses (w.Connect in production;
+	// injectable so the retry loop is testable).
+	connectFn func(context.Context) error
+
 	sentMu  sync.Mutex
 	sentIDs map[string]time.Time
 
@@ -111,6 +115,7 @@ func NewWhatsmeowClient(dbPath string, proxyAddr string, logger zerolog.Logger, 
 		}
 	}
 
+	w.connectFn = w.Connect
 	client.AddEventHandler(w.handleEvent)
 
 	return w, nil
@@ -379,6 +384,10 @@ func (w *WhatsmeowClient) Connect(ctx context.Context) error {
 	return nil
 }
 
+// reconnectRetryDelay paces reconnect attempts while logged out (var so the
+// test suite can shrink it).
+var reconnectRetryDelay = 15 * time.Second
+
 func (w *WhatsmeowClient) scheduleReconnect() {
 	w.mu.Lock()
 	if w.reconnecting {
@@ -389,11 +398,26 @@ func (w *WhatsmeowClient) scheduleReconnect() {
 	w.mu.Unlock()
 
 	go func() {
-		time.Sleep(15 * time.Second)
-		w.logger.Info().Msg("whatsapp: not logged in, reconnecting for a fresh QR session")
-		err := w.Connect(context.Background())
-		if err != nil {
-			w.logger.Error().Err(err).Msg("whatsapp reconnect failed")
+		// Retry until a connect actually SUCCEEDS: the first attempt after a
+		// logout often dies on a transient exit-node/socks blip (2026-10-09
+		// 02:53Z — LoggedOut -> fresh device -> one reconnect attempt ->
+		// "general SOCKS server failure" -> the chain just stopped, so NO
+		// further attempt was ever made and the QR page sat on "waiting"
+		// forever while whatsapp looked stuck-but-recoverable). Every failed
+		// attempt logs loudly and retries in reconnectRetryDelay; a
+		// successful connect stops the loop (the pairing session's own
+		// QR-channel-close / Disconnected handlers re-arm if it dies later).
+		for {
+			time.Sleep(reconnectRetryDelay)
+			if w.IsLoggedIn() {
+				break
+			}
+			w.logger.Info().Msg("whatsapp: not logged in, reconnecting for a fresh QR session")
+			if err := w.connectFn(context.Background()); err != nil {
+				w.logger.Error().Err(err).Msg("whatsapp reconnect failed — retrying (exit-node/egress still down?)")
+				continue
+			}
+			break
 		}
 		w.mu.Lock()
 		w.reconnecting = false
@@ -610,7 +634,7 @@ func (w *WhatsmeowClient) StopTyping(ctx context.Context, to string) {
 }
 
 func (w *WhatsmeowClient) IsLoggedIn() bool {
-	return w.client.Store.ID != nil
+	return w.client != nil && w.client.Store.ID != nil
 }
 
 // Groups lists the groups the device has joined (active server call, not a

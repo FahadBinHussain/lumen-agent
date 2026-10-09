@@ -908,7 +908,20 @@ bool). Both are polled, not event-driven.
   auto-reconnect never engages when the INITIAL dial fails. `bridge.Run` now
   retries the dial every 20s until it succeeds. Verify: logs `entrypoint:
   tailscale userspace node up (<ip>), exit node 100.76.10.50` + `WhatsApp
-  connected`; tailnet shows `lumen-render` (linux, active).
+  connected`; tailnet shows `lumen-render` (linux, active). **Runtime logout
+  reconnect gave up after one failure (2026-10-09):** a *runtime* `LoggedOut`
+  (server 401 "logged out from another device" at 02:53:17) created the fresh
+  device fine, but `scheduleReconnect`'s single `Connect` attempt died 25s
+  later on a transient exit-node SOCKS blip (`general SOCKS server failure`)
+  and the chain just STOPPED — no further attempt ever fired, no QR event
+  could arrive, pair page stuck on `{"status":"waiting"}` forever (distinct
+  from the 09-07 boot-dial bug: that one is `bridge.Run`, this one is the
+  post-logout path). Fix: the reconnect loop retries every 15s
+  (`reconnectRetryDelay`, injectable `connectFn`) until a connect succeeds,
+  logging the exact error on every attempt. Verify: logs repeat `whatsapp:
+  not logged in, reconnecting for a fresh QR session` + `whatsapp reconnect
+  failed — retrying` every 15s while egress is down, QR/pair session comes up
+  when it heals.
 - **Exit advertisement can silently vanish (2026-09-07):** laptop-main lost
   `AdvertiseRoutes` (prefs showed null; `exit-node list` offered only the
   offline desktop-main) — cause unknown (client update? VPN toggle?), effect
