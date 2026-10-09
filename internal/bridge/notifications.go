@@ -414,6 +414,36 @@ func whatsappPairAuthorized(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(want), []byte(got)) == 1
 }
 
+// whatsappPairPage is the private pairing page. States it must handle
+// truthfully: qr live / waiting (whatsapp not connected right now) / paired /
+// disabled / unauthorized. The QR box starts hidden and only shows once the
+// PNG actually loads, so an unloaded <img> can never render as the
+// broken-image icon (the "QR not coming" symptom when the tail-exit flaps).
+const whatsappPairPage = `<!doctype html><html><head><meta charset="utf-8"><title>WhatsApp pairing</title>
+<style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px}h1{font-size:20px;margin:0}h2{font-size:16px;margin:24px 0 4px}#qrbox{background:#fff;padding:16px;border-radius:12px;display:none}ol{font-size:14px;color:#ccc}button{font-size:15px;padding:10px 20px;border-radius:8px;border:0;background:#2b8a3e;color:#fff;cursor:pointer}button:disabled{opacity:.5}#code{font-size:34px;letter-spacing:6px;font-weight:700;background:#222;padding:14px 24px;border-radius:10px;display:none;font-family:monospace}#status{color:#8be08b;min-height:1.2em}#status.warn{color:#ffd43b}#status.err{color:#ff6b6b}#ph{display:none;width:512px;min-height:512px;align-items:center;justify-content:center;text-align:center;color:#444;font-size:15px;background:#f2f2f2;border-radius:8px;padding:24px;box-sizing:border-box}</style></head>
+<body><h1>WhatsApp pairing &mdash; lumen</h1>
+<div id="status">checking...</div>
+<div id="qrbox"><img id="qr" width="512" height="512" alt="QR"><div id="ph"></div></div>
+<ol><li>Open WhatsApp on your phone</li><li>Settings &rarr; Linked devices &rarr; Link a device</li><li>Scan this QR &mdash; it refreshes automatically every 4 seconds</li></ol>
+<h2>or link with phone number</h2>
+<div style="font-size:13px;color:#aaa">This private page uses the saved server-side phone number.</div>
+<button id="pairbtn" onclick="genCode()">Generate linking code</button>
+<div id="code"></div>
+<ol><li>Press the button above</li><li>Open WhatsApp on the phone &rarr; Settings &rarr; Linked devices &rarr; <b>Link with phone number instead</b></li><li>Type the code shown above into the phone</li></ol>
+<script>const img=document.getElementById('qr'),st=document.getElementById('status'),btn=document.getElementById('pairbtn'),code=document.getElementById('code'),box=document.getElementById('qrbox'),ph=document.getElementById('ph'),params=new URLSearchParams(location.search),token=params.get('token')||'';let have='';
+function say(c,t){st.className=c;st.textContent=t}
+function placeholder(t){img.style.display='none';ph.style.display='flex';ph.textContent=t;box.style.display='block'}
+async function tick(){try{const j=await(await fetch('?format=json&token='+encodeURIComponent(token))).json();
+if(j.status==='paired'){have='';btn.style.display='none';placeholder('device already linked - nothing to scan');say('','paired - device linked');return}
+if(j.status==='error'||j.status==='disabled'){have='';box.style.display='none';say('err',j.message||j.status);return}
+if(j.status!=='qr'){have='';placeholder('waiting for a fresh QR - this page checks every 4 seconds and shows it as soon as whatsapp connects');say('warn',j.message||'waiting');return}
+if(j.ref!==have){have=j.ref;img.onload=()=>{img.style.display='block';ph.style.display='none';box.style.display='block'};img.onerror=()=>{have='';placeholder('QR image failed to load - waiting for the next one')};img.src='?format=png&t='+Date.now()}
+say('','QR live - refreshes automatically '+new Date().toLocaleTimeString())}
+catch(e){say('err','error: '+e.message)}}
+async function genCode(){btn.disabled=true;code.style.display='none';say('','requesting code using saved phone number...');try{const r=await fetch('/api/whatsapp/pair?token='+encodeURIComponent(token),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const raw=await r.text();let j;try{j=JSON.parse(raw)}catch(_){throw new Error(raw||('HTTP '+r.status))}if(!r.ok){throw new Error(j.message||('HTTP '+r.status))}if(j.status==='code'){code.textContent=j.code;code.style.display='block';say('','enter this code on the phone')}else{say('err',j.message||'pair failed');btn.disabled=false}}
+catch(e){say('err','error: '+e.message);btn.disabled=false}}
+tick();setInterval(tick,4000)</script></body></html>`
+
 func (s *Service) handleWhatsAppQR(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -456,25 +486,7 @@ func (s *Service) handleWhatsAppQR(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Query().Get("format") == "html" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8"><title>WhatsApp pairing</title>
-<style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px}h1{font-size:20px;margin:0}h2{font-size:16px;margin:24px 0 4px}#qrbox{background:#fff;padding:16px;border-radius:12px}ol{font-size:14px;color:#ccc}button{font-size:15px;padding:10px 20px;border-radius:8px;border:0;background:#2b8a3e;color:#fff;cursor:pointer}button:disabled{opacity:.5}#code{font-size:34px;letter-spacing:6px;font-weight:700;background:#222;padding:14px 24px;border-radius:10px;display:none;font-family:monospace}</style></head>
-<body><h1>WhatsApp pairing &mdash; lumen</h1>
-<div id="status" style="color:#8be08b">loading...</div>
-<div id="qrbox"><img id="qr" width="512" height="512" alt="QR"></div>
-<ol><li>Open WhatsApp on your phone</li><li>Settings &rarr; Linked devices &rarr; Link a device</li><li>Scan this QR &mdash; it refreshes automatically every 4 seconds</li></ol>
-<h2>or link with phone number</h2>
-<div style="font-size:13px;color:#aaa">This private page uses the saved server-side phone number.</div>
-<button id="pairbtn" onclick="genCode()">Generate linking code</button>
-<div id="code"></div>
-<ol><li>Press the button above</li><li>Open WhatsApp on the phone &rarr; Settings &rarr; Linked devices &rarr; <b>Link with phone number instead</b></li><li>Type the code shown above into the phone</li></ol>
-<script>const img=document.getElementById('qr'),st=document.getElementById('status'),btn=document.getElementById('pairbtn'),code=document.getElementById('code'),params=new URLSearchParams(location.search),token=params.get('token')||'';let have='';
-async function tick(){try{const j=await(await fetch('?format=json&token='+encodeURIComponent(token))).json();if(j.status==='paired'){st.textContent='paired - device linked';btn.style.display='none';return}
-if(j.status!=='qr'){st.textContent=(j.status||'waiting')+' - '+(j.message||'');return}
-if(j.ref!==have){have=j.ref;img.src='?format=png&t='+Date.now();st.textContent='refreshed '+new Date().toLocaleTimeString()}else{st.textContent='waiting for next refresh...'}}
-catch(e){st.textContent='error: '+e.message}}
-async function genCode(){btn.disabled=true;code.style.display='none';st.textContent='requesting code using saved phone number...';try{const r=await fetch('/api/whatsapp/pair?token='+encodeURIComponent(token),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const raw=await r.text();let j;try{j=JSON.parse(raw)}catch(_){throw new Error(raw||('HTTP '+r.status))}if(!r.ok){throw new Error(j.message||('HTTP '+r.status))}if(j.status==='code'){code.textContent=j.code;code.style.display='block';st.textContent='enter this code on the phone'}else{st.textContent=(j.message||'pair failed');btn.disabled=false}}
-catch(e){st.textContent='error: '+e.message;btn.disabled=false}}
-tick();setInterval(tick,4000)</script></body></html>`))
+		w.Write([]byte(whatsappPairPage))
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain")

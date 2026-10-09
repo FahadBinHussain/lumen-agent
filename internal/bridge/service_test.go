@@ -190,6 +190,64 @@ func TestWhatsAppPairErrorsAreJSON(t *testing.T) {
 	}
 }
 
+// TestWhatsAppQRPageNeverShowsBrokenImage pins the 2026-10-09 report: the QR
+// box used to render a bare <img> with no src whenever the tail-exit flapped
+// (status=waiting), so the page showed a broken-image icon instead of an
+// explanation, and failures printed in the green success color.
+func TestWhatsAppQRPageNeverShowsBrokenImage(t *testing.T) {
+	if !strings.Contains(whatsappPairPage, `#qrbox{background:#fff;padding:16px;border-radius:12px;display:none`) {
+		t.Fatal("qrbox must start hidden so an unloaded <img> never renders as a broken-image icon")
+	}
+	if !strings.Contains(whatsappPairPage, "img.onerror=") {
+		t.Fatal("page must handle a failed QR image load (session died between poll and png fetch)")
+	}
+	if !strings.Contains(whatsappPairPage, `#status.err{color:#ff6b6b`) {
+		t.Fatal("errors must render red, not the green success color")
+	}
+	if !strings.Contains(whatsappPairPage, "placeholder('waiting for a fresh QR") {
+		t.Fatal("status=waiting must show a visible placeholder with the reason")
+	}
+}
+
+func TestWhatsAppQRAuthAndStateAreJSON(t *testing.T) {
+	t.Setenv("WHATSAPP_PAIR_TOKEN", "test-token")
+	cfg := writeTestConfig(t, "")
+	s, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("new bridge: %v", err)
+	}
+	defer s.Close()
+
+	// wrong token: loud 401 JSON
+	req, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1/api/whatsapp/qr?format=json&token=wrong", nil)
+	rec := newRecorder()
+	s.handleWhatsAppQR(rec, req)
+	if rec.status != http.StatusUnauthorized {
+		t.Fatalf("wrong token: expected 401, got %d: %s", rec.status, rec.body.String())
+	}
+	var unauth map[string]string
+	if err := json.Unmarshal(rec.body.Bytes(), &unauth); err != nil || unauth["status"] != "error" {
+		t.Fatalf("401 body must be JSON with status=error: %v %q", err, rec.body.String())
+	}
+
+	// valid token: authorized (state depends on config, but never 401)
+	req, _ = http.NewRequest(http.MethodGet, "http://127.0.0.1/api/whatsapp/qr?format=json&token=test-token", nil)
+	rec = newRecorder()
+	s.handleWhatsAppQR(rec, req)
+	if rec.status != http.StatusOK {
+		t.Fatalf("valid token: expected 200, got %d: %s", rec.status, rec.body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.body.Bytes(), &resp); err != nil {
+		t.Fatalf("qr response not JSON: %v; body=%q", err, rec.body.String())
+	}
+	switch resp["status"] {
+	case "disabled", "waiting", "qr", "paired":
+	default:
+		t.Fatalf("unexpected qr status %q", resp["status"])
+	}
+}
+
 func TestBridgeHistoryRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	cfg := writeTestConfig(t, "")
