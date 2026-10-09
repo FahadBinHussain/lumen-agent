@@ -1,5 +1,28 @@
 # Element Orion fork (FahadBinHussain/lumen-agent) — agent notes
 
+## Proton VPN is forbidden ground for lumen (2026-10-09, user rule)
+
+- NEVER touch Proton VPN for anything lumen-related: no toggling it, no
+  switching/reconnecting servers, no editing split-tunnel/kill-switch
+  settings, no "try turning Proton off/on" diagnostics, and do not offer it
+  to the user as a fix option either. Proton state is user-owned and outside
+  lumen's control.
+- Lumen must be PROTON-AGNOSTIC: it works — or fails loudly and
+  self-recovers — whether Proton is on, off, or mid-server-switch. Proton
+  flapping (4 server switches on 2026-10-09 alone) is a NORMAL
+  environmental condition, same class as a Render restart or a tailscale
+  blip: design around it, never try to eliminate it by touching Proton.
+- When Proton's state breaks a lumen path, the fix MUST come from the
+  lumen side. The recurring one: whatsapp tail-exit egress
+  (`whatsmeow -> tailscaled socks 1055 -> laptop-main exit -> internet`)
+  black-holes with `general SOCKS server failure` whenever Proton re-keys.
+  Acceptable fixes = lumen-side alternatives (retry windows, a different
+  exit node, an egress path that does not ride Proton, ...). "Switch or
+  reconnect Proton" is not an acceptable answer in any form.
+- Read-only correlation notes are fine (e.g. "outage lines up with the
+  08:40 Proton server switch") — report the fact, then solve it from the
+  lumen side anyway.
+
 ## Deployment fixes (2026-09-23)
 
 - Production's active model is `atria-dawn` (`Atria-Dawn-Preview` via Atria ASI
