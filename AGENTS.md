@@ -879,6 +879,26 @@ bool). Both are polled, not event-driven.
   text (qr green / waiting yellow / error+unauthorized red), failed PNG load
   falls back to placeholder, so tail-exit flaps no longer show a
   broken-image icon.
+- **QR PNG 401 (2026-10-09, `d5f3a2c`)**: the page built the image URL as a
+  query-only relative `'?format=png&t=...'`, which REPLACES the page's whole
+  query string and drops `token` → `whatsappPairAuthorized` 401s → `<img>`
+  onerror forever: status says "QR live" (the JSON poll always carried the
+  token) while the box shows "QR image failed to load". Fix: the png URL must
+  be `'&token='+encodeURIComponent(token)`-suffixed — pinned by
+  `TestWhatsAppQRPageNeverShowsBrokenImage`.
+- **`"status":"paired"` reads the STORE FILE, not server truth (observed
+  2026-10-09)**: unpaired runtime states never persist (`sqlstore.NewDevice`:
+  "No data is actually stored before Save is called"; only the pairing
+  process auto-saves), so `whatsmeow.db` + the Neon `whatsapp_sessions` row
+  keep holding whatever was last PAIRED — including a session the server
+  already rejected (02:53 `401 logged out from another device`). Symptom:
+  `qr?format=json` = `paired` while `health.platforms.whatsapp` = false and
+  every dial fails. Treat as "stale session awaiting server validation": the
+  first successful dial either authenticates (valid — health flips true) or
+  401s → whatsmeow deletes the store → fresh device → QR appears on the fixed
+  page → pair immediately inside that egress window. The bridge.Run 20s
+  initial-dial loop + scheduleReconnect 15s loop both retry forever, so no
+  intervention is needed until one of those two outcomes logs.
 - Client must be current: whatsmeow <2026-06-22 breaks pairing (server now
   expects passkey + client-props handshake). Pinned Aug 16 build
   (`fb386f152837`) + mautrix-go v0.30.0 — both required together (util v0.10.0).
