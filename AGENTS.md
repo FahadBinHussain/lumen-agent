@@ -865,6 +865,20 @@ bool). Both are polled, not event-driven.
 - QR page no longer hardcodes a phone number (removed for privacy,
   `notifications.go` page uses env var); pairing endpoint accepts empty body
   and falls back to `WHATSAPP_PAIR_PHONE` env.
+- **2026-10-09: pairing-readiness signal = QR page state, NOT health** —
+  whatsmeow dispatches `events.Connected` only from `handleConnectSuccess`
+  (post-auth), so `health.platforms.whatsapp` (`IsConnected()` flag) stays
+  `false` the whole time a QR/code pairing session is up and only flips true
+  after pairing succeeds — waiting for `platforms.whatsapp: true` before
+  clicking "Generate linking code" is circular and never fires. The real
+  socket-up signal while unpaired: `GET /api/whatsapp/qr` returns
+  `"status":"qr"` / the page shows "QR live" (the wrapper clears QRCode() on
+  `Disconnected`, so a live QR ⇔ socket up ⇔ `PairPhone` works).
+  `"status":"waiting"` = egress gap, page retries every 4s. Same day: QR page
+  redesigned (`ea08d7c`) — box starts hidden, all states render as colored
+  text (qr green / waiting yellow / error+unauthorized red), failed PNG load
+  falls back to placeholder, so tail-exit flaps no longer show a
+  broken-image icon.
 - Client must be current: whatsmeow <2026-06-22 breaks pairing (server now
   expects passkey + client-props handshake). Pinned Aug 16 build
   (`fb386f152837`) + mautrix-go v0.30.0 — both required together (util v0.10.0).
