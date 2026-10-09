@@ -415,10 +415,15 @@ func whatsappPairAuthorized(r *http.Request) bool {
 }
 
 // whatsappPairPage is the private pairing page. States it must handle
-// truthfully: qr live / waiting (whatsapp not connected right now) / paired /
-// disabled / unauthorized. The QR box starts hidden and only shows once the
-// PNG actually loads, so an unloaded <img> can never render as the
+// truthfully: qr live / waiting (whatsapp not connected right now) / stale
+// (store says paired but the socket is down - may be a rejected session) /
+// paired / disabled / unauthorized. The QR box starts hidden and only shows
+// once the PNG actually loads, so an unloaded <img> can never render as the
 // broken-image icon (the "QR not coming" symptom when the tail-exit flaps).
+// The linking code auto-generates the moment a QR session is live (2026-10-09:
+// "open the logout-alert link and the code shows there" - the button stays for
+// a fresh code), and regenerates whenever the QR ref rotates because the old
+// code dies with the old session.
 const whatsappPairPage = `<!doctype html><html><head><meta charset="utf-8"><title>WhatsApp pairing</title>
 <style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px}h1{font-size:20px;margin:0}h2{font-size:16px;margin:24px 0 4px}#qrbox{background:#fff;padding:16px;border-radius:12px;display:none}ol{font-size:14px;color:#ccc}button{font-size:15px;padding:10px 20px;border-radius:8px;border:0;background:#2b8a3e;color:#fff;cursor:pointer}button:disabled{opacity:.5}#code{font-size:34px;letter-spacing:6px;font-weight:700;background:#222;padding:14px 24px;border-radius:10px;display:none;font-family:monospace}#status{color:#8be08b;min-height:1.2em}#status.warn{color:#ffd43b}#status.err{color:#ff6b6b}#ph{display:none;width:512px;min-height:512px;align-items:center;justify-content:center;text-align:center;color:#444;font-size:15px;background:#f2f2f2;border-radius:8px;padding:24px;box-sizing:border-box}</style></head>
 <body><h1>WhatsApp pairing &mdash; lumen</h1>
@@ -429,16 +434,18 @@ const whatsappPairPage = `<!doctype html><html><head><meta charset="utf-8"><titl
 <div style="font-size:13px;color:#aaa">This private page uses the saved server-side phone number.</div>
 <button id="pairbtn" onclick="genCode()">Generate linking code</button>
 <div id="code"></div>
-<ol><li>Press the button above</li><li>Open WhatsApp on the phone &rarr; Settings &rarr; Linked devices &rarr; <b>Link with phone number instead</b></li><li>Type the code shown above into the phone</li></ol>
+<ol><li>The code appears on its own the moment it can be used - the button gets a fresh one</li><li>Open WhatsApp on the phone &rarr; Settings &rarr; Linked devices &rarr; <b>Link with phone number instead</b></li><li>Type the code shown above into the phone</li></ol>
 <script>const img=document.getElementById('qr'),st=document.getElementById('status'),btn=document.getElementById('pairbtn'),code=document.getElementById('code'),box=document.getElementById('qrbox'),ph=document.getElementById('ph'),params=new URLSearchParams(location.search),token=params.get('token')||'';let have='';
 function say(c,t){st.className=c;st.textContent=t}
 function placeholder(t){img.style.display='none';ph.style.display='flex';ph.textContent=t;box.style.display='block'}
 async function tick(){try{const j=await(await fetch('?format=json&token='+encodeURIComponent(token))).json();
-if(j.status==='paired'){have='';btn.style.display='none';placeholder('device already linked - nothing to scan');say('','paired - device linked');return}
+if(j.status==='paired'){have='';btn.style.display='none';code.style.display='none';placeholder('device already linked - nothing to scan');say('','paired - device linked');return}
 if(j.status==='error'||j.status==='disabled'){have='';box.style.display='none';say('err',j.message||j.status);return}
-if(j.status!=='qr'){have='';placeholder('waiting for a fresh QR - this page checks every 4 seconds and shows it as soon as whatsapp connects');say('warn',j.message||'waiting');return}
-if(j.ref!==have){have=j.ref;img.onload=()=>{img.style.display='block';ph.style.display='none';box.style.display='block'};img.onerror=()=>{have='';placeholder('QR image failed to load - waiting for the next one')};img.src='?format=png&token='+encodeURIComponent(token)+'&t='+Date.now()}
-say('','QR live - refreshes automatically '+new Date().toLocaleTimeString())}
+if(j.status==='stale'){have='';box.style.display='none';code.style.display='none';btn.style.display='none';say('warn',j.message||'device session on file but whatsapp is not connected right now');return}
+if(j.status!=='qr'){have='';code.style.display='none';placeholder('waiting for a fresh QR - this page checks every 4 seconds and shows it as soon as whatsapp connects');say('warn',j.message||'waiting');return}
+if(j.ref!==have){have=j.ref;code.style.display='none';btn.style.display='';img.onload=()=>{img.style.display='block';ph.style.display='none';box.style.display='block'};img.onerror=()=>{have='';placeholder('QR image failed to load - waiting for the next one')};img.src='?format=png&token='+encodeURIComponent(token)+'&t='+Date.now()}
+say('','QR live - refreshes automatically '+new Date().toLocaleTimeString());
+if(code.style.display==='none'&&!btn.disabled){genCode()}}
 catch(e){say('err','error: '+e.message)}}
 async function genCode(){btn.disabled=true;code.style.display='none';say('','requesting code using saved phone number...');try{const r=await fetch('/api/whatsapp/pair?token='+encodeURIComponent(token),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const raw=await r.text();let j;try{j=JSON.parse(raw)}catch(_){throw new Error(raw||('HTTP '+r.status))}if(!r.ok){throw new Error(j.message||('HTTP '+r.status))}if(j.status==='code'){code.textContent=j.code;code.style.display='block';say('','enter this code on the phone')}else{say('err',j.message||'pair failed');btn.disabled=false}}
 catch(e){say('err','error: '+e.message);btn.disabled=false}}
@@ -455,13 +462,34 @@ func (s *Service) handleWhatsAppQR(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "error", "message": "whatsapp pairing is not authorized"})
 		return
 	}
+	// The pair page shell must ALWAYS render, in every whatsapp state — the
+	// state checks below answer JSON, and serving that JSON to a browser that
+	// opened the ?format=html link (the URL the logout alert sends) dumped a
+	// raw {"status":"waiting"} blob instead of the page whenever the whatsapp
+	// socket was down at click time. The page itself polls the JSON endpoint.
+	if r.URL.Query().Get("format") == "html" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(whatsappPairPage))
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if s.whatsapp == nil {
 		json.NewEncoder(w).Encode(map[string]string{"status": "disabled", "message": "whatsapp not enabled"})
 		return
 	}
 	if s.whatsapp.IsLoggedIn() {
-		json.NewEncoder(w).Encode(map[string]string{"status": "paired", "message": "device already linked"})
+		if s.whatsapp.IsConnected() {
+			json.NewEncoder(w).Encode(map[string]string{"status": "paired", "message": "device already linked"})
+		} else {
+			// Store says paired but the socket is down: either a transient
+			// blip or a session the server rejected while the container was
+			// away (the store keeps the dead session until a dial gets a 401).
+			// Claiming "paired - nothing to scan" here is the dead end that
+			// made the logout-alert link useless; tell the truth and keep the
+			// page polling so a fresh QR/code appears the moment a dial wipes
+			// the store.
+			json.NewEncoder(w).Encode(map[string]string{"status": "stale", "message": "device session on file but whatsapp is not connected right now - if the server rejected it, a fresh QR and code appear here automatically as soon as whatsapp reconnects"})
+		}
 		return
 	}
 	qr := s.whatsapp.QRCode()
@@ -482,11 +510,6 @@ func (s *Service) handleWhatsAppQR(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Write(png)
-		return
-	}
-	if r.URL.Query().Get("format") == "html" {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(whatsappPairPage))
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain")

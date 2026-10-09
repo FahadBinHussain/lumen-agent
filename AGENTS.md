@@ -1041,6 +1041,48 @@ bool). Both are polled, not event-driven.
 - Local pairing path: kill local instance AFTER pairing before deploying Render
   (same identity dual-connect conflict); transfer session via
   `POST /api/whatsapp/session/upload` (bridge secret auth) → Neon restore on boot.
+- **uTLS direct dial was broken TWO ways (found + fixed 2026-10-09)** in
+  `internal/whatsapp/tls_client.go`: (1) `DialTLSContext` returned
+  `uconn.NetConn()` — the raw TCP conn under a LIVE TLS session — so the
+  transport wrote plaintext HTTP into TLS and every response read back as
+  `malformed HTTP response "\x17\x03\x03..."`; (2) Chrome's hello spec
+  hardcodes ALPN `["h2","http/1.1"]` and its `writeToUConn` OVERWRITES
+  `config.NextProtos`, while Go's http.Transport only handshakes/records ALPN
+  state for a real `*tls.Conn` — so the server picked h2 and the transport
+  read `\x00\x00...` as the status line. Fix: `BuildHandshakeState()` first
+  (Extensions are LAZY — empty right after `UClient`), mutate the
+  `*utls.ALPNExtension.AlpnProtocols` to `["http/1.1"]`, then `Handshake()`,
+  then `return uconn, nil` (the uTLS conn itself). Real-dial probe:
+  `LUMEN_NET_PROBE=1 go test -run TestChromeHTTPClientDirectDial
+  ./internal/whatsapp/` (gated so plain `go test ./...` stays offline-green).
+- **`SetProxyAddress` silently replaced the uTLS transport (found + fixed
+  2026-10-09)**: `client.SetProxyAddress(addr)` with no options sets the
+  `Transport` FIELD of `preLoginHTTP`/`websocketHTTP`/`mediaHTTP`, and
+  `whatsmeow_client.go` had all three pointing at ONE shared
+  `NewChromeHTTPClient` instance — so with `WHATSAPP_PROXY_URL` set (always,
+  on Render) the field being replaced WAS our uTLS transport: prod never ran
+  the Chrome fingerprint at all (plain Go TLS over socks; the "Chrome TLS
+  fingerprint impersonation enabled" log line was lying, and prod's errors
+  showed plain `socks connect tcp` with no `tcp dial:` prefix). whatsmeow's
+  `setTransport` mutates fields, so even `SetProxyOptions{NoWebsocket: true}`
+  would gut a shared instance through `mediaHTTP`. Fix: media gets ITS OWN
+  `NewChromeHTTPClient` instance + `SetProxyAddress(addr,
+  SetProxyOptions{NoWebsocket: true})` (media-only proxy = what the "E2EE
+  only" log line always claimed); websocket/prelogin keep the uTLS client,
+  which dials the proxy itself. Keep the instances separate if you touch this.
+- **Logout-alert pair link used to dead-end (found + fixed 2026-10-09)**:
+  `handleWhatsAppQR` ran the state checks BEFORE the `format=html` branch, so
+  the browser that opened the alert's link got a raw `{"status":"waiting"}`
+  JSON blob instead of the page whenever the socket was down at click time
+  (the normal case right after a logout) — and even on the page, the code
+  needed a button click while a stale store said "paired - nothing to scan".
+  Fixes: the html branch returns the page shell FIRST in every state (it
+  polls the JSON itself); `stale` status (store says paired + socket down)
+  warns and keeps polling instead of claiming paired; the page auto-generates
+  the linking code while `status=qr` (retry each 4s tick until one shows) and
+  hides the code on any non-qr state and on ref rotation (a code dies with
+  its session). Pinned by `TestWhatsAppPairPageAlwaysServesHTML` +
+  `TestWhatsAppPairPageAutoShowsCode`.
 
 ## Neon warning delivery (2026-09-23)
 

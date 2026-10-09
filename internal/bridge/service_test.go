@@ -249,9 +249,67 @@ func TestWhatsAppQRAuthAndStateAreJSON(t *testing.T) {
 		t.Fatalf("qr response not JSON: %v; body=%q", err, rec.body.String())
 	}
 	switch resp["status"] {
-	case "disabled", "waiting", "qr", "paired":
+	case "disabled", "waiting", "qr", "paired", "stale":
 	default:
 		t.Fatalf("unexpected qr status %q", resp["status"])
+	}
+}
+
+// TestWhatsAppPairPageAlwaysServesHTML pins the 2026-10-09 logout-alert
+// report: the ?format=html link the alert sends ran the state checks FIRST,
+// so with whatsapp down at click time (the normal case right after a logout)
+// the browser got a raw {"status":"waiting"} JSON blob instead of the pairing
+// page. The page shell must render in every state — it polls the JSON
+// endpoint itself.
+func TestWhatsAppPairPageAlwaysServesHTML(t *testing.T) {
+	t.Setenv("WHATSAPP_PAIR_TOKEN", "test-token")
+	cfg := writeTestConfig(t, "")
+	s, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("new bridge: %v", err)
+	}
+	defer s.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1/api/whatsapp/qr?format=html&token=test-token", nil)
+	rec := newRecorder()
+	s.handleWhatsAppQR(rec, req)
+	if rec.status != http.StatusOK {
+		t.Fatalf("format=html: expected 200, got %d: %s", rec.status, rec.body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("format=html must render the page shell, got Content-Type %q body=%q", ct, rec.body.String())
+	}
+	if !strings.Contains(rec.body.String(), "<title>WhatsApp pairing</title>") {
+		t.Fatalf("format=html body is not the pairing page: %q", rec.body.String())
+	}
+
+	// Unauthorized stays loud JSON 401 even for format=html.
+	req, _ = http.NewRequest(http.MethodGet, "http://127.0.0.1/api/whatsapp/qr?format=html&token=wrong", nil)
+	rec = newRecorder()
+	s.handleWhatsAppQR(rec, req)
+	if rec.status != http.StatusUnauthorized {
+		t.Fatalf("format=html wrong token: expected 401, got %d", rec.status)
+	}
+}
+
+// TestWhatsAppPairPageAutoShowsCode pins the 2026-10-09 requirement: open the
+// logout-alert link and the code shows there — no button click. The code must
+// auto-request while a QR session is live (retrying until one displays), die
+// with the session it belonged to (ref rotation / any non-qr state hides it),
+// and a stale store (session on file, socket down) must warn instead of
+// claiming "paired - nothing to scan".
+func TestWhatsAppPairPageAutoShowsCode(t *testing.T) {
+	if !strings.Contains(whatsappPairPage, `if(code.style.display==='none'&&!btn.disabled){genCode()}`) {
+		t.Fatal("page must auto-generate the linking code while a QR session is live")
+	}
+	if !strings.Contains(whatsappPairPage, `if(j.status==='stale')`) {
+		t.Fatal("page must handle status=stale (store says paired, socket down)")
+	}
+	if !strings.Contains(whatsappPairPage, `if(j.ref!==have){have=j.ref;code.style.display='none';`) {
+		t.Fatal("a rotated QR ref must hide the old code (the code dies with its session)")
+	}
+	if !strings.Contains(whatsappPairPage, `if(j.status!=='qr'){have='';code.style.display='none';`) {
+		t.Fatal("any non-qr state must hide a code from the previous session")
 	}
 }
 
