@@ -95,7 +95,14 @@ func NewWhatsmeowClient(dbPath string, proxyAddr string, logger zerolog.Logger, 
 	wsHTTPClient := NewChromeHTTPClient(proxyAddr)
 	client.SetWebsocketHTTPClient(wsHTTPClient)
 	client.SetPreLoginHTTPClient(wsHTTPClient)
-	client.SetMediaHTTPClient(wsHTTPClient)
+	// Media gets ITS OWN instance, never the shared one: whatsmeow's
+	// SetProxyAddress below replaces the Transport FIELD of the clients it
+	// manages, and with a shared instance that field IS the websocket
+	// transport — so with WHATSAPP_PROXY_URL set, every prod boot silently
+	// swapped our Chrome-uTLS transport for plain Go TLS on all three
+	// clients (the "Chrome TLS fingerprint impersonation enabled" log line
+	// was lying the whole time).
+	client.SetMediaHTTPClient(NewChromeHTTPClient(proxyAddr))
 	logger.Info().Msg("Chrome TLS fingerprint impersonation enabled (bypass JA3)")
 
 	w := &WhatsmeowClient{
@@ -108,7 +115,12 @@ func NewWhatsmeowClient(dbPath string, proxyAddr string, logger zerolog.Logger, 
 	}
 
 	if proxyAddr != "" {
-		if err := client.SetProxyAddress(proxyAddr); err != nil {
+		// NoWebsocket: proxy the media downloads only — which is what the log
+		// line below always claimed, and it now matches the code. The
+		// websocket/prelogin traffic keeps the uTLS client above (it dials
+		// the proxy itself through its dialer), so the Chrome fingerprint
+		// survives a proxy being configured at all.
+		if err := client.SetProxyAddress(proxyAddr, whatsmeow.SetProxyOptions{NoWebsocket: true}); err != nil {
 			logger.Warn().Err(err).Str("proxy", proxyAddr).Msg("Failed to set WhatsApp proxy")
 		} else {
 			logger.Info().Str("proxy", proxyAddr).Msg("WhatsApp proxy configured (E2EE only)")
