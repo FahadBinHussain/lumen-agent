@@ -167,7 +167,9 @@ keepalives. The canonical target is `https://lumen-aqyl.onrender.com/api/health`
 
 This fork now runs all three platforms from one binary: the upstream Element Orion
 Discord agent runtime, plus Messenger and WhatsApp channels ported from the murmur
-repo (`C:\Users\Admin\Downloads\murmur`). **The murmur repo stays untouched** —
+repo (github.com/FahadBinHussain/murmur; the local clone
+`C:\Users\Admin\Downloads\murmur` was deleted 2026-10-09 - clone it again if the
+source is ever needed). **The murmur repo stays untouched** -
 it is a read-only source for this port. **The murmur HF space
 (`fahadbinhussain/murmur`) is PAUSED since 2026-08-15 and must NEVER be deleted
 (user rule) — it stays dead but intact as fallback.**
