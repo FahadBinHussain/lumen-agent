@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,6 +46,12 @@ type Incoming struct {
 
 type Handler func(ctx context.Context, msg Incoming)
 
+// dispatchItem is one inbound message parked for the dispatcher goroutine.
+type dispatchItem struct {
+	ctx context.Context
+	msg Incoming
+}
+
 // ThreadInfo is one inbox thread the account has synced: its thread key and
 // the most recent name + activity seen for it.
 type ThreadInfo struct {
@@ -67,6 +74,18 @@ type Client struct {
 
 	connMu    sync.Mutex
 	connected bool
+
+	// Inbound dispatch (2026-10-09): messagix v0.2609 feeds every *table.LSTable
+	// event through ONE frame-handler goroutine (dgw readLoop -> incoming chan
+	// (cap 64) -> syncManager.HandleEvent). Running the bridge handler — and
+	// with it the agent run and its SendText — on that goroutine self-deadlocks:
+	// the send waits for a data frame only the goroutine we are blocking can
+	// deliver. relay() therefore parks handler calls in dispatchQ and this
+	// single ordered goroutine drains them off the messagix dispatch path.
+	dispatchOnce sync.Once
+	dispatchMu   sync.Mutex
+	dispatchCond *sync.Cond
+	dispatchQ    []dispatchItem
 
 	// auto-reconnect (2026-10-04): a messagix permanent error used to be
 	// terminal - the client logged it and gave up forever, so a single
@@ -122,6 +141,7 @@ func New(cookiesPath string, handler Handler) (*Client, error) {
 		retryDelay:     5 * time.Minute,
 	}
 	cl.reloadFn = cl.ReloadCookies
+	cl.startDispatcher()
 	return cl, nil
 }
 
@@ -448,7 +468,70 @@ func (c *Client) relay(ctx context.Context, msg Incoming) {
 		c.seenMu.Unlock()
 	}
 	if c.handler != nil {
-		c.handler(ctx, msg)
+		c.enqueueDispatch(ctx, msg)
+	}
+}
+
+// startDispatcher boots the single ordered handler goroutine once (idempotent
+// — called from New and from every enqueue).
+func (c *Client) startDispatcher() {
+	c.dispatchOnce.Do(func() {
+		c.dispatchCond = sync.NewCond(&c.dispatchMu)
+		go c.dispatchLoop()
+	})
+}
+
+// enqueueDispatch parks a message for dispatchLoop instead of running the
+// handler inline. WHY (root cause of the lost replies on 2026-10-08/09): the
+// handler ran on messagix's single frame-handler goroutine, so the agent run's
+// own SendText waited for a data frame that only the goroutine we were blocking
+// could deliver — a structural 5s `data receive timed out`, and worse,
+// ForceReconnect couldn't reconnect either (readLoop's wg.Wait waits for the
+// stuck frame-handler goroutine), so every retry burned against a stale
+// canSendMessages flag until the handler finally returned (the 02:29:29-51 log
+// blackout). The dispatcher runs handlers off that goroutine, in arrival order,
+// with a context that outlives the event dispatch (WithoutCancel — same trap as
+// the cookie-upload bug).
+func (c *Client) enqueueDispatch(ctx context.Context, msg Incoming) {
+	c.startDispatcher()
+	c.dispatchMu.Lock()
+	c.dispatchQ = append(c.dispatchQ, dispatchItem{ctx: context.WithoutCancel(ctx), msg: msg})
+	queued := len(c.dispatchQ)
+	c.dispatchCond.Signal()
+	c.dispatchMu.Unlock()
+	if queued > 1 {
+		log.Printf("messenger: dispatcher busy (%d messages waiting), thread %d takes its turn",
+			queued-1, msg.ThreadID)
+	}
+}
+
+// dispatchLoop drains queued messages one at a time in arrival order — serial
+// per client, exactly the ordering the inline path had.
+func (c *Client) dispatchLoop() {
+	for {
+		c.dispatchMu.Lock()
+		for len(c.dispatchQ) == 0 {
+			c.dispatchCond.Wait()
+		}
+		item := c.dispatchQ[0]
+		c.dispatchQ = c.dispatchQ[1:]
+		c.dispatchMu.Unlock()
+		c.runDispatched(item)
+	}
+}
+
+// runDispatched calls the handler; a panic must not kill the dispatcher — a
+// dead dispatcher would strand every later message in the queue (silent
+// failure), so it is recovered and logged loudly here.
+func (c *Client) runDispatched(item dispatchItem) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("messenger: PANIC in message handler — dispatcher survives and keeps draining: %v\n%s",
+				r, debug.Stack())
+		}
+	}()
+	if c.handler != nil {
+		c.handler(item.ctx, item.msg)
 	}
 }
 
@@ -565,10 +648,16 @@ var sendReconnectGrace = 1 * time.Second
 // attempts total). The SAME task closure is reused so the otid stays stable
 // across retries and Meta dedupes a send that actually landed even though its
 // response timed out. On every failure it nudges the transport (ForceReconnect
-// — Meta can stall with ack-but-no-data, and the read pump can take 30s+ to
-// notice a dead socket, see 2026-10-09 01:51Z where 4 blind retries burned
-// out 1s before the socket came back), waits for send readiness, then retries.
-// Every step is logged loudly; only the final failure is returned.
+// — a genuinely dead socket otherwise waits out the read pump, see the
+// 2026-10-09 01:51Z incident where 4 blind retries burned out 1s before the
+// socket came back at 01:52:13), waits for send readiness, then retries.
+// NOTE: the original `data receive timed out` failures were NEVER Meta
+// stalling — they were our own self-deadlock (handler running on messagix's
+// frame-handler goroutine, see enqueueDispatch); with async dispatch attempt 1
+// should just succeed, and this retry only ever covers real transport
+// failures, which are now recoverable because the frame goroutine is free to
+// notice the forced close. Every step is logged loudly; only the final failure
+// is returned.
 func retryLSTable(
 	ctx context.Context,
 	what string,

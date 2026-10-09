@@ -547,26 +547,44 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
   huge responses - prefer timestamp-windowed raw pulls when a log line "isn't
   there". No runtime patching of the June structs is possible: field indexes
   shift after V4's insert, so mapping V4 onto V1 misaligns cursors silently.
-- **Messenger reply sends had NO retry (found + fixed 2026-10-09)**: Meta
-  intermittently stalls the DGW connection mid-send — our task gets ACKed but
-  no data frame ever comes (`dgw: oneoffstream: data receive timed out`, 5s
-  `AckTimeout`), then the socket dies and the read pump can take 30s+ to
-  notice (`failed to write msg: use of closed network connection`). Original
-  code called `ExecuteTasks` ONCE: the model's answer was computed, logged as
-  `assistant ...`, and silently lost — user saw only "thinking." (reproduced
-  2026-10-08 18:04Z and again 2026-10-09 01:51Z). Fix:
-  `executeRetry`/`retryLSTable` (internal/messenger/messenger.go) wraps every
-  message-path task (send/chunk/edit/delete/image-send) — 5 attempts. Each
-  failure after an attempt: log LOUDLY, `ForceReconnect()` (kick the socket
-  now instead of waiting for the read pump — first version used blind 1/3/5s
-  backoff and burned all 4 attempts 1s BEFORE the socket came back at 01:52:13
-  after a 34s zombie window), 1s grace, `WaitUntilCanSendMessages(15s)`, then
-  backoff 2/5/10/15s only if readiness times out. The SAME task instance is
-  retried so the otid stays stable and Meta dedupes a send that actually
-  landed despite its timed-out response — never regenerate the otid per
-  attempt (double-send) and don't "simplify" back to single-shot. Timers are
-  vars so tests can shrink them; behavior covered by
-  internal/messenger/retry_test.go (nudge count, give-up wording, cancel).
+- **Messenger replies were lost to a SELF-DEADLOCK, not Meta (found + fixed
+  2026-10-09, third try)**: symptom — model replies (logs show `assistant ...`)
+  but the user only ever sees "thinking."; Render logs show
+  `dgw: oneoffstream: data receive timed out` then
+  `use of closed network connection` then `gave up after N attempts`.
+  Root cause (mautrix-meta v0.2609): every `*table.LSTable` event is delivered
+  on ONE frame-handler goroutine (dgw readLoop → `incoming` chan, cap 64 →
+  `syncManager.HandleEvent` → our handler). Our handler ran the whole agent
+  run inline, so the run's own `SendText` → `DoOneOffStream` waited for a
+  **data frame that only the goroutine we were blocking could deliver** →
+  structural 5s timeout at attempt 1. Worse, `ForceReconnect()`'s `CloseNow`
+  fires `fatalError` but `readLoop`'s `wg.Wait()` still waits for the stuck
+  frame-handler goroutine, so `Connect` never returns, `canSendMessages` never
+  clears, `WaitUntilCanSendMessages` returns instantly against the stale flag,
+  and every retry writes to the dead conn — all 5 attempts burn in ~4s. Proof:
+  the 02:29:29→02:29:51 log blackout (nothing processed while the handler ran)
+  with `socket error (attempts 1)` + reconnect landing the moment the handler
+  returned. "Meta acked but sent no data" was never Meta — Meta's data frame
+  was queued behind our own handler. Attempts 1 and 2 (blind 1/3/5s backoff,
+  then ForceReconnect + readiness wait) could never work against a stuck
+  dispatcher. **The fix**: `relay()` no longer calls the handler inline —
+  `enqueueDispatch` parks it (with `context.WithoutCancel`, same trap as the
+  cookie-upload bug) on a single ordered dispatcher goroutine
+  (`dispatchLoop`/`runDispatched`, started by `startDispatcher`, panic-recovered
+  so a handler panic can't silently strand the queue); cursors still advance
+  inline via `PostHandlePublishResponse`. Keep dispatch SERIAL and in arrival
+  order — the bridge clones session history per run, so concurrent handler
+  runs on one thread would race history. Keep `executeRetry`/`retryLSTable`
+  (ForceReconnect + `WaitUntilCanSendMessages(15s)` + 1s grace, 5 attempts,
+  backoffs 2/5/10/15s only on readiness timeout) as the safety net for REAL
+  transport failures from any goroutine (BNP, health-watch, dispatcher) — with
+  async dispatch attempt 1 should just succeed; if
+  `data receive timed out` ever appears again, that IS a genuine Meta stall
+  and is now recoverable. Same task closure across retries so the otid stays
+  stable (Meta dedupes landed-but-timed-out sends) — never regenerate the otid
+  per attempt. Covered by internal/messenger/retry_test.go (schedule/give-up/
+  cancel) and dispatch_test.go (off-goroutine dispatch, arrival order, panic
+  survival, ctx outliving the event).
 - The full test suite (`go test ./...`) is green on Windows (verified
   2026-10-05) — there are NO pre-existing failures; any red test is a real
   regression, never wave it through as "pre-existing".
