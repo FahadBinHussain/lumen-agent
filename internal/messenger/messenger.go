@@ -546,6 +546,47 @@ func (c *Client) CleanMentions(msg Incoming) string {
 	return strings.TrimSpace(string(runes))
 }
 
+// sendRetryBackoffs is the pause between attempts when a messagix task hits a
+// transient socket failure (the DGW one-off stream times out or resets when
+// Meta drops the connection mid-send; the socket reconnects within a few
+// seconds, so a later attempt lands).
+var sendRetryBackoffs = []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+
+// retryLSTable runs op until it succeeds or the backoff schedule is exhausted
+// (4 attempts total). The SAME op result is kept — callers pass a closure over
+// one task instance so the otid stays stable across retries and Meta dedupes a
+// send that actually landed even though its response timed out. Every retry is
+// logged loudly; only the final failure is returned.
+func retryLSTable(ctx context.Context, what string, op func() (*table.LSTable, error)) (*table.LSTable, error) {
+	for attempt := 0; ; attempt++ {
+		resp, err := op()
+		if err == nil {
+			return resp, nil
+		}
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		if attempt >= len(sendRetryBackoffs) {
+			return nil, fmt.Errorf("gave up after %d attempts: %w", attempt+1, err)
+		}
+		log.Printf("messenger: %s failed (attempt %d/%d): %v — retrying in %v",
+			what, attempt+1, len(sendRetryBackoffs)+1, err, sendRetryBackoffs[attempt])
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("canceled during retry: %w", err)
+		case <-time.After(sendRetryBackoffs[attempt]):
+		}
+	}
+}
+
+// executeRetry is the messagix-task wrapper around retryLSTable: one task,
+// retried on transient socket errors.
+func (c *Client) executeRetry(ctx context.Context, what string, task socket.Task) (*table.LSTable, error) {
+	return retryLSTable(ctx, what, func() (*table.LSTable, error) {
+		return c.client.ExecuteTasks(ctx, task)
+	})
+}
+
 func (c *Client) SendText(ctx context.Context, threadID int64, text string) string {
 	otid := time.Now().UnixMilli()
 
@@ -554,7 +595,7 @@ func (c *Client) SendText(ctx context.Context, threadID int64, text string) stri
 		var lastMsgID string
 		for _, chunk := range chunks {
 			otid = time.Now().UnixMilli()
-			resp, err := c.client.ExecuteTasks(ctx, &socket.SendMessageTask{
+			resp, err := c.executeRetry(ctx, "send reply chunk", &socket.SendMessageTask{
 				ThreadId:          threadID,
 				Otid:              otid,
 				Source:            table.MESSENGER_INBOX_IN_THREAD,
@@ -589,7 +630,7 @@ func (c *Client) SendText(ctx context.Context, threadID int64, text string) stri
 		return lastMsgID
 	}
 
-	resp, err := c.client.ExecuteTasks(ctx, &socket.SendMessageTask{
+	resp, err := c.executeRetry(ctx, "send reply", &socket.SendMessageTask{
 		ThreadId:          threadID,
 		Otid:              otid,
 		Source:            table.MESSENGER_INBOX_IN_THREAD,
@@ -637,7 +678,7 @@ func (c *Client) EditMessageWithContinuation(ctx context.Context, threadID int64
 		return nil
 	}
 	chunks := splitMessage(text, maxMsgLen)
-	_, err := c.client.ExecuteTasks(ctx, &socket.EditMessageTask{
+	_, err := c.executeRetry(ctx, "edit message", &socket.EditMessageTask{
 		MessageID: messageID,
 		Text:      chunks[0],
 	})
@@ -656,7 +697,7 @@ func (c *Client) EditMessageWithContinuation(ctx context.Context, threadID int64
 }
 
 func (c *Client) DeleteMessage(ctx context.Context, messageID string) error {
-	_, err := c.client.ExecuteTasks(ctx, &socket.DeleteMessageTask{
+	_, err := c.executeRetry(ctx, "delete message", &socket.DeleteMessageTask{
 		MessageId: messageID,
 	})
 	if err != nil {
@@ -683,7 +724,7 @@ func (c *Client) SendImage(ctx context.Context, threadID int64, imageData []byte
 	log.Printf("messenger: image uploaded (attachment %d)", attachmentID)
 
 	otid := time.Now().UnixMilli()
-	_, err = c.client.ExecuteTasks(ctx, &socket.SendMessageTask{
+	_, err = c.executeRetry(ctx, "send image message", &socket.SendMessageTask{
 		ThreadId:          threadID,
 		Otid:              otid,
 		Source:            table.MESSENGER_INBOX_IN_THREAD,
