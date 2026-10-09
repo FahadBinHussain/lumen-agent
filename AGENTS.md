@@ -129,6 +129,17 @@
   free plan, oregon. URL https://lumen-aqyl.onrender.com, health /api/health.
 - Dockerfile multi-stage build (golang:1.25 → debian:bookworm-slim + ffmpeg),
   binds 7860, `serve -config /app/config/production.yaml`. Auto-deploy on main.
+- **docs-only pushes must carry `[skip render]` in the commit message** (or
+  `[render skip]` / `[skip deploy]`) - Render's webhook skips the whole push
+  then, so an AGENTS/README edit does not restart production and drop the
+  platform sessions. verified 2026-10-09: `de85957` was pushed with the marker
+  and created NO deploy (deploy list still showed only the previous commit);
+  the marker must be in the LAST commit of the push. the service lives under
+  the **bayazid10@gmail.com** mainframe render profile (`mainframe\
+  render-account.ps1 use bayazid10@gmail.com`); list deploys with
+  `GET /v1/services/srv-d9vd3oh42hec738odeg0/deploys` - responses are a bare
+  JSON array of `{deploy: {...}}`, so `foreach ($item in @($resp)) { $item.deploy }`,
+  NOT `$resp.deploys`.
 - `config/production.yaml` is now TRACKED in git (was gitignored) and is
   secret-free: `discord.bot_token_env: DISCORD_BOT_TOKEN` (added 2026-08-14,
   bot_token fallback if the env var is unset). Render env vars:
