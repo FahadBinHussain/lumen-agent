@@ -163,6 +163,14 @@
   `GET /v1/services/srv-d9vd3oh42hec738odeg0/deploys` - responses are a bare
   JSON array of `{deploy: {...}}`, so `foreach ($item in @($resp)) { $item.deploy }`,
   NOT `$resp.deploys`.
+- **Render env changes only apply on the NEXT DEPLOY (2026-10-09)**:
+  PUT/DELETE on `/v1/services/<id>/env-vars/<KEY>` updates the stored env, but
+  an instance started by suspend/resume still boots with the OLD env (hit it:
+  `WHATSAPP_PROXY_URL` deleted via API, suspend+resume, and the fresh boot log
+  still said `WhatsApp proxy configured (E2EE only)`). After any env change,
+  trigger `POST /v1/services/<id>/deploys` and wait for `live` before judging
+  the change. Also: the env-vars API rejects `{"value":""}` (empty string) on
+  PUT — DELETE the var instead of blanking it.
 - `config/production.yaml` is now TRACKED in git (was gitignored) and is
   secret-free: `discord.bot_token_env: DISCORD_BOT_TOKEN` (added 2026-08-14,
   bot_token fallback if the env var is unset). Render env vars:
@@ -909,12 +917,20 @@ bool). Both are polled, not event-driven.
   proxy = local socks5 127.0.0.1:1080, bridge 127.0.0.1:8793), launcher
   `C:\tmp\lumen-local.cmd` (clears DATABASE_URL — local pgx→Neon hangs), log
   `C:\tmp\lumen-local.log`, store `C:\tmp\.element-orion\whatsapp`.
-- **WhatsApp egress via tailscale exit node (2026-08-30, replaces
-  socks5-proxy + sockschain sidecar)**: Render datacenter IPs get TLS-blocked
-  by WhatsApp, so the websocket egresses from the home IP. Previously that
-  meant a laptop socks5-proxy (100.76.10.50:1080) + a `cmd/sockschain` sidecar
-  chained through tailscale's userspace socks — since 2026-08-30 it uses a
-  NATIVE tailscale EXIT NODE: laptop-main advertises
+- **WhatsApp egress: DIRECT from Render since 2026-10-09 — the tailscale
+  exit-node chain below is RETIRED for whatsapp**. The old premise "Render
+  datacenter IPs get TLS-blocked by WhatsApp" (2026-08-30) was diagnosed
+  while `tls_client.go` was still broken (the uTLS bugs in the pairing
+  gotchas above) — it was never a real IP block. With the fixed uTLS client
+  the DC dials fine: verified 2026-10-09 (fresh QR session came up direct,
+  `POST /api/whatsapp/pair` produced a code, zero laptop/exit-node/socks in
+  the path). `WHATSAPP_PROXY_URL` was DELETED from Render that day; do not
+  re-add a proxy unless a NEW direct-dial failure is captured in logs from
+  the fixed client (`tcp dial:` prefix = our dialer). What it replaced
+  (historical, 2026-08-30..2026-10-09):
+  before that whatsapp egressed via a local
+  socks5-proxy + sockschain sidecar, replaced 2026-08-30 by
+  a NATIVE tailscale EXIT NODE: laptop-main advertises
   `--advertise-exit-node` (Windows needs `IPEnableRouter=1` registry + reboot;
   approved in the admin console), the container's tailscaled runs
   `--tun=userspace-networking --socks5-server=127.0.0.1:1055` and
