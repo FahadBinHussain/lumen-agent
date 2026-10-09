@@ -548,21 +548,25 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
   there". No runtime patching of the June structs is possible: field indexes
   shift after V4's insert, so mapping V4 onto V1 misaligns cursors silently.
 - **Messenger reply sends had NO retry (found + fixed 2026-10-09)**: Meta
-  intermittently resets the DGW connection mid-send (`dgw: oneoffstream: data
-  receive timed out`, then `failed to write msg: use of closed network
-  connection` when the socket dies between the "thinking." placeholder and the
-  final reply). Both `SendText` and the edit path called `ExecuteTasks` ONCE
-  and logged the error, so the model's answer was computed, logged as
+  intermittently stalls the DGW connection mid-send — our task gets ACKed but
+  no data frame ever comes (`dgw: oneoffstream: data receive timed out`, 5s
+  `AckTimeout`), then the socket dies and the read pump can take 30s+ to
+  notice (`failed to write msg: use of closed network connection`). Original
+  code called `ExecuteTasks` ONCE: the model's answer was computed, logged as
   `assistant ...`, and silently lost — user saw only "thinking." (reproduced
-  live 2026-10-08 18:04-18:05Z; socket was back 1s after the failed send).
-  Fix: `executeRetry`/`retryLSTable` (internal/messenger/messenger.go) wraps
-  every message-path task (send/chunk/edit/delete/image-send) — 4 attempts,
-  1s/3s/5s backoff, each retry logged loudly as `messenger: <what> failed
-  (attempt n/4): ... — retrying in ...`. The SAME task instance is retried so
-  the otid stays stable and Meta dedupes a send that actually landed despite
-  its timed-out response. Don't "simplify" back to single-shot, and don't
-  regenerate the otid per attempt (that would double-send). Schedule + give-up
-  + cancel behavior covered by internal/messenger/retry_test.go.
+  2026-10-08 18:04Z and again 2026-10-09 01:51Z). Fix:
+  `executeRetry`/`retryLSTable` (internal/messenger/messenger.go) wraps every
+  message-path task (send/chunk/edit/delete/image-send) — 5 attempts. Each
+  failure after an attempt: log LOUDLY, `ForceReconnect()` (kick the socket
+  now instead of waiting for the read pump — first version used blind 1/3/5s
+  backoff and burned all 4 attempts 1s BEFORE the socket came back at 01:52:13
+  after a 34s zombie window), 1s grace, `WaitUntilCanSendMessages(15s)`, then
+  backoff 2/5/10/15s only if readiness times out. The SAME task instance is
+  retried so the otid stays stable and Meta dedupes a send that actually
+  landed despite its timed-out response — never regenerate the otid per
+  attempt (double-send) and don't "simplify" back to single-shot. Timers are
+  vars so tests can shrink them; behavior covered by
+  internal/messenger/retry_test.go (nudge count, give-up wording, cancel).
 - The full test suite (`go test ./...`) is green on Windows (verified
   2026-10-05) — there are NO pre-existing failures; any red test is a real
   regression, never wave it through as "pre-existing".

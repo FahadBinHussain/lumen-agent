@@ -546,18 +546,37 @@ func (c *Client) CleanMentions(msg Incoming) string {
 	return strings.TrimSpace(string(runes))
 }
 
-// sendRetryBackoffs is the pause between attempts when a messagix task hits a
-// transient socket failure (the DGW one-off stream times out or resets when
-// Meta drops the connection mid-send; the socket reconnects within a few
-// seconds, so a later attempt lands).
-var sendRetryBackoffs = []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+// sendRetryBackoffs paces retries AFTER the forced reconnect has had its
+// readiness wait time out — only then do we sleep this long before trying
+// again. Five attempts total.
+var sendRetryBackoffs = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 15 * time.Second}
 
-// retryLSTable runs op until it succeeds or the backoff schedule is exhausted
-// (4 attempts total). The SAME op result is kept — callers pass a closure over
-// one task instance so the otid stays stable across retries and Meta dedupes a
-// send that actually landed even though its response timed out. Every retry is
-// logged loudly; only the final failure is returned.
-func retryLSTable(ctx context.Context, what string, op func() (*table.LSTable, error)) (*table.LSTable, error) {
+// sendReadyTimeout bounds WaitUntilCanSendMessages between attempts: the
+// socket normally comes back in 1-4s after ForceReconnect. (Vars, not consts,
+// so the test suite can shrink them.)
+var sendReadyTimeout = 15 * time.Second
+
+// sendReconnectGrace gives the connection loop a beat to observe the forced
+// close (and clear canSendMessages) before we wait on readiness — otherwise
+// the wait returns instantly against the stale flag.
+var sendReconnectGrace = 1 * time.Second
+
+// retryLSTable runs op until it succeeds or the schedule is exhausted (5
+// attempts total). The SAME task closure is reused so the otid stays stable
+// across retries and Meta dedupes a send that actually landed even though its
+// response timed out. On every failure it nudges the transport (ForceReconnect
+// — Meta can stall with ack-but-no-data, and the read pump can take 30s+ to
+// notice a dead socket, see 2026-10-09 01:51Z where 4 blind retries burned
+// out 1s before the socket came back), waits for send readiness, then retries.
+// Every step is logged loudly; only the final failure is returned.
+func retryLSTable(
+	ctx context.Context,
+	what string,
+	op func() (*table.LSTable, error),
+	nudge func(error),
+	waitReady func() error,
+) (*table.LSTable, error) {
+	var lastErr error
 	for attempt := 0; ; attempt++ {
 		resp, err := op()
 		if err == nil {
@@ -566,25 +585,44 @@ func retryLSTable(ctx context.Context, what string, op func() (*table.LSTable, e
 		if ctx.Err() != nil {
 			return nil, err
 		}
+		lastErr = err
 		if attempt >= len(sendRetryBackoffs) {
-			return nil, fmt.Errorf("gave up after %d attempts: %w", attempt+1, err)
+			return nil, fmt.Errorf("gave up after %d attempts: %w", attempt+1, lastErr)
 		}
-		log.Printf("messenger: %s failed (attempt %d/%d): %v — retrying in %v",
-			what, attempt+1, len(sendRetryBackoffs)+1, err, sendRetryBackoffs[attempt])
+		log.Printf("messenger: %s failed (attempt %d/%d): %v — reconnecting socket, then retrying",
+			what, attempt+1, len(sendRetryBackoffs)+1, err)
+		nudge(err)
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("canceled during retry: %w", err)
-		case <-time.After(sendRetryBackoffs[attempt]):
+			return nil, fmt.Errorf("canceled during retry: %w", lastErr)
+		case <-time.After(sendReconnectGrace):
+		}
+		if werr := waitReady(); werr != nil {
+			log.Printf("messenger: %s: socket not ready: %v — backing off %v", what, werr, sendRetryBackoffs[attempt])
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("canceled during retry: %w", lastErr)
+			case <-time.After(sendRetryBackoffs[attempt]):
+			}
+		} else {
+			log.Printf("messenger: %s: socket ready, retrying", what)
 		}
 	}
 }
 
 // executeRetry is the messagix-task wrapper around retryLSTable: one task,
-// retried on transient socket errors.
+// retried across a forced socket reconnect.
 func (c *Client) executeRetry(ctx context.Context, what string, task socket.Task) (*table.LSTable, error) {
-	return retryLSTable(ctx, what, func() (*table.LSTable, error) {
-		return c.client.ExecuteTasks(ctx, task)
-	})
+	return retryLSTable(ctx, what,
+		func() (*table.LSTable, error) {
+			return c.client.ExecuteTasks(ctx, task)
+		},
+		func(err error) {
+			c.client.ForceReconnect()
+		},
+		func() error {
+			return c.client.WaitUntilCanSendMessages(ctx, sendReadyTimeout)
+		})
 }
 
 func (c *Client) SendText(ctx context.Context, threadID int64, text string) string {
