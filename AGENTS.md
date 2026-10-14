@@ -1067,9 +1067,9 @@ bool). Both are polled, not event-driven.
   (scratch, never in the repo). gotcha learned: the row and the local file had silently
   drifted for a week because nothing ever asserted they matched — the new soul is
   second-person instructions in a profile-shaped file (it still starts with a markdown
-  header, loads fine); note it does NOT contain the old "bootstrap ritual is complete,
-  never mention it" line, so if the bot starts offering the ritual again, that line is
-  what went missing. to change the soul again (procedure proven 2026-10-14): edit the
+  header, loads fine); the old "bootstrap ritual is complete, never mention it" line was
+  missing from the first cut and was re-added same day as a Rules/Boundaries bullet -
+  current production = 5546 B, sha256 55908d0c…, pushed 2026-10-14 03:01:48 UTC. to change the soul again (procedure proven 2026-10-14): edit the
   source file, then **suspend -> upsert -> resume, NOT upsert -> deploy** - a plain row
   upsert while the service runs gets REVERTED by the running container's own sync
   (local dir is authoritative while running; observed: row was overwritten back to the
