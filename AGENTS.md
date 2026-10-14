@@ -519,8 +519,14 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     contents:write). Dockerfile now installs
     `postgresql-client git openssl` (pg_dump + git needed). code:
     `internal/notify/neonexport.go` (`exportNeonOrg` per over-threshold org,
-    `pushExports` batched single commit). Recovery of an encrypted export: key
-    copy at `C:\Users\Admin\Downloads\lumen-export-key.txt`. File names are
+    `pushExports` batched single commit). Recovery of an encrypted export: the key
+    lives in the vault item `github.com/FahadBinHussain/lumen-agent / .env (production)`
+    and restores with `automata-private\bitwarden.com\env-sync.ps1 -Repo lumen-agent -Env prod`
+    (writes `lumen-agent\.env.local`, gitignored; NOTE env-sync's default `-Env` is
+    `dev` - a `(production)` item is skipped silently without `-Env prod`). the old
+    standalone `C:\Users\Admin\Downloads\lumen-export-key.txt` copy (2026-08-24,
+    predates the vault env convention) was migrated into that vault item and DELETED
+    2026-10-14; the same key also lives on Render as env `LUMEN_EXPORT_KEY`. File names are
     `<project-id>.sql.gz.enc` under `backups/`.
   - **neon watcher covers ALL accounts (2026-08-29)**: `neon_usage.api_key_env`
     lists all 19 mainframe Neon API keys (env vars `NEON_API_KEY_01`..`NEON_API_KEY_19`,
