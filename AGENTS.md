@@ -1051,7 +1051,10 @@ bool). Both are polled, not event-driven.
   files live at `config/{IDENTITY,USER,SOUL}.md` (gitignored). To push a
   changed identity: update the local file, upsert the `@workspace/<name>` row
   in Neon (`INSERT ... ON CONFLICT (path) DO UPDATE`, base64 + sha256, via the
-  Neon-under-Proton relay), and trigger a fresh deploy; verify via logs
+  Neon-under-Proton relay), and trigger a fresh deploy; **but see the 2026-10-14
+  SOUL consolidation bullet: the running container's sync clobbers a row upsert
+  ~1/min, so the safe order is suspend -> upsert -> resume, not just deploy**;
+  verify via logs
   `persist: restored N file(s) from snapshot` + the agent prompt no longer
   saying "Element Orion".
 - **SOUL consolidation (2026-10-08)**: three divergent Kite SOULs existed — the local
@@ -1066,9 +1069,17 @@ bool). Both are polled, not event-driven.
   second-person instructions in a profile-shaped file (it still starts with a markdown
   header, loads fine); note it does NOT contain the old "bootstrap ritual is complete,
   never mention it" line, so if the bot starts offering the ritual again, that line is
-  what went missing. to change the soul again: edit the source file, re-upsert the row
-  with its exact bytes + sha (SQL-over-443 works under Proton, no 5432 relay needed),
-  redeploy, verify via `convert_from(data,'utf8')` + the restore log line.
+  what went missing. to change the soul again (procedure proven 2026-10-14): edit the
+  source file, then **suspend -> upsert -> resume, NOT upsert -> deploy** - a plain row
+  upsert while the service runs gets REVERTED by the running container's own sync
+  (local dir is authoritative while running; observed: row was overwritten back to the
+  old 584 B bytes at 02:18:57, ~1 min after the first upsert, and the deploy that
+  followed then restored the OLD file). exact order: `POST
+  /v1/services/<id>/suspend` -> poll `/api/health` until it fails (proves the clobberer
+  is dead) -> upsert with exact file bytes + sha (SQL-over-443 works under Proton, no
+  5432 relay needed) -> `POST .../resume` -> health returns in ~100s -> re-read the row
+  after ~100s and assert `updated_at` still equals the upsert time (a moved timestamp =
+  something re-clobbered it). never rely on deploy alone for identity rows.
 - Local pairing path: kill local instance AFTER pairing before deploying Render
   (same identity dual-connect conflict); transfer session via
   `POST /api/whatsapp/session/upload` (bridge secret auth) → Neon restore on boot.
