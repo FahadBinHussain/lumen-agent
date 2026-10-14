@@ -1054,6 +1054,21 @@ bool). Both are polled, not event-driven.
   Neon-under-Proton relay), and trigger a fresh deploy; verify via logs
   `persist: restored N file(s) from snapshot` + the agent prompt no longer
   saying "Element Orion".
+- **SOUL consolidation (2026-10-08)**: three divergent Kite SOULs existed — the local
+  `config/SOUL.md` (2073 B variant), the production `@workspace/SOUL.md` row (a 584 B
+  trimmed variant nobody had on disk), and a profile-style draft (`Kite-SOUL.md` in
+  Downloads). The profile-style draft won: its bytes were upserted onto the row
+  (5471 B, sha256 deb2ff2d…) + fresh deploy, and `config/SOUL.md` was DELETED.
+  **The Neon `@workspace/SOUL.md` row is the single source of truth; no local SOUL copy
+  exists anymore.** old 584 B soul backed up at `C:\tmp\production-SOUL-backup-20261008.md`
+  (scratch, never in the repo). gotcha learned: the row and the local file had silently
+  drifted for a week because nothing ever asserted they matched — the new soul is
+  second-person instructions in a profile-shaped file (it still starts with a markdown
+  header, loads fine); note it does NOT contain the old "bootstrap ritual is complete,
+  never mention it" line, so if the bot starts offering the ritual again, that line is
+  what went missing. to change the soul again: edit the source file, re-upsert the row
+  with its exact bytes + sha (SQL-over-443 works under Proton, no 5432 relay needed),
+  redeploy, verify via `convert_from(data,'utf8')` + the restore log line.
 - Local pairing path: kill local instance AFTER pairing before deploying Render
   (same identity dual-connect conflict); transfer session via
   `POST /api/whatsapp/session/upload` (bridge secret auth) → Neon restore on boot.
