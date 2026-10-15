@@ -14,7 +14,10 @@ set -e
 # harmless rejects).
 LOG_FILTER='Unsupported SOCKS version|incompatible SOCKS version|socks5: client connection failed|peerapi: unknown peer|RATELIMIT'
 if [ -n "$TS_AUTHKEY" ]; then
-  /app/tailscaled --tun=userspace-networking --socks5-server=127.0.0.1:1055 --state=mem 2>&1 | grep --line-buffered -vE "$LOG_FILTER" &
+  # --state=mem: (WITH colon) = memory state + EPHEMERAL registration, so stale
+  # nodes self-clean. bare `mem` silently fell back to a FileStore writing ./mem
+  # and registered a NORMAL node - one ghost device per container boot.
+  /app/tailscaled --tun=userspace-networking --socks5-server=127.0.0.1:1055 --state=mem: 2>&1 | grep --line-buffered -vE "$LOG_FILTER" &
   /app/tailscale up --authkey="$TS_AUTHKEY" --hostname=lumen-render --accept-dns=false --exit-node=100.76.10.50 --timeout=40s
   echo "entrypoint: tailscale userspace node up ($(/app/tailscale ip -4)), exit node 100.76.10.50"
 else

@@ -972,10 +972,17 @@ bool). Both are polled, not event-driven.
   auto-creates a fresh device on `LoggedOut` (previously `Connect` failed with
   `invalid use of deleted device` and never produced a QR; now `NewWhatsmeowClient`
   skips deleted devices and `Connect` recreates the client). `LoggedOut` now
-  also triggers `scheduleReconnect` (15s) like `Disconnected`. `--state=mem` makes every container node
-  EPHEMERAL regardless of key type (verified: tailscaled help says mem state
-  registers as ephemeral). entrypoint.sh runs tailscaled
-  `--tun=userspace-networking --socks5-server=127.0.0.1:1055 --state=mem` then
+  also triggers `scheduleReconnect` (15s) like `Disconnected`. `--state=mem:` (COLON required) makes
+  every container node EPHEMERAL regardless of key type - tailscaled sets
+  `LoginFlags = LoginEphemeral` when the state path has the `mem:` prefix
+  (`cmd/tailscaled/tailscaled.go`; the mem store is registered as `"mem:"` in
+  `ipn/store/stores.go`, help: "use 'mem:' to not store state and register as an
+  ephemeral node"). **GOTCHA fixed 2026-10-15:** the flag used to be bare
+  `--state=mem` - matches no store provider prefix, so it silently fell through
+  to a FileStore writing a file literally named `mem` and registered a NORMAL
+  non-ephemeral node: one ghost device per container boot, never auto-removed
+  (41 accumulated over 9 days, pruned by hand). entrypoint.sh runs tailscaled
+  `--tun=userspace-networking --socks5-server=127.0.0.1:1055 --state=mem:` then
   `tailscale up --authkey=... --hostname=lumen-render --accept-dns=false
   --exit-node=100.76.10.50 --timeout=40s`. GOTCHA: `--accept-dns` is a
   `tailscale up` flag, NOT a tailscaled flag — passing it to tailscaled makes
