@@ -955,15 +955,26 @@ bool). Both are polled, not event-driven.
   2026-10-04 — it now returns JSON with the three platform `IsConnected`
   flags (messenger/whatsapp/discord), which is also what the cookie-health
   watchdog reads to detect a dead messenger (the 2026-10-04 17h outage read
-  healthy on every prior check). `TS_AUTHKEY` = the fleet reusable authkey (mainframe
-  tailscale profile; since 2026-08-17 the validated vault key, also saved to
-  the mainframe tailscale profile's authkey.txt; the old fleet key expired
-  and every fresh boot failed with `invalid key: API key k2bx6Qw2KB11CNTRL
-  not valid` -> `Exited with status 1` -> deploy update_failed/crash loop,
-   while the old instance kept serving); GOTCHA: `tailscale up` failing = exit
-  1 via `set -e` in entrypoint.sh; fix = PUT a valid key via `PUT
-  /v1/services/<id>/env-vars/TS_AUTHKEY` then redeploy (manual deploy POST;
-  autodeploy on push does NOT fire). **WhatsApp health distinction (2026-09-03)**:
+  healthy on every prior check). `TS_AUTHKEY` = a dedicated EPHEMERAL reusable authkey (made 2026-10-15 in the
+  admin console: Reusable ON, Ephemeral ON, Tags OFF - key id
+  `kKZqd89Jii11CNTRL`, expires 2027-01-13). Kept in the Render env + the
+  Bitwarden `github.com/FahadBinHussain/lumen-agent / .env (production)` item,
+  NOT in `console.tailscale.com` (that item holds the fleet key, and its reader
+  returns the FIRST `tskey-auth-` in the notes - a second key there would make
+  new-machine provisioning join with the wrong key). **CORRECTION 2026-10-15: a
+  real ephemeral auth key is the only mechanism that gets container nodes
+  auto-removed** - under the old fleet key the mem: flag got no server-side
+  `Ephemeral` mark (not badged in the admin console, so never scheduled for
+  removal; see the mem: block below). **VERDICT 2026-10-15 (behavioral):** the first node under the new key (`lumen-render-2`, offline 13:13:27 UTC) auto-removed 65-68 min later - still present at 14:18:27 UTC, gone by 14:21:28 UTC - while the fleet-key ghosts stayed listed; self-reap verified. Rotation: console >
+  Settings > Keys > Generate auth key (Reusable ON, Ephemeral ON, Tags OFF) ->
+  `PUT /v1/services/<id>/env-vars/TS_AUTHKEY` -> redeploy (manual deploy POST;
+  autodeploy on push does NOT fire). History: before 2026-10-15 this held the
+  fleet key `kuQ9aboTv211CNTRL` (ephemeral:false); the original fleet key once
+  expired and every fresh boot failed with `invalid key: API key
+  k2bx6Qw2KB11CNTRL not valid` -> `Exited with status 1` -> deploy
+  update_failed/crash loop while the old instance kept serving; GOTCHA:
+  `tailscale up` failing = exit 1 via `set -e` in entrypoint.sh; a bad or
+  expired key parks the deploy in update_failed until PUT with a valid key. **WhatsApp health distinction (2026-09-03)**:
   health-watch now differentiates `is dead (auto-retrying...)` vs
   `is logged out (needs phone re-pair via QR - not auto-recovering)` — logged-out
   is fatal (401 from WhatsApp, store deleted, `whatsapp_is logged out` requires
@@ -972,18 +983,30 @@ bool). Both are polled, not event-driven.
   auto-creates a fresh device on `LoggedOut` (previously `Connect` failed with
   `invalid use of deleted device` and never produced a QR; now `NewWhatsmeowClient`
   skips deleted devices and `Connect` recreates the client). `LoggedOut` now
-  also triggers `scheduleReconnect` (15s) like `Disconnected`. `--state=mem:` (COLON required) makes
-  every container node EPHEMERAL regardless of key type - tailscaled sets
-  `LoginFlags = LoginEphemeral` when the state path has the `mem:` prefix
+  also triggers `scheduleReconnect` (15s) like `Disconnected`. `--state=mem:` (COLON required) selects the
+  in-memory state store and DOES set `LoginFlags = LoginEphemeral` on the
+  CLIENT when the state path has the `mem:` prefix
   (`cmd/tailscaled/tailscaled.go`; the mem store is registered as `"mem:"` in
   `ipn/store/stores.go`, help: "use 'mem:' to not store state and register as an
   ephemeral node"). **GOTCHA fixed 2026-10-15:** the flag used to be bare
   `--state=mem` - matches no store provider prefix, so it silently fell through
   to a FileStore writing a file literally named `mem` and registered a NORMAL
-  non-ephemeral node: one ghost device per container boot, never auto-removed
-  (41 accumulated over 9 days, pruned by hand). entrypoint.sh runs tailscaled
-  `--tun=userspace-networking --socks5-server=127.0.0.1:1055 --state=mem:` then
-  `tailscale up --authkey=... --hostname=lumen-render --accept-dns=false
+  non-ephemeral node: every container boot left a ghost device that was never
+  auto-removed (46 accumulated: `lumen-render-1..42` + a plain `lumen-render`;
+  pruned to 4 on 2026-10-15). **CORRECTION 2026-10-15 - the colon alone is NOT
+  enough:** with `--state=mem:` restored the client really did register
+  ephemeral (tailscaled log `control: client.Login(6)` = `LoginInteractive|
+  LoginEphemeral`; `direct.go` sets `Ephemeral: true` in the RegisterRequest),
+  yet the control server never badged that node (`lumen-render-1`, fleet key -
+  no `Ephemeral` mark in the admin console) and unbadged nodes are never
+  scheduled for removal. **Only an EPHEMERAL AUTH KEY produces the server-side
+  mark** (see the TS_AUTHKEY block above): nodes under the new key
+  (`lumen-render-2`/`-3`) carry the `Ephemeral` badge. Console check: the
+  machines page shows the badge; the v2 API exposes no device-level isEphemeral
+  field (key-level only: `capabilities.devices.create.ephemeral`). entrypoint.sh
+  runs tailscaled `--tun=userspace-networking
+  --socks5-server=127.0.0.1:1055 --state=mem:` then `tailscale up
+  --authkey=... --hostname=lumen-render --accept-dns=false
   --exit-node=100.76.10.50 --timeout=40s`. GOTCHA: `--accept-dns` is a
   `tailscale up` flag, NOT a tailscaled flag — passing it to tailscaled makes
   it print usage and exit 1 (deploy update_failed; fixed 2026-08-17, commit
