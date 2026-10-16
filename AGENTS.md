@@ -23,6 +23,33 @@
   08:40 Proton server switch") — report the fact, then solve it from the
   lumen side anyway.
 
+## Discord account bans: read the rulebook before touching anything discord (2026-10-16, user rule)
+
+- discord automation has a hard-earned rulebook on this machine: ban
+  triggers, volume/loop guardrails, live incident writeups (scripted API
+  writes killing sessions after a single message, an alt account ending up
+  in discord's forced password-reset state), and per-account state notes.
+  BEFORE any discord-side work — user-mode token auth, sending, reacting,
+  account switching, session debugging — read:
+
+      %USERPROFILE%\Downloads\automata-private\discord.com\AGENTS.md
+
+- short version, so a run that cannot read that file still fails safe:
+  user-token use outside the official client violates discord's ToS and is
+  bannable. What actually gets accounts actioned are PATTERNS — volume,
+  loops, replicated or bulk messages, foreign-IP / proxy / VPN egress,
+  main accounts. Single low-volume one-off actions on alt accounts are the
+  accepted class; anything batch-shaped is not.
+- never add loops, bulk sends, or stripped rate-limit waits "to make it
+  faster" — the runtime stays at conversation pace, one message at a time.
+- keep discord traffic on the machine's normal IP — never a VPN, proxy, or
+  datacenter egress path (see the Proton rule above).
+- token hygiene is absolute: never print, log, or paste a token or cookie
+  outside the vault — not into issues, not into logs.
+- when an account dies (401s, "session invalid", forced password reset):
+  STOP, then check the rulebook's account-state + incident sections before
+  retrying anything against that account.
+
 ## Deployment fixes (2026-09-23)
 
 - Production's active model is `atria-dawn` (`Atria-Dawn-Preview` via Atria ASI
