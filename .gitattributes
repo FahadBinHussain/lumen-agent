@@ -1,0 +1,4 @@
+# The zen gate matches this prompt's exact bytes from char 0.
+# core.autocrlf=true would flip its line endings around on checkout/stage
+# (breaking local live tests or the committed bytes); pin it to LF.
+internal/vision/zengate-title-prompt.txt text eol=lf

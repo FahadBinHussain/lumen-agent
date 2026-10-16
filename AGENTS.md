@@ -1392,7 +1392,9 @@ bool). Both are polled, not event-driven.
   passed right after). The file's prefix is now v2's prompt (2119 B,
   LF-only, extracted from `scoop\apps\opencode2\current\opencode.exe`,
   two byte-identical copies; ends at `</examples>`, tail kept after it;
-  file sha256 `02F8C8C6...9A2E09AE`). If 403s return after a future
+  `.gitattributes` pins the file to `text eol=lf` - this box runs
+  `core.autocrlf=true` and otherwise flips the endings around; committed
+  file sha256 `799A9F6D...F9E2DB03`). If 403s return after a future
   opencode bump, re-extract from the binary the same way.
 - Config fields (`vision:`): `enabled`, `base_url`, `api_key` (default
   `public`), `user_agent`, `model`, `prompt` (the USER text sent next to
