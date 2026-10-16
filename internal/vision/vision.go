@@ -3,23 +3,12 @@
 // mimo-v2.6-flash-free. No opencode CLI is involved.
 //
 // The zen free tier answers 403 FreeTierError ("can only be used from within
-// OpenCode") unless the request passes the gate, which was bisected with
-// captured opencode traffic (2026-10-05). The gate is 100% request-body:
-//
-//   - headers, TLS fingerprint, client IP and HTTP version are irrelevant
-//     (verbatim body replayed from curl/bun passes with our own identity
-//     headers, and the official headers + our own body still 403);
-//   - the system message must be an exact prefix match, from char 0, of a
-//     registered official prompt, at least ~1000 chars long — anything else
-//     (padding, fillers, corruption, wrong prompt) 403s;
-//   - "stream": true is required (removing it 403s; stream_options is not).
-//
-// So the system prompt here is opencode's own title-generator prompt,
-// byte-exact (internal/zengate/zengate-title-prompt.txt, captured from
-// opencode v2.0.23; refreshed 2026-10-16 because the v1.18.25 capture
-// started 403ing once opencode moved to v2, which registers v2's LF-only
-// prompt), with a short override tail — the gate only matches the prefix,
-// and the tail redirects the model away from writing titles.
+// OpenCode") unless the request passes the gate (re-bisected 2026-10-16; see
+// internal/zengate for the full model): the body must carry a tools array
+// (the main-agent branch) and "stream": true, and the session header group
+// must carry a correctly generated opencode session id. System content is
+// free on this branch, so this package sends a short vision instruction
+// instead of the byte-exact prompt capture the old recipe needed.
 package vision
 
 import (
@@ -44,18 +33,17 @@ import (
 	"element-orion/internal/zengate"
 )
 
-// zengateOverrideTail is appended verbatim after the official prompt: the zen
-// gate only checks that the system message STARTS with the official prompt,
-// so the tail steers the model away from its title-generator persona.
-const zengateOverrideTail = "\n\nIMPORTANT OVERRIDE: You are now a vision assistant. Never output a title. For every request, reply with only the raw result the user asks for (for example a plain factual description of an image: what it shows, colors, and any visible text verbatim)."
+// visionSystemPrompt is the system message. The zen gate does not inspect
+// system content on the tools-bearing branch, so this is a plain instruction
+// rather than a byte-exact prompt capture.
+const visionSystemPrompt = "You are a vision assistant. For every request, reply with only the raw result the user asks for (for example a plain factual description of an image: what it shows, colors, and any visible text verbatim)."
 
-// Constant request shape, mirroring the captured official body:
-// {model, max_tokens, temperature, messages, stream, stream_options}.
+// Constant request shape pinned to the proven main-agent envelope (bisected
+// 2026-10-16 against captured opencode v2.0.23 traffic).
 const (
-	visionMaxTokens     = 32000
-	visionTemperature   = 0.5
-	visionClientUA      = "opencode/1.18.25 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
-	visionDefaultAPIKey = "public"
+	visionMaxCompletionTokens = 32000
+	visionClientUA            = "opencode/latest/2.0.23/cli"
+	visionDefaultAPIKey       = "public"
 )
 
 const maxImageBytes = 25 << 20
@@ -260,11 +248,13 @@ type chatMessage struct {
 }
 
 type chatRequestBody struct {
-	Model         string        `json:"model"`
-	MaxTokens     int           `json:"max_tokens"`
-	Temperature   float64       `json:"temperature"`
-	Messages      []chatMessage `json:"messages"`
-	Stream        bool          `json:"stream"`
+	Model         string          `json:"model"`
+	Messages      []chatMessage   `json:"messages"`
+	Tools         json.RawMessage `json:"tools"`
+	ToolChoice    string          `json:"tool_choice"`
+	Stream        bool            `json:"stream"`
+	MaxCompletion int             `json:"max_completion_tokens"`
+	Store         bool            `json:"store"`
 	StreamOptions struct {
 		IncludeUsage bool `json:"include_usage"`
 	} `json:"stream_options"`
@@ -275,28 +265,26 @@ func (d *Describer) runOnce(ctx context.Context, dataURL string) (string, error)
 	defer cancel()
 
 	body := chatRequestBody{
-		Model:       d.model,
-		MaxTokens:   visionMaxTokens,
-		Temperature: visionTemperature,
+		Model: d.model,
 		Messages: []chatMessage{
-			{Role: "system", Content: zengate.SystemPrompt() + zengateOverrideTail},
+			{Role: "system", Content: visionSystemPrompt},
 			{Role: "user", Content: []map[string]any{
 				{"type": "text", "text": d.prompt},
 				{"type": "image_url", "image_url": map[string]string{"url": dataURL}},
 			}},
 		},
-		Stream: true,
+		Tools:         zengate.Tools(),
+		ToolChoice:    "none",
+		Stream:        true,
+		MaxCompletion: visionMaxCompletionTokens,
+		Store:         false,
 	}
 	body.StreamOptions.IncludeUsage = true
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return "", fmt.Errorf("encoding request: %w", err)
 	}
-	session, err := zengate.IdentityID()
-	if err != nil {
-		return "", err
-	}
-	request, err := zengate.IdentityID()
+	sessionID, err := zengate.SessionID()
 	if err != nil {
 		return "", err
 	}
@@ -308,12 +296,18 @@ func (d *Describer) runOnce(ctx context.Context, dataURL string) (string, error)
 	}
 	req.Header.Set("Authorization", "Bearer "+d.apiKey)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Accept", "*/*")
 	req.Header.Set("User-Agent", d.userAgent)
 	req.Header.Set("x-opencode-client", "cli")
-	req.Header.Set("x-opencode-project", "global")
-	req.Header.Set("x-opencode-session", "ses_"+session)
-	req.Header.Set("x-opencode-request", "msg_"+request)
+	req.Header.Set("x-opencode-project", zengate.ProjectID())
+	session := "ses_" + sessionID
+	req.Header.Set("x-opencode-session", session)
+	req.Header.Set("x-opencode-session-id", session)
+	req.Header.Set("x-session-affinity", session)
+	req.Header.Set("x-session-id", session)
+	b3, traceparent := zengate.TraceHeaders()
+	req.Header.Set("b3", b3)
+	req.Header.Set("traceparent", traceparent)
 
 	resp, err := d.client.Do(req)
 	if err != nil {

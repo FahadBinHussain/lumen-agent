@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"element-orion/internal/config"
-	"element-orion/internal/zengate"
 )
 
 func testConfig(baseURL string) config.VisionConfig {
@@ -26,7 +25,7 @@ func testConfig(baseURL string) config.VisionConfig {
 		Enabled:     true,
 		BaseURL:     baseURL,
 		APIKey:      "public",
-		UserAgent:   "opencode/1.18.25 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14",
+		UserAgent:   "opencode/latest/2.0.23/cli",
 		Model:       "mimo-v2.6-flash-free",
 		Prompt:      "Describe this image.",
 		Timeout:     "30s",
@@ -173,7 +172,7 @@ func TestDescribeRequestShape(t *testing.T) {
 		got.path = r.URL.Path
 		got.authorization = r.Header.Get("Authorization")
 		got.userAgent = r.Header.Get("User-Agent")
-		for _, key := range []string{"x-opencode-client", "x-opencode-project", "x-opencode-session", "x-opencode-request", "Accept"} {
+		for _, key := range []string{"x-opencode-client", "x-opencode-project", "x-opencode-session", "x-opencode-session-id", "x-session-affinity", "x-session-id", "b3", "traceparent"} {
 			got.headers[key] = r.Header.Get(key)
 		}
 		raw, err := io.ReadAll(r.Body)
@@ -208,18 +207,26 @@ func TestDescribeRequestShape(t *testing.T) {
 	if got.authorization != "Bearer public" {
 		t.Errorf("authorization = %q, want Bearer public", got.authorization)
 	}
-	if got.userAgent != "opencode/1.18.25 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14" {
-		t.Errorf("user-agent = %q", got.userAgent)
+	if got.userAgent != visionClientUA {
+		t.Errorf("user-agent = %q, want %q", got.userAgent, visionClientUA)
 	}
-	if got.headers["x-opencode-client"] != "cli" || got.headers["x-opencode-project"] != "global" {
+	if got.headers["x-opencode-client"] != "cli" {
 		t.Errorf("identity headers = %v", got.headers)
 	}
-	idPattern := regexp.MustCompile(`^(ses|msg)_[0-9a-f]{12}[0-9A-Za-z]{14}$`)
-	if !idPattern.MatchString(got.headers["x-opencode-session"]) {
-		t.Errorf("x-opencode-session = %q, want ses_ + 12 hex + 14 base62", got.headers["x-opencode-session"])
+	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(got.headers["x-opencode-project"]) {
+		t.Errorf("x-opencode-project = %q, want 40 hex chars", got.headers["x-opencode-project"])
 	}
-	if !idPattern.MatchString(got.headers["x-opencode-request"]) {
-		t.Errorf("x-opencode-request = %q, want msg_ + 12 hex + 14 base62", got.headers["x-opencode-request"])
+	idPattern := regexp.MustCompile(`^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$`)
+	for _, key := range []string{"x-opencode-session", "x-opencode-session-id", "x-session-affinity", "x-session-id"} {
+		if !idPattern.MatchString(got.headers[key]) {
+			t.Errorf("%s = %q, want ses_ + 12 hex + 14 base62", key, got.headers[key])
+		}
+		if got.headers[key] != got.headers["x-opencode-session"] {
+			t.Errorf("%s = %q, want the same id as x-opencode-session (%q)", key, got.headers[key], got.headers["x-opencode-session"])
+		}
+	}
+	if got.headers["b3"] == "" || got.headers["traceparent"] == "" {
+		t.Errorf("b3/traceparent must be set: %v", got.headers)
 	}
 
 	if got.body["model"] != "mimo-v2.6-flash-free" {
@@ -232,8 +239,14 @@ func TestDescribeRequestShape(t *testing.T) {
 	if streamOptions["include_usage"] != true {
 		t.Errorf("stream_options.include_usage = %v", streamOptions)
 	}
-	if got.body["max_tokens"] != float64(32000) || got.body["temperature"] != 0.5 {
-		t.Errorf("max_tokens/temperature = %v/%v", got.body["max_tokens"], got.body["temperature"])
+	if got.body["max_completion_tokens"] != float64(32000) || got.body["store"] != false {
+		t.Errorf("max_completion_tokens/store = %v/%v", got.body["max_completion_tokens"], got.body["store"])
+	}
+	if got.body["tool_choice"] != "none" {
+		t.Errorf("tool_choice = %v, want none", got.body["tool_choice"])
+	}
+	if tools, ok := got.body["tools"].([]any); !ok || len(tools) != 12 {
+		t.Errorf("tools = %v, want the embedded 12-tool main-agent array", got.body["tools"])
 	}
 
 	messages, _ := got.body["messages"].([]any)
@@ -242,8 +255,8 @@ func TestDescribeRequestShape(t *testing.T) {
 	}
 	system, _ := messages[0].(map[string]any)
 	systemText, _ := system["content"].(string)
-	if systemText != zengate.SystemPrompt()+zengateOverrideTail {
-		t.Errorf("system prompt must be the embedded official prompt + override tail (gate prefix-match), got %d chars", len(systemText))
+	if systemText != visionSystemPrompt {
+		t.Errorf("system message = %.80q, want the plain vision instruction %q", systemText, visionSystemPrompt)
 	}
 	user, _ := messages[1].(map[string]any)
 	parts, _ := user["content"].([]any)

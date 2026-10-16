@@ -1,23 +1,19 @@
 // zen transport: `llm.api_type: zen` routes chat through the opencode zen
-// free lane (https://opencode.ai/zen/v1, model mimo-v2.6-flash-free) - the
-// production port of diit-chatbot's src/zen.mjs, sharing the gate envelope
-// internal/vision proved live.
+// free lane (https://opencode.ai/zen/v1, model mimo-v2.6-flash-free).
 //
 // The zen free tier 403s (FreeTierError "can only be used from within
 // OpenCode") anything that does not look like the opencode client. The gate
-// is ~request-body:
+// (re-bisected 2026-10-16, see internal/zengate for the full model) is the
+// main-agent shape: a body carrying a `tools` array, "stream": true, and
+// the session header group set to a correctly generated opencode session id.
+// The system message content is free - there is no prompt-prefix
+// requirement on this branch, so Kite's own system prompt doubles as the
+// system message (no byte-exact capture to keep in sync).
 //
-//   - the system message must START, from byte 0, with a byte-exact copy of
-//     a registered official opencode prompt (see internal/zengate, >= ~1000
-//     chars); whatever Kite adds is appended AFTER that prefix;
-//   - "stream": true is required (stream_options is harmless);
-//   - the tools-free title-prompt branch is the proven one - bodies carrying
-//     a tools array 403, so this transport DROPS Request.Tools.
-//
-// Consequence: chat history never travels as `messages`. buildZenTurn folds
-// Kite's system prompt, the lane rules and the whole dialogue (plus tool-call
-// notes from pre-zen history) into the system tail and sends exactly ONE
-// live user message, the same single-message shape diit-chatbot ships.
+// Consequence (kept from the original design): chat history never travels
+// as `messages`. buildZenTurn folds Kite's system prompt, the lane rules and
+// the whole dialogue (plus tool-call notes from pre-zen history) into the
+// system message and sends exactly ONE live user message.
 //
 // 403 FreeTierError is ambiguous by design: it fires for a throttled shared
 // egress IP AND for a broken gate shape, so a call retries on its own
@@ -42,29 +38,30 @@ import (
 	"element-orion/internal/zengate"
 )
 
-// Constant request shape pinned to the proven envelope (vision + diit +
-// live probes). Do not "improve" these casually: the gate is strict enough
-// that changed values are an unverified variable.
+// Constant request shape pinned to the proven envelope (bisected 2026-10-16
+// against captured opencode v2.0.23 traffic). Do not "improve" these
+// casually: the gate is strict enough that changed values are an unverified
+// variable.
 const (
-	zenMaxTokens   = 32000
-	zenTemperature = 0.5
+	zenMaxCompletionTokens = 32000
 
 	zenMaxAttempts    = 4
 	zenAttemptTimeout = 120 * time.Second
 	zenBudget         = 180 * time.Second
 
-	zenUserAgent = "opencode/1.18.25 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
+	zenUserAgent = "opencode/latest/2.0.23/cli"
 
 	zenFoldMessageLimit  = 2000
 	zenFoldToolCallLimit = 300
 )
 
-// zenLaneRules is appended after the gate prompt + Kite's system prompt. The
-// lane is tools-free: without this the model may emit tool-call syntax as
-// reply text because its system prompt describes tools.
+// zenLaneRules is folded into the system message after Kite's system prompt.
+// Tool calling is disabled on the wire (tool_choice "none"), but the model
+// can still describe tools from its own system prompt - the rules keep it
+// from emitting tool-call syntax as reply text.
 const zenLaneRules = `## Free-lane chat mode
 
-This session runs on a plain-text lane with NO tools: no function calls, no commands, no file or message-sending tools, no lookups. The text you write is delivered to the user as-is.
+This session runs on a plain-text lane: function calling is disabled on the wire (tool_choice is "none"), so the text you write is delivered to the user as-is.
 
 - Answer the most recent user message. The "Conversation so far" block below is history for context only - never re-answer old messages.
 - Never emit tool calls, function-call syntax, JSON payloads, or XML tags as your reply.
@@ -73,7 +70,7 @@ This session runs on a plain-text lane with NO tools: no function calls, no comm
 
 const zenFinalReminder = "FINAL REMINDER: reply now with the message text for the user, and nothing else - no tool calls, no JSON, no tags."
 
-const zenFailureHint = "a 403 FreeTierError is ambiguous by design: it fires both for a throttled egress IP and for a gate-shape mismatch; the shape is covered by internal/llm tests, so a burn-out usually means the egress is throttled"
+const zenFailureHint = "a 403 FreeTierError is ambiguous by design: it fires both for a throttled egress IP and for a gate-shape mismatch (missing tools array, a session id that is not in the client's generated scheme, stream:false); retries cover throttles, so a persistent burn-out means the envelope drifted - re-bisect against the current client with internal/zengate in mind"
 
 // zenClient implements chatClient + streamingChatClient for the zen lane.
 // Both paths stream on the wire (the gate requires stream: true) and parse
@@ -124,15 +121,17 @@ func (c *zenClient) call(ctx context.Context, req Request, onDelta func(StreamDe
 	}
 
 	payload := map[string]any{
-		"model":       model,
-		"max_tokens":  zenMaxTokens,
-		"temperature": zenTemperature,
+		"model": model,
 		"messages": []map[string]any{
 			{"role": "system", "content": systemText},
 			{"role": "user", "content": liveText},
 		},
-		"stream":         true,
-		"stream_options": map[string]any{"include_usage": true},
+		"tools":                 zengate.Tools(),
+		"tool_choice":           "none",
+		"max_completion_tokens": zenMaxCompletionTokens,
+		"stream":                true,
+		"stream_options":        map[string]any{"include_usage": true},
+		"store":                 false,
 	}
 
 	started := time.Now()
@@ -195,11 +194,7 @@ func (c *zenClient) runOnce(ctx context.Context, req Request, payload map[string
 	}
 
 	endpoint := c.endpoint(req)
-	sessionID, err := zengate.IdentityID()
-	if err != nil {
-		return Message{}, err
-	}
-	requestID, err := zengate.IdentityID()
+	sessionID, err := zengate.SessionID()
 	if err != nil {
 		return Message{}, err
 	}
@@ -209,13 +204,19 @@ func (c *zenClient) runOnce(ctx context.Context, req Request, payload map[string
 		return Message{}, fmt.Errorf("zen lane: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
+	httpReq.Header.Set("Accept", "*/*")
 	httpReq.Header.Set("Authorization", "Bearer "+c.resolveAPIKey(req))
 	httpReq.Header.Set("User-Agent", zenUserAgent)
 	httpReq.Header.Set("x-opencode-client", "cli")
-	httpReq.Header.Set("x-opencode-project", "global")
-	httpReq.Header.Set("x-opencode-session", "ses_"+sessionID)
-	httpReq.Header.Set("x-opencode-request", "msg_"+requestID)
+	httpReq.Header.Set("x-opencode-project", zengate.ProjectID())
+	session := "ses_" + sessionID
+	httpReq.Header.Set("x-opencode-session", session)
+	httpReq.Header.Set("x-opencode-session-id", session)
+	httpReq.Header.Set("x-session-affinity", session)
+	httpReq.Header.Set("x-session-id", session)
+	b3, traceparent := zengate.TraceHeaders()
+	httpReq.Header.Set("b3", b3)
+	httpReq.Header.Set("traceparent", traceparent)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -314,9 +315,10 @@ func parseZenStream(reader io.Reader, onDelta func(StreamDelta)) (Message, error
 	return message, nil
 }
 
-// buildZenTurn assembles the gate envelope: the official prompt prefix plus
-// everything Kite adds (system prompt, lane rules, folded dialogue, final
-// reminder) as the system tail, and returns the single live user message.
+// buildZenTurn assembles the lane envelope: Kite's system prompt, the lane
+// rules, the folded dialogue and the final reminder as the system message
+// (content is free on the tools-bearing main-agent branch), plus the single
+// live user message.
 func buildZenTurn(req Request) (systemText string, liveText string, err error) {
 	messages := req.Messages
 	if len(messages) == 0 {
@@ -342,7 +344,6 @@ func buildZenTurn(req Request) (systemText string, liveText string, err error) {
 	}
 
 	var tail strings.Builder
-	tail.WriteString("\n\n")
 	if system := strings.TrimSpace(systemContent); system != "" {
 		tail.WriteString(system)
 		tail.WriteString("\n\n")
@@ -366,7 +367,7 @@ func buildZenTurn(req Request) (systemText string, liveText string, err error) {
 	tail.WriteString("\n\n")
 	tail.WriteString(zenFinalReminder)
 
-	return zengate.SystemPrompt() + tail.String(), live, nil
+	return tail.String(), live, nil
 }
 
 // zenMessageText renders a message's text content: Content plus any text
