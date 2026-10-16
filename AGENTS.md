@@ -140,16 +140,24 @@
   default DATABASE_URL, interval, exclude). Enabled in production.yaml; DSN
   comes from the DATABASE_URL Render env var. Validation fails startup when
   enabled without a resolvable URL — by design, so a missing env var is loud.
-- Neon project: `lumen` / silent-math-00638479, org
-  (org-rapid-base-02276796), OWNS ACCOUNT (mainframe neon profile holding it,
-  neon profile), aws-us-west-2, pg 17. Connection URI via
-  neon-account.ps1 / mainframe api-key. Never commit the DSN.
+- **RETIRED 2026-10-16: the Neon project** `lumen` / silent-math-00638479, org
+  (org-rapid-base-02276796), aws-us-west-2, pg 17. Migrated to **Supabase
+  Singapore** before Neon's ~2026-10-18 free-compute gate (see "Singapore
+  migration" below); the DATABASE_URL no longer references Neon anywhere.
+  Every DB this service touches (persistence snapshots, dedupe tables,
+  whatsapp_sessions, pending_notifications, notification_deliveries) now lives
+  in the single Supabase project. Never commit the DSN.
 
 ## Deploy: Render web service (2026-08-14)
 
-- Service: `lumen` (srv-d9vd3oh42hec738odeg0), workspace "Bayazid's workspace"
-  (workspace tea-cu1mom1u0jms738ka280),
-  free plan, oregon. URL https://lumen-aqyl.onrender.com, health /api/health.
+- **PRIMARY service since 2026-10-16: `lumen-sg`** (srv-db8o8qgn74is73c7kk60),
+  workspace "Bayazid's workspace" (workspace tea-cu1mom1u0jms738ka280), free
+  plan, **singapore**. URL https://lumen-sg.onrender.com, health /api/health.
+  The original Oregon service `lumen` (srv-d9vd3oh42hec738odeg0,
+  https://lumen-aqyl.onrender.com) is **SUSPENDED** since 2026-10-16 as
+  rollback insurance (`"suspended": "suspended"` in the service GET; resume it
+  only to roll back, then re-suspend). All deploys/env changes go to
+  `lumen-sg`; examples below use its service id.
 - Dockerfile multi-stage build (golang:1.25 → debian:bookworm-slim + ffmpeg),
   binds 7860, `serve -config /app/config/production.yaml`. Auto-deploy on main.
 - **docs-only pushes must carry `[skip render]` in the commit message** (or
@@ -160,7 +168,7 @@
   the marker must be in the LAST commit of the push. the service lives under
   the **bayazid10@gmail.com** mainframe render profile (`mainframe\
   render-account.ps1 use bayazid10@gmail.com`); list deploys with
-  `GET /v1/services/srv-d9vd3oh42hec738odeg0/deploys` - responses are a bare
+  `GET /v1/services/srv-db8o8qgn74is73c7kk60/deploys` - responses are a bare
   JSON array of `{deploy: {...}}`, so `foreach ($item in @($resp)) { $item.deploy }`,
   NOT `$resp.deploys`.
 - **Render env changes only apply on the NEXT DEPLOY (2026-10-09)**:
@@ -181,11 +189,62 @@
   (status stayed empty); fix: `POST /v1/services/<id>/deploys` via curl.
 - Local Windows runs still use config/lumen.yaml (gitignored).
 
+### Singapore migration (2026-10-16): Neon → Supabase SG, Oregon → Render SG
+
+Full-stack move to Singapore (rule 31: closest region to Dhaka) + Neon's
+free-compute gate (~2026-10-18). All free tier.
+
+- **DB = Supabase project `pwtjjqvhgfgmxknnizjl`**, region `ap-southeast-1`,
+  ACTIVE_HEALTHY. Data migrated by `pg_dump` from Neon (1,931,252 B, 8 tables
+  in TOC) + `pg_restore --clean --if-exists --single-transaction --no-owner
+  --no-privileges` (exit 0, 9s). Row counts verified EXACT on all 8 tables
+  (app_state 2, crack_seen 55, game_seen 69, lumen_snapshots 55,
+  notification_deliveries 109, pending_notifications 0, steam_seen 35,
+  whatsapp_sessions 1) and `public` holds exactly those 8 tables.
+- **DATABASE_URL final shape = session-mode pooler (IPv4)**:
+  `postgresql://postgres.<ref>@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require`
+  (password in the Render env + the vault `.env (production)` item; NEVER
+  commit it). User format is `postgres.<ref>`, NOT bare `postgres`.
+- **GOTCHA — the direct host can never work from Render (root cause of the
+  first `update_failed` deploy)**: `db.<ref>.supabase.co` is **IPv6-only**
+  (AAAA `2406:da18:...`, ZERO A records) and Render free containers are
+  `v6=false`, so a direct dial always dies with
+  `dial tcp [2406:...]:5432: connect: network is unreachable`.
+  `db-pool.<ref>.supabase.co` does NOT exist as a hostname. The pooler host
+  (`aws-0-ap-southeast-1.pooler.supabase.com`) is IPv4-only and in-region —
+  that is the only Render-safe DSN target. Never "fix" a dial error by
+  repointing at the direct host.
+- lumen is pooler-safe: no LISTEN, no advisory locks, no session-level SQL.
+- **Local DB access**: psql runs through the mihomo SOCKS relay pattern
+  (`neon.com\neon-via-proton\socks5-fwd.ps1`, listen 127.0.0.1:5435 → target
+  pooler:5432, `hostaddr=127.0.0.1` so the relay dials; details/quirks in that
+  folder's AGENTS.md). Local DNS cannot resolve `*.supabase.co` at all — use
+  DoH for lookups; the relay path works because mihomo resolves remotely.
+- **Re-pointed to `https://lumen-sg.onrender.com` same day** (commit
+  `5caf385` `[skip render]`, deploy `dep-db8q3hjl550s73eq1i2g` → live):
+  `production.yaml` `health_watch.whatsapp_pair_url` + `notify.webhook_url`,
+  cron-job.org `8265305`, UptimeRobot `804112595`, automata-private
+  `protonvpn.com\whatsapp-path-watchdog.ps1` (HealthUrl/NotifyUrl) +
+  `BYPASS-DESIGN.md`, and `facebook.com\.env.local`
+  (`MURMUR_HF_SPACE_URL`). Old Oregon service suspended as rollback insurance
+  (see Deploy section above).
+- **Vault (rule 30)**: the live pooler DSN is the `DATABASE_URL=` line in the
+  vault item `github.com/FahadBinHussain/lumen-agent / .env (production)`
+  (notes are KEY=value lines; restore with
+  `bitwarden.com\env-sync.ps1 -Repo lumen-agent -Env prod`).
+- The STATE RESET procedure (suspend → delete rows → resume) now targets this
+  Supabase DB (via the relay above) instead of Neon.
+- Neon project `lumen`/silent-math-00638479 is RETIRED — the old DATABASE_URL
+  is gone from Render; never repoint anything at Neon.
+
 ### Lumen keepalive redundancy (2026-09-28)
 
 Lumen is on Render's **Free** plan, so it must have independent external HTTP
-keepalives. The canonical target is `https://lumen-aqyl.onrender.com/api/health`
-(not the local `127.0.0.1:8791` bridge used by the Messenger cookie-health tool).
+keepalives. The canonical target is `https://lumen-sg.onrender.com/api/health`
+(re-pointed 2026-10-16 from lumen-aqyl; not the local `127.0.0.1:8791` bridge
+used by the Messenger cookie-health tool). Side effect worth keeping: the two
+keepalives hitting lumen-sg every 5/10 min also stop the free instance's
+15-min idle spin-down.
 
 - **cron-job.org** account `fahadbinhussain001@gmail.com`: job `8265305`,
   title `render keep-alive - lumen`, GET every 10 minutes, currently enabled.
