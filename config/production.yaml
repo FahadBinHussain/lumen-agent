@@ -282,7 +282,7 @@ bridge:
     dead_after: 45s
     min_notify_interval: 2m
     messenger_thread_id: "2637078310061988"
-    whatsapp_pair_url: https://lumen-aqyl.onrender.com/api/whatsapp/qr?format=html
+    whatsapp_pair_url: https://lumen-sg.onrender.com/api/whatsapp/qr?format=html
     # alert-target JID in Render env (HEALTH_WHATSAPP_JID) — no phone in git.
     whatsapp_jid: ""
     whatsapp_jid_env: HEALTH_WHATSAPP_JID
@@ -313,7 +313,7 @@ bridge:
 
 notify:
   # lumen's own notifications endpoint (murmur space default is dead/paused)
-  webhook_url: https://lumen-aqyl.onrender.com/api/automation/notifications
+  webhook_url: https://lumen-sg.onrender.com/api/automation/notifications
   webhook_token_env: ELEMENT_ORION_BRIDGE_NOTIFICATIONS_SECRET
   # all dedupe state (steam_seen/game_seen/crack_seen) lives in lumen's own
   # Neon (DATABASE_URL) — lumen is fully self-contained, no external DB.
