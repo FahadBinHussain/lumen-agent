@@ -1374,15 +1374,26 @@ bool). Both are polled, not event-driven.
      (default 3, 1s/3s backoff); the final error carries the HTTP status +
      response body, so a burn-out is loud, never silent.
 - Recipe lives entirely in `internal/vision/vision.go`:
-  system = `zengate-title-prompt.txt` (BYTE-EXACT capture of opencode
-  v1.18.25's title-generator prompt, CRLF and all - never hand-edit,
-  trim or regenerate it) + `zengateOverrideTail` (steers output away from
-  titles to the raw description); request headers: `Authorization: Bearer
-  public` (the anonymous key), `User-Agent: opencode/1.18.25
+  system = `zengate-title-prompt.txt` (BYTE-EXACT capture of the
+  title-generator prompt the installed opencode registers - never
+  hand-edit, trim or regenerate the matched prefix) + `zengateOverrideTail`
+  (steers output away from titles to the raw description); request
+  headers: `Authorization: Bearer public` (the anonymous key),
+  `User-Agent: opencode/1.18.25
   ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14`, `x-opencode-client:
   cli`, `x-opencode-project: global`, `x-opencode-session:
   ses_<12hex><14base62>`, `x-opencode-request: msg_<same format>` (fresh
   crypto/rand per attempt).
+- **Prompt refreshed 2026-10-16 (v1.18.25 -> v2.0.23)**: the gate follows
+  the prompt the INSTALLED client registers; when opencode moved to v2.0.23
+  the old v1 capture (CRLF, `@src/auth.ts`) stopped matching and every
+  Describe began failing `403 FreeTierError` (reproduced live from home IP -
+  body gate, not egress; the local live test failed before the swap and
+  passed right after). The file's prefix is now v2's prompt (2119 B,
+  LF-only, extracted from `scoop\apps\opencode2\current\opencode.exe`,
+  two byte-identical copies; ends at `</examples>`, tail kept after it;
+  file sha256 `02F8C8C6...9A2E09AE`). If 403s return after a future
+  opencode bump, re-extract from the binary the same way.
 - Config fields (`vision:`): `enabled`, `base_url`, `api_key` (default
   `public`), `user_agent`, `model`, `prompt` (the USER text sent next to
   the image), `timeout`, `max_attempts`, `proxy_url` (optional egress).

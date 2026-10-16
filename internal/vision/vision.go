@@ -15,9 +15,11 @@
 //   - "stream": true is required (removing it 403s; stream_options is not).
 //
 // So the system prompt here is opencode's own title-generator prompt,
-// byte-exact (zengate-title-prompt.txt, captured from opencode v1.18.25),
-// with a short override tail — the gate only matches the prefix, and the
-// tail redirects the model away from writing titles.
+// byte-exact (zengate-title-prompt.txt, captured from opencode v2.0.23;
+// refreshed 2026-10-16 because the v1.18.25 capture started 403ing once
+// opencode moved to v2, which registers v2's LF-only prompt), with a short
+// override tail — the gate only matches the prefix, and the tail redirects
+// the model away from writing titles.
 package vision
 
 import (
