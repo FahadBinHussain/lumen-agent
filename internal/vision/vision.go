@@ -15,19 +15,17 @@
 //   - "stream": true is required (removing it 403s; stream_options is not).
 //
 // So the system prompt here is opencode's own title-generator prompt,
-// byte-exact (zengate-title-prompt.txt, captured from opencode v2.0.23;
-// refreshed 2026-10-16 because the v1.18.25 capture started 403ing once
-// opencode moved to v2, which registers v2's LF-only prompt), with a short
-// override tail — the gate only matches the prefix, and the tail redirects
-// the model away from writing titles.
+// byte-exact (internal/zengate/zengate-title-prompt.txt, captured from
+// opencode v2.0.23; refreshed 2026-10-16 because the v1.18.25 capture
+// started 403ing once opencode moved to v2, which registers v2's LF-only
+// prompt), with a short override tail — the gate only matches the prefix,
+// and the tail redirects the model away from writing titles.
 package vision
 
 import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/rand"
-	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -43,10 +41,8 @@ import (
 	"golang.org/x/net/proxy"
 
 	"element-orion/internal/config"
+	"element-orion/internal/zengate"
 )
-
-//go:embed zengate-title-prompt.txt
-var zengateSystemPrompt string
 
 // zengateOverrideTail is appended verbatim after the official prompt: the zen
 // gate only checks that the system message STARTS with the official prompt,
@@ -283,7 +279,7 @@ func (d *Describer) runOnce(ctx context.Context, dataURL string) (string, error)
 		MaxTokens:   visionMaxTokens,
 		Temperature: visionTemperature,
 		Messages: []chatMessage{
-			{Role: "system", Content: zengateSystemPrompt + zengateOverrideTail},
+			{Role: "system", Content: zengate.SystemPrompt() + zengateOverrideTail},
 			{Role: "user", Content: []map[string]any{
 				{"type": "text", "text": d.prompt},
 				{"type": "image_url", "image_url": map[string]string{"url": dataURL}},
@@ -296,11 +292,11 @@ func (d *Describer) runOnce(ctx context.Context, dataURL string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("encoding request: %w", err)
 	}
-	session, err := newOpaqueID()
+	session, err := zengate.IdentityID()
 	if err != nil {
 		return "", err
 	}
-	request, err := newOpaqueID()
+	request, err := zengate.IdentityID()
 	if err != nil {
 		return "", err
 	}
@@ -478,30 +474,6 @@ func loadImage(ctx context.Context, client *http.Client, imageURL string) (strin
 	}
 
 	return "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(payload), nil
-}
-
-const (
-	idAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	idHex      = "0123456789abcdef"
-)
-
-// newOpaqueID builds the opencode identity tail: 12 hex chars + 14 base62
-// chars (ses_/msg_ prefixes are added by the caller).
-func newOpaqueID() (string, error) {
-	var buf [26]byte
-	if _, err := io.ReadFull(rand.Reader, buf[:12]); err != nil {
-		return "", fmt.Errorf("generating identity id: %w", err)
-	}
-	for i := 0; i < 12; i++ {
-		buf[i] = idHex[buf[i]&0xf]
-	}
-	if _, err := io.ReadFull(rand.Reader, buf[12:]); err != nil {
-		return "", fmt.Errorf("generating identity id: %w", err)
-	}
-	for i := 12; i < 26; i++ {
-		buf[i] = idAlphabet[int(buf[i])%len(idAlphabet)]
-	}
-	return string(buf[:]), nil
 }
 
 func singleLine(value string) string {

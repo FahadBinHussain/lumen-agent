@@ -13,12 +13,23 @@ app:
     preserve_recent_messages: 16
 
 llm:
-  api_type: openai
-  base_url: https://api.atria-asi.ai/v1
-  api_key: ""
-  api_key_env: ATRIA_API_KEY
-  model: atria-dawn
+  # Active transport (2026-10-16): the opencode zen free lane (`api_type: zen`,
+  # port of diit-chatbot's src/zen.mjs). The free tier needs the byte-exact
+  # gate prompt (internal/zengate) as the system-message prefix, requires
+  # stream:true, drops tools, and folds history into the system tail; api_key
+  # "public" is the anonymous key, not a secret. Switching back to a normal
+  # OpenAI-compatible provider (e.g. atria-dawn) also needs api_type: openai.
+  api_type: zen
+  base_url: https://opencode.ai/zen/v1
+  api_key: public
+  api_key_env: ""
+  model: mimo
   models:
+    - name: mimo
+      model: mimo-v2.6-flash-free
+      enabled: true
+      base_url: https://opencode.ai/zen/v1
+      api_key: public
     - name: atria-dawn
       model: Atria-Dawn-Preview
       enabled: true

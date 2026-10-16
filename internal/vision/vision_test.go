@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"element-orion/internal/config"
+	"element-orion/internal/zengate"
 )
 
 func testConfig(baseURL string) config.VisionConfig {
@@ -241,7 +242,7 @@ func TestDescribeRequestShape(t *testing.T) {
 	}
 	system, _ := messages[0].(map[string]any)
 	systemText, _ := system["content"].(string)
-	if systemText != zengateSystemPrompt+zengateOverrideTail {
+	if systemText != zengate.SystemPrompt()+zengateOverrideTail {
 		t.Errorf("system prompt must be the embedded official prompt + override tail (gate prefix-match), got %d chars", len(systemText))
 	}
 	user, _ := messages[1].(map[string]any)

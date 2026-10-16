@@ -1139,8 +1139,8 @@ func (c *Config) resolvePaths() error {
 }
 
 func (c Config) validate() error {
-	if !slices.Contains([]string{"openai", "codex", "deepseek"}, c.LLM.APIType) {
-		return fmt.Errorf("llm.api_type must be one of openai, codex, or deepseek")
+	if !slices.Contains([]string{"openai", "codex", "deepseek", "zen"}, c.LLM.APIType) {
+		return fmt.Errorf("llm.api_type must be one of openai, codex, deepseek, or zen")
 	}
 
 	if strings.TrimSpace(c.LLM.BaseURL) == "" {

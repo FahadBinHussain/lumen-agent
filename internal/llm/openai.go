@@ -17,6 +17,7 @@ const (
 	APITypeOpenAI   = "openai"
 	APITypeCodex    = "codex"
 	APITypeDeepSeek = "deepseek"
+	APITypeZen      = "zen"
 )
 
 type Client struct {
@@ -141,6 +142,8 @@ func NewClient(baseURL string, apiKey string, apiType string, headers map[string
 		}}
 	case APITypeCodex:
 		return &Client{impl: &responsesClient{httpJSONClient: newHTTPJSONClient(baseURL, "/responses", apiKey, headers, timeout)}}
+	case APITypeZen:
+		return &Client{impl: newZenClient(baseURL, apiKey, timeout)}
 	default:
 		return &Client{impl: &chatCompletionsClient{
 			httpJSONClient: newHTTPJSONClient(baseURL, "/chat/completions", apiKey, headers, timeout),
