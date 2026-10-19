@@ -28,6 +28,21 @@ import (
 const bridgeHistoryFile = "bridge-sessions.json"
 const bridgeAllowlistFile = "bridge-allowlist.json"
 
+// mirrorEdit is one "primary messenger message -> mirrored chat message"
+// (whatsapp/discord) mapping entry with the time the mirror was sent, so the
+// edit path can tell whether an in-place edit is still inside the platform's
+// window and prune entries that can never be used again.
+type mirrorEdit struct {
+	id string
+	at time.Time
+}
+
+// mirrorEditTTL bounds the in-memory mirror maps. It is deliberately much
+// longer than whatsapp.EditWindow: an entry past the window still identifies
+// the newest bubble (and gets re-pointed when a fresh mirror is sent), it
+// just cannot be edited in place anymore.
+const mirrorEditTTL = 24 * time.Hour
+
 type Service struct {
 	cfg       config.Config
 	runner    *agent.Runner
@@ -48,15 +63,19 @@ type Service struct {
 	allowPath string
 
 	// waEdits maps a route fanout's primary (messenger) message ID to the
-	// whatsapp message ID that mirrored it, keyed "messengerID|jid", so a
-	// later edit_pending can be applied IN PLACE on whatsapp (whatsmeow
-	// BuildEdit, 20-minute edit window) instead of a fresh-message mirror.
-	// Entries are consumed once on edit and dropped when the window is
-	// missed (fresh-message fallback then).
-	waEdits map[string]string
+	// whatsapp message that mirrored it, keyed "messengerID|jid", so EVERY
+	// later edit_pending round can be applied IN PLACE on whatsapp (whatsmeow
+	// BuildEdit, subject to whatsapp.EditWindow) instead of a fresh-message
+	// mirror — the translation-refresh edit must hit the same bubble as the
+	// detected->published edit. Entries are KEPT after an edit (never
+	// consumed); a mapping is only replaced when a fresh mirror had to be
+	// sent (edit window missed / in-place edit failed), so later edits
+	// target the newest bubble. Pruned past mirrorEditTTL.
+	waEdits map[string]mirrorEdit
 	// dcEdits is the same contract for discord (keyed "messengerID|channelID",
-	// discord PATCH edits).
-	dcEdits map[string]string
+	// discord PATCH edits). Discord has no server edit window, so a kept
+	// mapping means every later edit patches the same message.
+	dcEdits map[string]mirrorEdit
 
 	runCancels map[string]runCancel
 	runSeq     int64
@@ -99,8 +118,8 @@ func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
 		sessions:    make(map[string][]llm.Message),
 		allowlist:   make(map[string][]string),
 		allowPath:   filepath.Join(cfg.App.SessionDir, bridgeAllowlistFile),
-		waEdits:     make(map[string]string),
-		dcEdits:     make(map[string]string),
+		waEdits:     make(map[string]mirrorEdit),
+		dcEdits:     make(map[string]mirrorEdit),
 		runCancels:  make(map[string]runCancel),
 		historyPath: filepath.Join(cfg.App.SessionDir, bridgeHistoryFile),
 	}
@@ -810,6 +829,30 @@ func (s *Service) sendDiscord(channelID string, text string) (string, error) {
 	return s.discord.SendPlainText(channelID, text)
 }
 
+// recordMirrorEdit stores id as the mirror target for key and prunes entries
+// past mirrorEditTTL so the map stays bounded. Callers must NOT hold s.mu.
+func (s *Service) recordMirrorEdit(m map[string]mirrorEdit, key, id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m[key] = mirrorEdit{id: id, at: time.Now()}
+	cutoff := time.Now().Add(-mirrorEditTTL)
+	for k, v := range m {
+		if v.at.Before(cutoff) {
+			delete(m, k)
+		}
+	}
+}
+
+// mirrorEditTarget returns the mirror message recorded for key. Lookups never
+// consume the entry — repeated edit rounds must reach the same message.
+// Callers must NOT hold s.mu.
+func (s *Service) mirrorEditTarget(m map[string]mirrorEdit, key string) (mirrorEdit, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := m[key]
+	return v, ok
+}
+
 // SendRoute implements bnp.RouteSender: fans text out to every channel in
 // cfg.Bridge.Routes[route]. The messenger channel is the primary: its
 // message ID is returned for the ack contract and a primary failure fails
@@ -844,9 +887,7 @@ func (s *Service) SendRoute(ctx context.Context, route string, text string) (str
 				continue
 			}
 			if primaryID != "" {
-				s.mu.Lock()
-				s.waEdits[primaryID+"|"+ch.JID] = waID
-				s.mu.Unlock()
+				s.recordMirrorEdit(s.waEdits, primaryID+"|"+ch.JID, waID)
 			}
 		case "discord":
 			dcID, err := s.sendDiscord(ch.ChannelID, text)
@@ -855,9 +896,7 @@ func (s *Service) SendRoute(ctx context.Context, route string, text string) (str
 				continue
 			}
 			if primaryID != "" {
-				s.mu.Lock()
-				s.dcEdits[primaryID+"|"+ch.ChannelID] = dcID
-				s.mu.Unlock()
+				s.recordMirrorEdit(s.dcEdits, primaryID+"|"+ch.ChannelID, dcID)
 			}
 		}
 	}
@@ -867,9 +906,12 @@ func (s *Service) SendRoute(ctx context.Context, route string, text string) (str
 // EditRoute implements bnp.RouteSender: replaces the primary messenger
 // message of a route (edit_pending outbox items). Messenger is the primary
 // edit target; whatsapp and discord edit their mirrored message IN PLACE
-// when the mirror ID was recorded (whatsmeow BuildEdit within the 20-min
-// window, discord PATCH), otherwise the edited text goes out as a fresh
-// best-effort message so the route stays content-symmetric.
+// every time — the recorded mirror mapping is KEPT across edits, not
+// consumed, so a later edit round (e.g. the translation refresh) still
+// targets the same bubble. The mapping is only re-pointed when a fresh
+// mirror had to be sent: the whatsapp mirror is past the in-place edit
+// window, or an in-place edit failed. Both cases are logged loudly, and
+// discord has no edit window so it only falls back on a real failure.
 func (s *Service) EditRoute(ctx context.Context, route string, messageID string, text string) error {
 	channels := s.cfg.Bridge.Routes[route]
 	if len(channels) == 0 {
@@ -889,40 +931,44 @@ func (s *Service) EditRoute(ctx context.Context, route string, messageID string,
 			edited = true
 		case "whatsapp":
 			key := messageID + "|" + ch.JID
-			s.mu.Lock()
-			waID, have := s.waEdits[key]
-			if have {
-				delete(s.waEdits, key)
-			}
-			s.mu.Unlock()
+			rec, have := s.mirrorEditTarget(s.waEdits, key)
 			if have && s.whatsapp != nil {
-				if err := s.whatsapp.EditText(ctx, ch.JID, waID, text); err == nil {
+				if age := time.Since(rec.at); age > whatsapp.EditWindow {
+					log.Printf("bnp: route %s whatsapp channel %s mirror is %s old (past the %s edit window), mirroring fresh", route, ch.JID, age.Round(time.Second), whatsapp.EditWindow)
+				} else if err := s.whatsapp.EditText(ctx, ch.JID, rec.id, text); err == nil {
 					continue
 				} else {
 					log.Printf("bnp: route %s whatsapp channel %s in-place edit failed (%v), mirroring fresh", route, ch.JID, err)
 				}
+			} else if !have {
+				log.Printf("bnp: route %s whatsapp channel %s has no recorded mirror for message %s (send never recorded one, or lumen restarted), mirroring fresh", route, ch.JID, messageID)
 			}
-			if _, err := s.SendWhatsApp(ctx, ch.JID, text); err != nil {
+			newID, err := s.SendWhatsApp(ctx, ch.JID, text)
+			if err != nil {
 				log.Printf("bnp: route %s whatsapp channel %s edit mirror failed: %v", route, ch.JID, err)
+				continue
 			}
+			// Later edits must target the bubble that carries the current
+			// text, not the one that could no longer be edited.
+			s.recordMirrorEdit(s.waEdits, key, newID)
 		case "discord":
 			key := messageID + "|" + ch.ChannelID
-			s.mu.Lock()
-			dcID, have := s.dcEdits[key]
-			if have {
-				delete(s.dcEdits, key)
-			}
-			s.mu.Unlock()
+			rec, have := s.mirrorEditTarget(s.dcEdits, key)
 			if have && s.discord != nil {
-				if err := s.discord.EditPlainText(ch.ChannelID, dcID, text); err == nil {
+				if err := s.discord.EditPlainText(ch.ChannelID, rec.id, text); err == nil {
 					continue
 				} else {
 					log.Printf("bnp: route %s discord channel %s in-place edit failed (%v), mirroring fresh", route, ch.ChannelID, err)
 				}
+			} else if !have {
+				log.Printf("bnp: route %s discord channel %s has no recorded mirror for message %s (send never recorded one, or lumen restarted), mirroring fresh", route, ch.ChannelID, messageID)
 			}
-			if _, err := s.sendDiscord(ch.ChannelID, text); err != nil {
+			newID, err := s.sendDiscord(ch.ChannelID, text)
+			if err != nil {
 				log.Printf("bnp: route %s discord channel %s edit mirror failed: %v", route, ch.ChannelID, err)
+				continue
 			}
+			s.recordMirrorEdit(s.dcEdits, key, newID)
 		}
 	}
 	if !edited {

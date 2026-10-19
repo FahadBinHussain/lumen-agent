@@ -491,6 +491,12 @@ func (w *WhatsmeowClient) SendText(ctx context.Context, to string, text string) 
 	return lastID, nil
 }
 
+// EditWindow is how long after sending a message WhatsApp still applies an
+// in-place edit (whatsmeow's own protocol constant). Past it the server does
+// not apply edits, so callers that must keep the chat content current have
+// to fall back to a fresh message instead of believing an edit landed.
+const EditWindow = whatsmeow.EditWindow
+
 // EditText replaces an earlier message we sent to the same chat in place
 // (whatsmeow BuildEdit protocol edit, subject to the server edit window).
 // The message ID must be a whatsapp message ID we got back from SendText.

@@ -584,12 +584,15 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     item), every other channel is best-effort (logged, never fails the ack);
     edits (edit_pending items) replace the primary messenger message AND
     update every other channel: whatsapp edits IN PLACE when the mirror's
-    message ID was recorded (whatsmeow BuildEdit, 20-min edit window;
-    mapping keyed "messengerID|jid" consumed on first edit, dropped when the
-    window is missed) and falls back to a fresh-message mirror otherwise;
+    message ID was recorded (whatsmeow BuildEdit, `whatsapp.EditWindow` =
+    20 min server window; mapping keyed "messengerID|jid" is KEPT across
+    edits — never consumed — so repeated edit rounds [detected→published,
+    then the translation refresh] all hit the same bubble; a mapping is only
+    replaced when a fresh mirror had to be sent [past the window, edit
+    failed, or no mapping recorded] and the fresh path is logged loudly);
     discord edits IN PLACE too via REST PATCH (mapping keyed
-    "messengerID|channelID", `DiscordHealthClient.EditPlainText`), same
-    fresh-message fallback. the original bug: the whatsapp group kept stale
+    "messengerID|channelID", `DiscordHealthClient.EditPlainText`, no edit
+    window), same fresh-message fallback. the original bug: the whatsapp group kept stale
     "detected" text while messenger had the edited "published" text
     (2026-08-18, commit 0e5a88a fresh-mirror, then 28a87e1 whatsapp
     BuildEdit + 310d91b discord PATCH in-place edits; live-verified
@@ -1392,6 +1395,43 @@ bool). Both are polled, not event-driven.
   1000 characters, so the lower ceiling avoids silent truncation.
 - WhatsApp edited notifications also edit the first chunk and send any
   continuation chunks separately.
+
+## BNP whatsapp mirror: every edit round edits the SAME bubble (fixed 2026-10-19)
+
+Live bug: one bssnews article produced TWO whatsapp bubbles at the same
+minute ("detected · bssnews news" + "published on dailybnp · bssnews news")
+in the BNP group. Root cause was in `bridge.EditRoute`'s mirror mapping, not
+the dailybnp outbox: `waEdits` was keyed `"messengerID|jid"` and CONSUMED on
+the first in-place edit, so the old detected→published contract (one edit
+per message) worked — but the 2026-10-19 translation-refresh feature flips
+sent rows back to `edit_pending` for a SECOND edit round, and that round
+found no mapping and fell back to fresh-message mirrors → duplicate bubbles.
+Render-log proof (article 351613): 09:06:35 fresh mirror "detected",
+09:07:05 in-place edit "published" (mapping consumed), 09:13:34 + 09:13:36
+two FRESH sends for the refresh round. Both outbox rows carried the SAME
+messenger messageId the whole time, so the messenger side was always one
+message — only the whatsapp mirror duplicated.
+
+Contract now (`service.go`): mirror mappings (`waEdits`/`dcEdits`,
+`map[string]mirrorEdit{id, at}`) are KEPT across edits — lookups never
+consume. A mapping is only replaced when a fresh mirror had to be sent, so
+later edits follow the newest bubble:
+
+- whatsapp past `whatsapp.EditWindow` (whatsmeow's 20-min server window,
+  re-exported in `internal/whatsapp`): logged loudly, fresh mirror, re-point.
+- whatsapp in-place edit failed: logged loudly, fresh mirror, re-point.
+- no mapping recorded (send never recorded one, or lumen restarted — the map
+  is in-memory only): logged loudly, fresh mirror, re-point. A restart
+  between send and a later edit round costs at most one extra bubble.
+- discord has no edit window: it falls back only on a real PATCH failure.
+- `mirrorEditTTL` (24 h) prunes old entries so the maps stay bounded.
+
+Tested in `internal/bridge/service_mirror_edit_test.go` (lookup never
+consumes, re-point replaces, prune, discord repeated edits patch the same
+message, failure re-points). Live verification on the production bnp route
+(fake outbox pair + a refresh round: every round must log "WhatsApp message
+edited via whatsmeow", zero fresh sends) — performed after the deploy that
+carries this fix, result recorded below when done.
 
 ## Neon storage metering v3.2 (2026-10-02)
 
