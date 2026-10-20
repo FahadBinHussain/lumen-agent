@@ -1428,10 +1428,22 @@ later edits follow the newest bubble:
 
 Tested in `internal/bridge/service_mirror_edit_test.go` (lookup never
 consumes, re-point replaces, prune, discord repeated edits patch the same
-message, failure re-points). Live verification on the production bnp route
-(fake outbox pair + a refresh round: every round must log "WhatsApp message
-edited via whatsmeow", zero fresh sends) — performed after the deploy that
-carries this fix, result recorded below when done.
+message, failure re-points).
+
+Live-verified 2026-10-20 on the deployed service (`50ec70a`, lumen-sg) with
+fake outbox pairs through the real bnp route:
+
+- within-window refresh (`mirrorcheck-b`): one fresh whatsapp send
+  (`detected` round1), then THREE in-place edits of the same bubble id
+  `3EB0A5BE3E0719FDB461D4` (`published` round1, `detected` round2,
+  `published` round2) — zero fresh sends after the initial one. Both outbox
+  rows stayed `sent` with the same messenger messageId throughout. Pre-fix
+  the refresh round produced two fresh bubbles (the incident).
+- past-window refresh (`mirrorcheck-1019a`, 14h22m later): the loud
+  "mirror is 14h22m28s old (past the 20m0s edit window), mirroring fresh"
+  line fired, one fresh bubble was sent, the mapping was re-pointed, and the
+  next edit round (same second, published row) edited that fresh bubble in
+  place — no further duplicate.
 
 ## Neon storage metering v3.2 (2026-10-02)
 
