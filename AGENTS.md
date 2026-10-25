@@ -256,9 +256,8 @@
   workspace "Bayazid's workspace" (workspace tea-cu1mom1u0jms738ka280), free
   plan, **singapore**. URL https://lumen-sg.onrender.com, health /api/health.
   The original Oregon service `lumen` (srv-d9vd3oh42hec738odeg0,
-  https://lumen-aqyl.onrender.com) is **SUSPENDED** since 2026-10-16 as
-  rollback insurance (`"suspended": "suspended"` in the service GET; resume it
-  only to roll back, then re-suspend). All deploys/env changes go to
+  https://lumen-aqyl.onrender.com) was **DELETED** on 2026-10-25 after
+  Singapore ran stably for 9+ days. All deploys/env changes go to
   `lumen-sg`; examples below use its service id.
 - Dockerfile multi-stage build (golang:1.25 → debian:bookworm-slim + ffmpeg),
   binds 7860, `serve -config /app/config/production.yaml`. Auto-deploy on main.
