@@ -220,6 +220,18 @@ func (s *Service) handleAutomationNotification(w http.ResponseWriter, r *http.Re
 		if platform == "" {
 			platform = "messenger"
 		}
+		if route == "" && s.isNotificationDisabled(platform, req.ThreadID, req.Source) {
+			log.Printf("bridge: automation notification muted (source=%s platform=%s thread=%s dedupe=%s)", req.Source, platform, req.ThreadID, req.DedupeKey)
+			if s.neon != nil {
+				_ = s.neon.MarkDelivered(r.Context(), req.DedupeKey)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"id":     fmt.Sprintf("ntf_%d", time.Now().UnixMilli()),
+				"status": "muted",
+			})
+			return
+		}
 		if _, err := s.queuePending(r.Context(), req, platform, text); err != nil {
 			http.Error(w, "could not persist deduped notification: "+err.Error(), http.StatusServiceUnavailable)
 			return
@@ -266,6 +278,16 @@ func (s *Service) handleAutomationNotification(w http.ResponseWriter, r *http.Re
 	threadID := strings.TrimSpace(req.ThreadID)
 	if threadID == "" {
 		http.Error(w, "threadId is required", http.StatusBadRequest)
+		return
+	}
+
+	if route == "" && s.isNotificationDisabled(platform, threadID, req.Source) {
+		log.Printf("bridge: automation notification muted (source=%s platform=%s thread=%s)", req.Source, platform, threadID)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":     fmt.Sprintf("ntf_%d", time.Now().UnixMilli()),
+			"status": "muted",
+		})
 		return
 	}
 

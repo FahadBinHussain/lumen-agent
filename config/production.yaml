@@ -323,6 +323,11 @@ bridge:
   # whatsapp admin JID in Render env (ADMIN_WHATSAPP_JIDS, comma-separated).
   admin_threads_env:
     whatsapp: ADMIN_WHATSAPP_JIDS
+  # disabled_notifications: baseline thread notification opt-outs.
+  # Can also be toggled dynamically in any chat with /notify off [feed] or /mute [feed].
+  disabled_notifications:
+    "messenger:953525124128433":
+      - "gamebot"
 
 notify:
   # lumen's own notifications endpoint (murmur space default is dead/paused)

@@ -477,6 +477,19 @@ to the agent. production.yaml: admin_threads = the three test channels
 discord 1537650032441032765) — keep it that way unless a real thread needs
 admin.
 
+Notification toggle commands (added 2026-10-25): `/notify`, `/notify status`
+(view active & muted automated feeds for this thread), `/notify off [feed]`,
+`/notify on [feed]` (or `/mute [feed]`, `/unmute [feed]`). When executed in any
+thread, the caller's thread is inferred automatically (no thread ID required).
+Feeds: `free_games` (gamebot), `steam_updates`, `crackwatch`, `neon_usage`,
+`supabase`, `all` (`*`). Targeting a foreign thread (`/notify off <feed> <id>`)
+is restricted to `bridge.admin_threads`. Config baseline opt-outs live in
+`bridge.disabled_notifications` (e.g. `messenger:953525124128433: ["gamebot"]`),
+and runtime overrides persist to `<session_dir>/bridge-disabled-notifs.json`
+(Neon/Supabase-snapshotted via the persist toucher). Muted notifications return
+`status: "muted"` from `/api/automation/notifications`, mark dedupe keys
+delivered in Neon, and are dropped from pending queue retries.
+
 History: per `platform:thread` in memory, persisted to
 `<session_dir>/bridge-sessions.json` (symmetry with Discord: same
 `agent.CompactHistoryForStorage` compaction on every turn, same file-in-session-dir

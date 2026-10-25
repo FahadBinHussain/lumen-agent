@@ -110,6 +110,20 @@ func (s *Service) drainPending(ctx context.Context) {
 				continue
 			}
 		}
+
+		// Check if notifications have been muted for this destination
+		if p.Route == "" && s.isNotificationDisabled(p.Platform, p.ThreadID, p.Source) {
+			if p.DedupeKey != "" {
+				_ = s.neon.MarkDelivered(ctx, p.DedupeKey)
+			}
+			if err := s.neon.DeletePending(ctx, p.ID); err != nil {
+				log.Printf("bridge: pending muted delete %d failed: %v", p.ID, err)
+			} else {
+				log.Printf("bridge: pending %d dropped (notifications muted for %s:%s source=%s)", p.ID, p.Platform, p.ThreadID, p.Source)
+			}
+			continue
+		}
+
 		// Re-check mouth is still up for this row's platform.
 		if !s.isPlatformConnected(p.Platform) {
 			continue

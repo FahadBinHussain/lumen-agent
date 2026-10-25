@@ -195,6 +195,10 @@ type BridgeConfig struct {
 	// AdminThreadsEnv maps platform -> env var holding that platform's
 	// comma-separated admin list (same fail-closed rule as allowed_jids_env).
 	AdminThreadsEnv map[string]string `yaml:"admin_threads_env"`
+	// DisabledNotifications maps "platform:thread_id" -> list of disabled sources
+	// (e.g. "messenger:953525124128433": ["gamebot"]). Baseline opt-outs that
+	// can be overridden or added to dynamically at runtime via /notify.
+	DisabledNotifications map[string][]string `yaml:"disabled_notifications"`
 }
 
 // RouteChannel is one delivery target in a route. Exactly one target field
@@ -1581,6 +1585,16 @@ func (c Config) BridgeAdminThread(platform string, id string) bool {
 		}
 	}
 	return false
+}
+
+// DisabledNotificationsForThread returns baseline disabled notification sources
+// configured in YAML for a platform and threadID.
+func (c Config) DisabledNotificationsForThread(platform, threadID string) []string {
+	if len(c.Bridge.DisabledNotifications) == 0 {
+		return nil
+	}
+	key := strings.ToLower(strings.TrimSpace(platform)) + ":" + strings.TrimSpace(threadID)
+	return c.Bridge.DisabledNotifications[key]
 }
 
 func (c Config) ResolveGIFAPIKey() (string, error) {

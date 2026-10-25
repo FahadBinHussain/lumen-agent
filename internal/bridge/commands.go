@@ -41,6 +41,12 @@ func (s *Service) runCommand(platform, threadID, prompt string) (string, bool) {
 		if len(fields) < 2 {
 			return "", false
 		}
+	case "notify":
+		return s.commandNotify(platform, threadID, fields)
+	case "mute":
+		return s.commandMute(platform, threadID, fields, true)
+	case "unmute":
+		return s.commandMute(platform, threadID, fields, false)
 	default:
 		return "", false
 	}
@@ -429,4 +435,292 @@ func (s *Service) clearRunCancel(key string, seq int64) {
 		delete(s.runCancels, key)
 	}
 	s.mu.Unlock()
+}
+
+type feedMeta struct {
+	key         string
+	name        string
+	description string
+	aliases     []string
+}
+
+var availableFeeds = []feedMeta{
+	{
+		key:         "gamebot",
+		name:        "free_games",
+		description: "Free PC game deals (Epic, Steam, etc.)",
+		aliases:     []string{"gamebot", "free_games", "freegames", "game", "games", "deals"},
+	},
+	{
+		key:         "steam-updates",
+		name:        "steam_updates",
+		description: "Steam game updates & patch notes",
+		aliases:     []string{"steam", "steam_updates", "steam-updates", "steamupdates"},
+	},
+	{
+		key:         "crackwatch",
+		name:        "crackwatch",
+		description: "Scene game release announcements",
+		aliases:     []string{"crackwatch", "crack_watch", "crack-watch"},
+	},
+	{
+		key:         "neon-usage",
+		name:        "neon_usage",
+		description: "Neon database hours & storage warnings",
+		aliases:     []string{"neon", "neon_usage", "neon-usage"},
+	},
+	{
+		key:         "supabase",
+		name:        "supabase",
+		description: "Supabase egress & DB quota warnings",
+		aliases:     []string{"supabase", "supabase_usage"},
+	},
+}
+
+func matchFeed(input string) (string, string, bool) {
+	norm := strings.ToLower(strings.TrimSpace(input))
+	if norm == "all" || norm == "*" {
+		return "*", "all", true
+	}
+	for _, f := range availableFeeds {
+		if norm == f.key || norm == f.name {
+			return f.key, f.name, true
+		}
+		for _, a := range f.aliases {
+			if norm == a {
+				return f.key, f.name, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+func isPotentialThreadID(s string) bool {
+	s = strings.TrimSpace(s)
+	if _, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return true
+	}
+	if strings.Contains(s, "@") {
+		return true
+	}
+	return false
+}
+
+func (s *Service) commandNotify(platform, threadID string, fields []string) (string, bool) {
+	if len(fields) == 1 {
+		return s.formatNotificationStatus(platform, threadID, threadID), true
+	}
+
+	sub := strings.ToLower(fields[1])
+	switch sub {
+	case "status", "list":
+		target := threadID
+		if len(fields) > 2 {
+			target = strings.TrimSpace(fields[2])
+		}
+		if target != threadID && !s.cfg.BridgeAdminThread(platform, threadID) {
+			return "admin command — viewing notifications for another thread requires bridge admin privileges.", true
+		}
+		return s.formatNotificationStatus(platform, threadID, target), true
+
+	case "off", "disable", "stop", "mute":
+		var feedKey, feedName string
+		target := threadID
+		if len(fields) == 2 {
+			feedKey = "*"
+			feedName = "all"
+		} else if len(fields) == 3 {
+			if key, name, ok := matchFeed(fields[2]); ok {
+				feedKey = key
+				feedName = name
+			} else {
+				target = strings.TrimSpace(fields[2])
+				feedKey = "*"
+				feedName = "all"
+			}
+		} else if len(fields) >= 4 {
+			if key, name, ok := matchFeed(fields[2]); ok {
+				feedKey = key
+				feedName = name
+			} else {
+				return fmt.Sprintf("unknown notification feed %q. Valid feeds: free_games, steam, crackwatch, neon, supabase, all", fields[2]), true
+			}
+			target = strings.TrimSpace(fields[3])
+		}
+
+		if target != threadID && !s.cfg.BridgeAdminThread(platform, threadID) {
+			return "admin command — setting notifications for another thread requires bridge admin privileges.", true
+		}
+
+		s.setNotificationDisabled(platform, target, feedKey, true)
+		if target == threadID {
+			if feedKey == "*" {
+				return "Muted all automated notifications for this thread.", true
+			}
+			return fmt.Sprintf("Muted %s notifications for this thread.", feedName), true
+		}
+		if feedKey == "*" {
+			return fmt.Sprintf("Muted all automated notifications for %s %s.", platform, target), true
+		}
+		return fmt.Sprintf("Muted %s notifications for %s %s.", feedName, platform, target), true
+
+	case "on", "enable", "start", "unmute":
+		var feedKey, feedName string
+		target := threadID
+		if len(fields) == 2 {
+			feedKey = "*"
+			feedName = "all"
+		} else if len(fields) == 3 {
+			if key, name, ok := matchFeed(fields[2]); ok {
+				feedKey = key
+				feedName = name
+			} else {
+				target = strings.TrimSpace(fields[2])
+				feedKey = "*"
+				feedName = "all"
+			}
+		} else if len(fields) >= 4 {
+			if key, name, ok := matchFeed(fields[2]); ok {
+				feedKey = key
+				feedName = name
+			} else {
+				return fmt.Sprintf("unknown notification feed %q. Valid feeds: free_games, steam, crackwatch, neon, supabase, all", fields[2]), true
+			}
+			target = strings.TrimSpace(fields[3])
+		}
+
+		if target != threadID && !s.cfg.BridgeAdminThread(platform, threadID) {
+			return "admin command — setting notifications for another thread requires bridge admin privileges.", true
+		}
+
+		s.setNotificationDisabled(platform, target, feedKey, false)
+		if target == threadID {
+			if feedKey == "*" {
+				return "Unmuted all automated notifications for this thread.", true
+			}
+			return fmt.Sprintf("Unmuted %s notifications for this thread.", feedName), true
+		}
+		if feedKey == "*" {
+			return fmt.Sprintf("Unmuted all automated notifications for %s %s.", platform, target), true
+		}
+		return fmt.Sprintf("Unmuted %s notifications for %s %s.", feedName, platform, target), true
+
+	default:
+		if key, name, ok := matchFeed(fields[1]); ok {
+			action := "toggle"
+			target := threadID
+			if len(fields) >= 3 {
+				act := strings.ToLower(fields[2])
+				if act == "off" || act == "disable" || act == "mute" {
+					action = "off"
+				} else if act == "on" || act == "enable" || act == "unmute" {
+					action = "on"
+				} else {
+					target = strings.TrimSpace(fields[2])
+				}
+			}
+			if len(fields) >= 4 {
+				target = strings.TrimSpace(fields[3])
+			}
+			if target != threadID && !s.cfg.BridgeAdminThread(platform, threadID) {
+				return "admin command — setting notifications for another thread requires bridge admin privileges.", true
+			}
+			disable := true
+			if action == "on" {
+				disable = false
+			}
+			s.setNotificationDisabled(platform, target, key, disable)
+			verb := "Muted"
+			if !disable {
+				verb = "Unmuted"
+			}
+			if target == threadID {
+				return fmt.Sprintf("%s %s notifications for this thread.", verb, name), true
+			}
+			return fmt.Sprintf("%s %s notifications for %s %s.", verb, name, platform, target), true
+		}
+
+		return "", false
+	}
+}
+
+func (s *Service) commandMute(platform, threadID string, fields []string, mute bool) (string, bool) {
+	var feedKey, feedName string
+	target := threadID
+
+	if len(fields) == 1 {
+		feedKey = "*"
+		feedName = "all"
+	} else if len(fields) == 2 {
+		if key, name, ok := matchFeed(fields[1]); ok {
+			feedKey = key
+			feedName = name
+		} else {
+			if isPotentialThreadID(fields[1]) {
+				target = strings.TrimSpace(fields[1])
+				feedKey = "*"
+				feedName = "all"
+			} else {
+				return "", false
+			}
+		}
+	} else if len(fields) == 3 {
+		if key, name, ok := matchFeed(fields[1]); ok {
+			feedKey = key
+			feedName = name
+			target = strings.TrimSpace(fields[2])
+		} else {
+			return "", false
+		}
+	} else {
+		return "", false
+	}
+
+	if target != threadID && !s.cfg.BridgeAdminThread(platform, threadID) {
+		return "admin command — setting notifications for another thread requires bridge admin privileges.", true
+	}
+
+	s.setNotificationDisabled(platform, target, feedKey, mute)
+	verb := "Muted"
+	if !mute {
+		verb = "Unmuted"
+	}
+	if target == threadID {
+		if feedKey == "*" {
+			return fmt.Sprintf("%s all automated notifications for this thread.", verb), true
+		}
+		return fmt.Sprintf("%s %s notifications for this thread.", verb, feedName), true
+	}
+	if feedKey == "*" {
+		return fmt.Sprintf("%s all automated notifications for %s %s.", verb, platform, target), true
+	}
+	return fmt.Sprintf("%s %s notifications for %s %s.", verb, feedName, platform, target), true
+}
+
+func (s *Service) formatNotificationStatus(platform, callerThreadID, targetThreadID string) string {
+	var b strings.Builder
+	titleThread := targetThreadID
+	if callerThreadID == targetThreadID {
+		titleThread = fmt.Sprintf("this thread (%s %s)", platform, targetThreadID)
+	} else {
+		titleThread = fmt.Sprintf("%s %s", platform, targetThreadID)
+	}
+	fmt.Fprintf(&b, "Notification feeds for %s:\n", titleThread)
+
+	allDisabled := s.isNotificationDisabled(platform, targetThreadID, "*")
+	for _, f := range availableFeeds {
+		disabled := allDisabled || s.isNotificationDisabled(platform, targetThreadID, f.key)
+		status := "active"
+		if disabled {
+			status = "MUTED"
+		}
+		fmt.Fprintf(&b, "  • %-14s [%s] — %s\n", f.name+":", status, f.description)
+	}
+
+	b.WriteString("\nCommands:\n")
+	b.WriteString("  /notify off [feed]   (or /mute [feed])\n")
+	b.WriteString("  /notify on [feed]    (or /unmute [feed])\n")
+	b.WriteString("  /notify status       (view current feeds)\n")
+	b.WriteString("Feeds: free_games, steam, crackwatch, neon, supabase, all")
+	return b.String()
 }

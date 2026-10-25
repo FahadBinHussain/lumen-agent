@@ -96,6 +96,59 @@ func TestBridgeNotificationsEndpoint(t *testing.T) {
 	}
 }
 
+func TestBridgeNotificationsEndpointMuted(t *testing.T) {
+	cfg := writeTestConfig(t, "")
+	cfg.Bridge.DisabledNotifications = map[string][]string{
+		"messenger:12345": {"gamebot"},
+	}
+	s, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("new bridge: %v", err)
+	}
+	defer s.Close()
+
+	// Muted notification: returns status "muted"
+	body, _ := json.Marshal(map[string]string{
+		"source":   "gamebot",
+		"threadId": "12345",
+		"title":    "Free Game",
+		"message":  "Check out this free game",
+	})
+	req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1/api/automation/notifications", bytes.NewReader(body))
+	rec := newRecorder()
+	s.handleAutomationNotification(rec, req)
+	if rec.status != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.status, rec.body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["status"] != "muted" {
+		t.Fatalf("expected status muted, got %q", resp["status"])
+	}
+
+	// Different unmuted source: succeeds normally
+	body, _ = json.Marshal(map[string]string{
+		"source":   "steam-updates",
+		"threadId": "12345",
+		"title":    "Steam Update",
+		"message":  "Patch notes",
+	})
+	req, _ = http.NewRequest(http.MethodPost, "http://127.0.0.1/api/automation/notifications", bytes.NewReader(body))
+	rec = newRecorder()
+	s.handleAutomationNotification(rec, req)
+	if rec.status != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.status, rec.body.String())
+	}
+	if err := json.Unmarshal(rec.body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["status"] != "sent" {
+		t.Fatalf("expected status sent for unmuted source, got %q", resp["status"])
+	}
+}
+
 // TestScopedDedupeKeyIsPerDestination covers the 2026-10-08 bug: one feed
 // item posted to two free-games threads with the SAME key was delivered only
 // to the first thread (the second POST read the first thread's delivery row

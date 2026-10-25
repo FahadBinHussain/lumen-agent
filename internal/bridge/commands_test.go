@@ -21,12 +21,14 @@ func testBridgeService(t *testing.T) *Service {
 	cfg.App.SessionDir = dir
 	cfg.App.MemoryDir = filepath.Join(dir, "memory")
 	return &Service{
-		cfg:         cfg,
-		sessions:    map[string][]llm.Message{},
-		allowlist:   map[string][]string{},
-		allowPath:   filepath.Join(dir, "bridge-allowlist.json"),
-		runCancels:  map[string]runCancel{},
-		historyPath: filepath.Join(dir, "bridge-sessions.json"),
+		cfg:                cfg,
+		sessions:           map[string][]llm.Message{},
+		allowlist:          map[string][]string{},
+		allowPath:          filepath.Join(dir, "bridge-allowlist.json"),
+		disabledNotifs:     map[string][]string{},
+		disabledNotifsPath: filepath.Join(dir, "bridge-disabled-notifs.json"),
+		runCancels:         map[string]runCancel{},
+		historyPath:        filepath.Join(dir, "bridge-sessions.json"),
 	}
 }
 
@@ -270,5 +272,180 @@ func TestRunCommandExactFormOnly(t *testing.T) {
 	}
 	if _, ok := s.runCommand("messenger", "1", "allow"); ok {
 		t.Fatal("allow without an id must fall through")
+	}
+}
+
+func TestRunCommandNotifyStatus(t *testing.T) {
+	s := testBridgeService(t)
+	reply, ok := s.runCommand("messenger", "953525124128433", "/notify")
+	if !ok || !strings.Contains(reply, "Notification feeds for this thread") {
+		t.Fatalf("expected notify status, got %q (ok=%v)", reply, ok)
+	}
+	if !strings.Contains(reply, "free_games") || !strings.Contains(reply, "active") {
+		t.Fatalf("expected feeds listed as active initially, got %q", reply)
+	}
+
+	reply, ok = s.runCommand("messenger", "953525124128433", "/notify status")
+	if !ok || !strings.Contains(reply, "Notification feeds for this thread") {
+		t.Fatalf("expected /notify status to return status, got %q", reply)
+	}
+}
+
+func TestRunCommandNotifyOffAndOnInThread(t *testing.T) {
+	s := testBridgeService(t)
+	threadID := "953525124128433"
+
+	// 1. Mute free games inside the thread without providing thread id
+	reply, ok := s.runCommand("messenger", threadID, "/notify off free_games")
+	if !ok || !strings.Contains(reply, "Muted free_games") {
+		t.Fatalf("expected muted free_games reply, got %q (ok=%v)", reply, ok)
+	}
+
+	if !s.isNotificationDisabled("messenger", threadID, "gamebot") {
+		t.Fatal("gamebot notification should be disabled after /notify off free_games")
+	}
+	if s.isNotificationDisabled("messenger", threadID, "steam-updates") {
+		t.Fatal("steam-updates should NOT be disabled")
+	}
+
+	// Status should now show free_games MUTED
+	status, ok := s.runCommand("messenger", threadID, "/notify")
+	if !ok || !strings.Contains(status, "MUTED") {
+		t.Fatalf("expected MUTED in status, got %q", status)
+	}
+
+	// 2. Unmute free games
+	reply, ok = s.runCommand("messenger", threadID, "/notify on free_games")
+	if !ok || !strings.Contains(reply, "Unmuted free_games") {
+		t.Fatalf("expected unmuted reply, got %q", reply)
+	}
+	if s.isNotificationDisabled("messenger", threadID, "gamebot") {
+		t.Fatal("gamebot should no longer be disabled")
+	}
+
+	// 3. /mute and /unmute shortcuts
+	reply, ok = s.runCommand("messenger", threadID, "/mute free_games")
+	if !ok || !strings.Contains(reply, "Muted free_games") {
+		t.Fatalf("expected /mute reply, got %q", reply)
+	}
+	if !s.isNotificationDisabled("messenger", threadID, "gamebot") {
+		t.Fatal("gamebot should be disabled after /mute free_games")
+	}
+
+	reply, ok = s.runCommand("messenger", threadID, "/unmute free_games")
+	if !ok || !strings.Contains(reply, "Unmuted free_games") {
+		t.Fatalf("expected /unmute reply, got %q", reply)
+	}
+	if s.isNotificationDisabled("messenger", threadID, "gamebot") {
+		t.Fatal("gamebot should be unmuted after /unmute")
+	}
+}
+
+func TestRunCommandNotifyMuteAll(t *testing.T) {
+	s := testBridgeService(t)
+	threadID := "12345"
+
+	reply, ok := s.runCommand("messenger", threadID, "/mute")
+	if !ok || !strings.Contains(reply, "Muted all") {
+		t.Fatalf("expected muted all reply, got %q", reply)
+	}
+	if !s.isNotificationDisabled("messenger", threadID, "gamebot") {
+		t.Fatal("gamebot should be muted")
+	}
+	if !s.isNotificationDisabled("messenger", threadID, "steam-updates") {
+		t.Fatal("steam-updates should be muted")
+	}
+
+	reply, ok = s.runCommand("messenger", threadID, "/unmute")
+	if !ok || !strings.Contains(reply, "Unmuted all") {
+		t.Fatalf("expected unmuted all reply, got %q", reply)
+	}
+	if s.isNotificationDisabled("messenger", threadID, "gamebot") {
+		t.Fatal("gamebot should be unmuted")
+	}
+}
+
+func TestRunCommandNotifyForeignThreadPermissions(t *testing.T) {
+	s := testBridgeService(t)
+	s.cfg.Bridge.AdminThreads = map[string][]string{
+		"messenger": {"admin_thread"},
+	}
+
+	// Non-admin attempting to mute another thread
+	reply, ok := s.runCommand("messenger", "user_thread", "/notify off free_games other_thread")
+	if !ok || !strings.Contains(reply, "admin command") {
+		t.Fatalf("expected admin command restriction, got %q (ok=%v)", reply, ok)
+	}
+	if s.isNotificationDisabled("messenger", "other_thread", "gamebot") {
+		t.Fatal("foreign thread should not be muted by non-admin")
+	}
+
+	// Non-admin passing their OWN thread ID explicitly should succeed
+	reply, ok = s.runCommand("messenger", "user_thread", "/notify off free_games user_thread")
+	if !ok || !strings.Contains(reply, "Muted free_games") {
+		t.Fatalf("expected success when caller passes their own thread ID, got %q", reply)
+	}
+	if !s.isNotificationDisabled("messenger", "user_thread", "gamebot") {
+		t.Fatal("own thread should be muted")
+	}
+
+	// Admin thread CAN mute another thread
+	reply, ok = s.runCommand("messenger", "admin_thread", "/notify off free_games other_thread")
+	if !ok || !strings.Contains(reply, "Muted free_games notifications for messenger other_thread") {
+		t.Fatalf("expected admin success, got %q", reply)
+	}
+	if !s.isNotificationDisabled("messenger", "other_thread", "gamebot") {
+		t.Fatal("other_thread should be muted by admin")
+	}
+}
+
+func TestRunCommandNotifyFallthrough(t *testing.T) {
+	s := testBridgeService(t)
+
+	// Natural language prompts containing "notify" or "mute" must fall through to the agent
+	if reply, ok := s.runCommand("messenger", "1", "notify me when server restarts"); ok {
+		t.Fatalf("expected fallthrough for natural prompt, got %q", reply)
+	}
+	if reply, ok := s.runCommand("messenger", "1", "mute the microphone"); ok {
+		t.Fatalf("expected fallthrough for natural mute prompt, got %q", reply)
+	}
+	if reply, ok := s.runCommand("messenger", "1", "unmute the speaker"); ok {
+		t.Fatalf("expected fallthrough for natural unmute prompt, got %q", reply)
+	}
+}
+
+func TestBaselineDisabledNotificationWithRuntimeOverride(t *testing.T) {
+	s := testBridgeService(t)
+	threadID := "953525124128433"
+	s.cfg.Bridge.DisabledNotifications = map[string][]string{
+		"messenger:" + threadID: {"gamebot"},
+	}
+
+	// Baseline says gamebot is disabled
+	if !s.isNotificationDisabled("messenger", threadID, "gamebot") {
+		t.Fatal("gamebot should be disabled by baseline config")
+	}
+	if s.isNotificationDisabled("messenger", threadID, "steam-updates") {
+		t.Fatal("steam should NOT be disabled by baseline config")
+	}
+
+	// User in thread runs /notify on free_games to override baseline
+	reply, ok := s.runCommand("messenger", threadID, "/notify on free_games")
+	if !ok || !strings.Contains(reply, "Unmuted free_games") {
+		t.Fatalf("expected unmuted reply, got %q", reply)
+	}
+
+	// Now gamebot should be active!
+	if s.isNotificationDisabled("messenger", threadID, "gamebot") {
+		t.Fatal("gamebot should be re-enabled by runtime override")
+	}
+
+	// User re-mutes
+	reply, ok = s.runCommand("messenger", threadID, "/notify off free_games")
+	if !ok || !strings.Contains(reply, "Muted free_games") {
+		t.Fatalf("expected muted reply, got %q", reply)
+	}
+	if !s.isNotificationDisabled("messenger", threadID, "gamebot") {
+		t.Fatal("gamebot should be muted again")
 	}
 }

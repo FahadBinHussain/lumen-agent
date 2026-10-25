@@ -27,6 +27,7 @@ import (
 
 const bridgeHistoryFile = "bridge-sessions.json"
 const bridgeAllowlistFile = "bridge-allowlist.json"
+const bridgeDisabledNotifsFile = "bridge-disabled-notifs.json"
 
 // mirrorEdit is one "primary messenger message -> mirrored chat message"
 // (whatsapp/discord) mapping entry with the time the mirror was sent, so the
@@ -61,6 +62,12 @@ type Service struct {
 	// config allowlists by threadAllowed().
 	allowlist map[string][]string
 	allowPath string
+
+	// disabledNotifs is the runtime overlay for muted notifications,
+	// keyed by "platform:threadID" -> list of disabled sources (or "*").
+	// Persisted to bridge-disabled-notifs.json and synced via persist toucher.
+	disabledNotifs     map[string][]string
+	disabledNotifsPath string
 
 	// waEdits maps a route fanout's primary (messenger) message ID to the
 	// whatsapp message that mirrored it, keyed "messengerID|jid", so EVERY
@@ -116,15 +123,18 @@ func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
 		cfg:         cfg,
 		runner:      runner,
 		sessions:    make(map[string][]llm.Message),
-		allowlist:   make(map[string][]string),
-		allowPath:   filepath.Join(cfg.App.SessionDir, bridgeAllowlistFile),
-		waEdits:     make(map[string]mirrorEdit),
-		dcEdits:     make(map[string]mirrorEdit),
-		runCancels:  make(map[string]runCancel),
-		historyPath: filepath.Join(cfg.App.SessionDir, bridgeHistoryFile),
+		allowlist:          make(map[string][]string),
+		allowPath:          filepath.Join(cfg.App.SessionDir, bridgeAllowlistFile),
+		disabledNotifs:     make(map[string][]string),
+		disabledNotifsPath: filepath.Join(cfg.App.SessionDir, bridgeDisabledNotifsFile),
+		waEdits:            make(map[string]mirrorEdit),
+		dcEdits:            make(map[string]mirrorEdit),
+		runCancels:         make(map[string]runCancel),
+		historyPath:        filepath.Join(cfg.App.SessionDir, bridgeHistoryFile),
 	}
 	s.loadHistory()
 	s.loadAllowlist()
+	s.loadDisabledNotifs()
 
 	if cfg.Messenger.Enabled {
 		client, err := messenger.New(cfg.Messenger.CookiesPath, s.handleMessengerMessage)
@@ -625,6 +635,174 @@ func (s *Service) saveAllowlist() {
 	if s.toucher != nil {
 		s.toucher()
 	}
+}
+
+// loadDisabledNotifs restores the runtime disabled notifications overlay from the session dir.
+func (s *Service) loadDisabledNotifs() {
+	data, err := os.ReadFile(s.disabledNotifsPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("bridge: failed to read disabled notifications file %s: %v", s.disabledNotifsPath, err)
+		}
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := json.Unmarshal(data, &s.disabledNotifs); err != nil {
+		log.Printf("bridge: failed to parse disabled notifications file %s: %v (starting empty)", s.disabledNotifsPath, err)
+		s.disabledNotifs = make(map[string][]string)
+		return
+	}
+	log.Printf("bridge: restored %d runtime disabled notification entries from %s", len(s.disabledNotifs), s.disabledNotifsPath)
+}
+
+// saveDisabledNotifs persists the runtime disabled notifications overlay (persisted to session dir
+// and synced via Neon/Supabase persist toucher).
+func (s *Service) saveDisabledNotifs() {
+	s.mu.Lock()
+	data, err := json.Marshal(s.disabledNotifs)
+	s.mu.Unlock()
+	if err != nil {
+		log.Printf("bridge: marshal disabled notifications failed: %v", err)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(s.disabledNotifsPath), 0o755); err != nil {
+		log.Printf("bridge: mkdir for disabled notifications file failed: %v", err)
+		return
+	}
+	if err := os.WriteFile(s.disabledNotifsPath, data, 0o644); err != nil {
+		log.Printf("bridge: write disabled notifications file failed: %v", err)
+		return
+	}
+	if s.toucher != nil {
+		s.toucher()
+	}
+}
+
+func normalizeNotificationSource(source string) string {
+	s := strings.ToLower(strings.TrimSpace(source))
+	s = strings.ReplaceAll(s, "-", "_")
+	switch s {
+	case "free_games", "freegames", "game", "games", "gamebot", "deals":
+		return "gamebot"
+	case "steam", "steam_updates", "steamupdates":
+		return "steam-updates"
+	case "crackwatch", "crack_watch":
+		return "crackwatch"
+	case "neon", "neon_usage":
+		return "neon-usage"
+	case "supabase", "supabase_usage":
+		return "supabase"
+	case "all", "*":
+		return "*"
+	default:
+		return s
+	}
+}
+
+// isNotificationDisabled checks whether notifications from the given source
+// are muted for the specified platform and threadID.
+func (s *Service) isNotificationDisabled(platform, threadID, source string) bool {
+	if s == nil {
+		return false
+	}
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	if platform == "" {
+		platform = "messenger"
+	}
+	key := platform + ":" + strings.TrimSpace(threadID)
+	normSource := normalizeNotificationSource(source)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Check runtime overlay first if present
+	if list, ok := s.disabledNotifs[key]; ok {
+		for _, d := range list {
+			normD := normalizeNotificationSource(d)
+			if normD == "*" || normD == "all" || normD == normSource {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Fallback to baseline config if no runtime override exists
+	for _, d := range s.cfg.DisabledNotificationsForThread(platform, threadID) {
+		normD := normalizeNotificationSource(d)
+		if normD == "*" || normD == "all" || normD == normSource {
+			return true
+		}
+	}
+	return false
+}
+
+// getEffectiveDisabledNotifs returns the active list of muted notification sources
+// for a platform and threadID (runtime overlay if set, otherwise config baseline).
+func (s *Service) getEffectiveDisabledNotifs(platform, threadID string) []string {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	if platform == "" {
+		platform = "messenger"
+	}
+	key := platform + ":" + strings.TrimSpace(threadID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if list, ok := s.disabledNotifs[key]; ok {
+		return append([]string(nil), list...)
+	}
+	return append([]string(nil), s.cfg.DisabledNotificationsForThread(platform, threadID)...)
+}
+
+// setNotificationDisabled updates the muted state of a source for a given platform and threadID.
+func (s *Service) setNotificationDisabled(platform, threadID, source string, disabled bool) {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	if platform == "" {
+		platform = "messenger"
+	}
+	key := platform + ":" + strings.TrimSpace(threadID)
+	normSource := normalizeNotificationSource(source)
+
+	s.mu.Lock()
+	current, ok := s.disabledNotifs[key]
+	if !ok {
+		current = append([]string(nil), s.cfg.DisabledNotificationsForThread(platform, threadID)...)
+	}
+
+	var updated []string
+	if disabled {
+		if normSource == "*" || normSource == "all" {
+			updated = []string{"*"}
+		} else {
+			already := false
+			for _, v := range current {
+				if normalizeNotificationSource(v) == normSource {
+					already = true
+					break
+				}
+			}
+			if !already {
+				updated = append(current, normSource)
+			} else {
+				updated = current
+			}
+		}
+	} else {
+		if normSource == "*" || normSource == "all" {
+			updated = []string{}
+		} else {
+			for _, v := range current {
+				normV := normalizeNotificationSource(v)
+				if normV != normSource && normV != "*" && normV != "all" {
+					updated = append(updated, v)
+				}
+			}
+		}
+	}
+	s.disabledNotifs[key] = updated
+	s.mu.Unlock()
+
+	s.saveDisabledNotifs()
 }
 
 // threadAllowed is the effective send gate for a platform thread: the
