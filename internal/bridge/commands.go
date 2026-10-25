@@ -475,6 +475,12 @@ var availableFeeds = []feedMeta{
 		description: "Supabase egress & DB quota warnings",
 		aliases:     []string{"supabase", "supabase_usage"},
 	},
+	{
+		key:         "tech-news",
+		name:        "tech_news",
+		description: "Multi-source tech news (Ars Technica, Verge, BleepingComputer, HN)",
+		aliases:     []string{"tech", "technews", "tech_news", "tech-news", "news"},
+	},
 }
 
 func matchFeed(input string) (string, string, bool) {
@@ -543,7 +549,7 @@ func (s *Service) commandNotify(platform, threadID string, fields []string) (str
 				feedKey = key
 				feedName = name
 			} else {
-				return fmt.Sprintf("unknown notification feed %q. Valid feeds: free_games, steam, crackwatch, neon, supabase, all", fields[2]), true
+				return fmt.Sprintf("unknown notification feed %q. Valid feeds: free_games, tech_news, steam, crackwatch, neon, supabase, all", fields[2]), true
 			}
 			target = strings.TrimSpace(fields[3])
 		}
@@ -584,7 +590,7 @@ func (s *Service) commandNotify(platform, threadID string, fields []string) (str
 				feedKey = key
 				feedName = name
 			} else {
-				return fmt.Sprintf("unknown notification feed %q. Valid feeds: free_games, steam, crackwatch, neon, supabase, all", fields[2]), true
+				return fmt.Sprintf("unknown notification feed %q. Valid feeds: free_games, tech_news, steam, crackwatch, neon, supabase, all", fields[2]), true
 			}
 			target = strings.TrimSpace(fields[3])
 		}
@@ -721,6 +727,6 @@ func (s *Service) formatNotificationStatus(platform, callerThreadID, targetThrea
 	b.WriteString("  /notify off [feed]   (or /mute [feed])\n")
 	b.WriteString("  /notify on [feed]    (or /unmute [feed])\n")
 	b.WriteString("  /notify status       (view current feeds)\n")
-	b.WriteString("Feeds: free_games, steam, crackwatch, neon, supabase, all")
+	b.WriteString("Feeds: free_games, tech_news, steam, crackwatch, neon, supabase, all")
 	return b.String()
 }

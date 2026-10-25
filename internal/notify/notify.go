@@ -26,6 +26,20 @@ type Config struct {
 	NeonUsage       NeonUsageCfg    `yaml:"neon_usage"`
 	Supabase        SupabaseCfg     `yaml:"supabase"`
 	CrackWatch      CrackWatchCfg   `yaml:"crack_watch"`
+	TechNews        TechNewsCfg     `yaml:"tech_news"`
+}
+
+type TechNewsCfg struct {
+	Enabled    bool              `yaml:"enabled"`
+	Interval   string            `yaml:"interval"`
+	ThreadIDs  string            `yaml:"thread_ids"`
+	WebhookURL string            `yaml:"webhook_url"`
+	Feeds      []TechNewsFeedCfg `yaml:"feeds"`
+}
+
+type TechNewsFeedCfg struct {
+	Name string `yaml:"name"`
+	URL  string `yaml:"url"`
 }
 
 type SteamUpdatesCfg struct {
@@ -188,10 +202,10 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		supabaseState:     map[string]string{},
 		supabaseStatePath: cfg.Supabase.StatePath,
 	}
-	if (cfg.SteamUpdates.Enabled || cfg.FreeGames.Enabled || cfg.CrackWatch.Enabled) && cfg.DatabaseURL != "" {
+	if (cfg.SteamUpdates.Enabled || cfg.FreeGames.Enabled || cfg.CrackWatch.Enabled || cfg.TechNews.Enabled) && cfg.DatabaseURL != "" {
 		db, err := newDedupeDB(ctx, cfg.DatabaseURL)
 		if err != nil {
-			log.Printf("notify: dedupe db unavailable (%v), steam/free-games/crack_watch will run without dedupe", err)
+			log.Printf("notify: dedupe db unavailable (%v), steam/free-games/crack_watch/tech-news will run without dedupe", err)
 		} else {
 			s.db = db
 		}
@@ -274,6 +288,10 @@ func (s *Service) Run(ctx context.Context) error {
 	if s.cfg.CrackWatch.Enabled {
 		iv := parseInterval(s.cfg.CrackWatch.Interval, 5*time.Minute)
 		jobs = append(jobs, job{"crack-watch", s.pollCrackWatch, iv})
+	}
+	if s.cfg.TechNews.Enabled {
+		iv := parseInterval(s.cfg.TechNews.Interval, 15*time.Minute)
+		jobs = append(jobs, job{"tech-news", s.pollTechNews, iv})
 	}
 
 	if len(jobs) == 0 {

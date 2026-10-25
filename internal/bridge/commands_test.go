@@ -339,6 +339,23 @@ func TestRunCommandNotifyOffAndOnInThread(t *testing.T) {
 	if s.isNotificationDisabled("messenger", threadID, "gamebot") {
 		t.Fatal("gamebot should be unmuted after /unmute")
 	}
+
+	// 4. Mute tech news via alias "tech"
+	reply, ok = s.runCommand("messenger", threadID, "/mute tech")
+	if !ok || !strings.Contains(reply, "Muted tech_news") {
+		t.Fatalf("expected /mute tech reply, got %q", reply)
+	}
+	if !s.isNotificationDisabled("messenger", threadID, "tech-news") {
+		t.Fatal("tech-news should be disabled after /mute tech")
+	}
+
+	reply, ok = s.runCommand("messenger", threadID, "/unmute tech_news")
+	if !ok || !strings.Contains(reply, "Unmuted tech_news") {
+		t.Fatalf("expected /unmute tech_news reply, got %q", reply)
+	}
+	if s.isNotificationDisabled("messenger", threadID, "tech-news") {
+		t.Fatal("tech-news should be unmuted after /unmute")
+	}
 }
 
 func TestRunCommandNotifyMuteAll(t *testing.T) {

@@ -665,6 +665,15 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
     `crackwatch: rate-limited by reddit ... backing off`; other 4xx fail fast
     with no retries; transport/5xx keep the 3x backoff. Covered by
     `crackwatch_test.go` (httptest 429→200 backoff timing, 404 fail-fast).
+  - **tech_news poller (added 2026-10-25)**: `internal/notify/technews.go`
+    polls multi-source tech feeds (default: Ars Technica, The Verge,
+    BleepingComputer, Hacker News, or custom `feeds` list in YAML). Dedupes
+    against Neon `public.tech_seen` (guid, source, title). On first boot for a
+    feed, seeds existing items into `tech_seen` to avoid blasting historical
+    articles into chats. Pushes to webhook as source `tech-news` with
+    dedupeKey = article GUID/URL. Config: `notify.tech_news.{enabled,interval,
+    thread_ids,webhook_url,feeds}`. Controllable via `/notify off tech_news` and
+    `/mute tech`.
   - **cs.rin.ru feeds (researched 2026-08-24, NOT added — future option)**: the
     forum's phpBB `feed.php` is whitelisted (no login, no JS-challenge) and is
     the only structured endpoint. Working modes, all Atom: `feed.php` (global

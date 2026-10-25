@@ -693,6 +693,8 @@ func normalizeNotificationSource(source string) string {
 		return "neon-usage"
 	case "supabase", "supabase_usage":
 		return "supabase"
+	case "tech", "technews", "tech_news", "news":
+		return "tech-news"
 	case "all", "*":
 		return "*"
 	default:

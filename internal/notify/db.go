@@ -43,6 +43,12 @@ func newDedupeDB(ctx context.Context, dsn string) (*dedupeDB, error) {
 			title    TEXT NOT NULL,
 			seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
+		`CREATE TABLE IF NOT EXISTS public.tech_seen (
+			guid     TEXT PRIMARY KEY,
+			source   TEXT NOT NULL,
+			title    TEXT NOT NULL,
+			seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
 	} {
 		if _, err := pool.Exec(ctx, stmt); err != nil {
 			pool.Close()
@@ -80,6 +86,18 @@ func (s *Service) dbCrackTitles(ctx context.Context) (map[string]bool, error) {
 		seen[normalizeCrackTitle(title)] = true
 	}
 	return seen, rows.Err()
+}
+
+func (s *Service) dbHasSeenSource(ctx context.Context, source string) (bool, error) {
+	if s.db == nil {
+		return false, fmt.Errorf("no dedupe db")
+	}
+	var count int
+	err := s.db.pool.QueryRow(ctx, `SELECT COUNT(*) FROM public.tech_seen WHERE source = $1`, source).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // dbQuery returns the set of already-seen ids for the table's id column

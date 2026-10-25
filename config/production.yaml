@@ -394,6 +394,19 @@ notify:
     thread_ids: "2637078310061988"
     egress_threshold: 0.8
     db_threshold: 0.8
+  tech_news:
+    enabled: true
+    interval: 15m
+    thread_ids: "953525124128433"
+    feeds:
+      - name: "Ars Technica"
+        url: "https://feeds.arstechnica.com/arstechnica/index"
+      - name: "The Verge"
+        url: "https://www.theverge.com/tech/rss/index.xml"
+      - name: "BleepingComputer"
+        url: "https://www.bleepingcomputer.com/feed/"
+      - name: "Hacker News"
+        url: "https://news.ycombinator.com/rss"
 
 persistence:
   enabled: true
