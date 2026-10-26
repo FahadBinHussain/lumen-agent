@@ -941,6 +941,7 @@ func (s *Service) notify(platform string, threadID string, text string) {
 	}
 	if platform == "whatsapp" {
 		s.send(platform, threadID, threadID, text)
+		s.recordNotificationInSession("whatsapp", threadID, text)
 		return
 	}
 	if platform == "discord" {
@@ -950,10 +951,13 @@ func (s *Service) notify(platform string, threadID string, text string) {
 		}
 		if _, err := s.discord.SendPlainText(threadID, text); err != nil {
 			log.Printf("bridge: discord alert to %s failed: %v", threadID, err)
+		} else {
+			s.recordNotificationInSession("discord", threadID, text)
 		}
 		return
 	}
 	s.send(platform, threadID, "", text)
+	s.recordNotificationInSession("messenger", threadID, text)
 }
 
 // SendMessage delivers text to one messenger thread through the allowlist
@@ -963,13 +967,15 @@ func (s *Service) SendMessage(ctx context.Context, threadID int64, text string) 
 	if s.messenger == nil {
 		return "", fmt.Errorf("messenger not enabled")
 	}
-	if !s.threadAllowed("messenger", strconv.FormatInt(threadID, 10)) {
+	tidStr := strconv.FormatInt(threadID, 10)
+	if !s.threadAllowed("messenger", tidStr) {
 		return "", fmt.Errorf("thread %d not in messenger.allowed_thread_ids", threadID)
 	}
 	id := s.messenger.SendText(ctx, threadID, text)
 	if id == "" {
 		return "", fmt.Errorf("messenger send returned no message id")
 	}
+	s.recordNotificationInSession("messenger", tidStr, text)
 	return id, nil
 }
 
@@ -996,7 +1002,11 @@ func (s *Service) SendWhatsApp(ctx context.Context, jid string, text string) (st
 	if !s.threadAllowed("whatsapp", jid) {
 		return "", fmt.Errorf("jid %s not in whatsapp.allowed_jids", jid)
 	}
-	return s.whatsapp.SendText(ctx, jid, text)
+	id, err := s.whatsapp.SendText(ctx, jid, text)
+	if err == nil {
+		s.recordNotificationInSession("whatsapp", jid, text)
+	}
+	return id, err
 }
 
 // sendDiscord delivers text to one discord channel through the health-watch
@@ -1006,7 +1016,45 @@ func (s *Service) sendDiscord(channelID string, text string) (string, error) {
 	if s.discord == nil {
 		return "", fmt.Errorf("discord not wired")
 	}
-	return s.discord.SendPlainText(channelID, text)
+	id, err := s.discord.SendPlainText(channelID, text)
+	if err == nil {
+		s.recordNotificationInSession("discord", channelID, text)
+	}
+	return id, err
+}
+
+// recordNotificationInSession appends an outbound automated notification to the
+// thread's session history and memory shard so the model sees what it sent when
+// a user asks about it or replies to it.
+func (s *Service) recordNotificationInSession(platform, threadID, text string) {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	threadID = strings.TrimSpace(threadID)
+	text = strings.TrimSpace(text)
+	if platform == "" || threadID == "" || text == "" {
+		return
+	}
+
+	key := platform + ":" + threadID
+	s.mu.Lock()
+	if s.sessions == nil {
+		s.sessions = make(map[string][]llm.Message)
+	}
+	s.sessions[key] = append(s.sessions[key], llm.Message{
+		Role:      "assistant",
+		Content:   text,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+	if len(s.sessions[key]) > 20 {
+		s.sessions[key] = s.sessions[key][len(s.sessions[key])-20:]
+	}
+	s.mu.Unlock()
+	s.saveHistory()
+
+	if memoryRoot, _ := agent.SharedConversationMemoryRoot(s.cfg, platform, threadID); memoryRoot != "" {
+		if err := agent.AppendToMemoryShard(memoryRoot, agent.IdentityDisplayName(s.cfg), "[notification broadcast]", text, time.Now()); err != nil {
+			log.Printf("bridge: append notification memory shard failed (%s %s): %v", platform, threadID, err)
+		}
+	}
 }
 
 // recordMirrorEdit stores id as the mirror target for key and prunes entries

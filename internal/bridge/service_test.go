@@ -390,6 +390,28 @@ func TestBridgeHistoryRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRecordNotificationInSession(t *testing.T) {
+	dir := t.TempDir()
+	cfg := writeTestConfig(t, "")
+	s, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("new bridge: %v", err)
+	}
+	s.historyPath = filepath.Join(dir, bridgeHistoryFile)
+
+	s.recordNotificationInSession("messenger", "953525124128433", "📰 Hacker News: PaperPilot")
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	history, ok := s.sessions["messenger:953525124128433"]
+	if !ok || len(history) != 1 {
+		t.Fatalf("expected 1 session message, got %d", len(history))
+	}
+	if history[0].Role != "assistant" || history[0].Content != "📰 Hacker News: PaperPilot" {
+		t.Errorf("unexpected message: %+v", history[0])
+	}
+}
+
 type recorder struct {
 	status int
 	header http.Header
