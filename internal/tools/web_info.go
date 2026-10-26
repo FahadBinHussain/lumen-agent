@@ -1,13 +1,32 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
+)
+
+var (
+	webClient = &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	scriptStyleRegex = regexp.MustCompile(`(?is)<(script|style|noscript|svg)[^>]*>.*?</(script|style|noscript|svg)>`)
+	tagRegex         = regexp.MustCompile(`<[^>]+>`)
+	lineBreakRegex   = regexp.MustCompile(`(?i)<(br|p|div|li|h[1-6]|tr|article|section)[^>]*>`)
+	spaceRegex       = regexp.MustCompile(`[ \t]+`)
+	titleRegex       = regexp.MustCompile(`(?i)<title[^>]*>(.*?)</title>`)
+	metaDescRegex    = regexp.MustCompile(`(?i)<meta\s+[^>]*name=["']description["'][^>]*content=["']([^"']*)["']`)
 )
 
 func (r *Registry) registerWebInfoTools() {
@@ -23,7 +42,7 @@ func (r *Registry) registerWebInfoTools() {
 
 	r.register(
 		"search_web",
-		"Search the web using a lightweight free search API and return short summaries plus related links.",
+		"Search the web for current information, technical projects, topics, and documentation.",
 		objectSchema(map[string]any{
 			"query": stringSchema("Search query."),
 		}, "query"),
@@ -38,6 +57,15 @@ func (r *Registry) registerWebInfoTools() {
 			"limit": integerSchema("Optional number of results to return, up to 10.", 1),
 		}, "query"),
 		r.handleSearchNews,
+	)
+
+	r.register(
+		"fetch_web_page",
+		"Fetch and read the text content of a public web page or URL.",
+		objectSchema(map[string]any{
+			"url": stringSchema("The full HTTP or HTTPS URL to fetch."),
+		}, "url"),
+		r.handleFetchWebPage,
 	)
 }
 
@@ -70,7 +98,7 @@ func (r *Registry) handleGetWeather(ctx context.Context, payload json.RawMessage
 		return "", fmt.Errorf("build weather geocoding request: %w", err)
 	}
 
-	geoResp, err := http.DefaultClient.Do(geoReq)
+	geoResp, err := webClient.Do(geoReq)
 	if err != nil {
 		return "", fmt.Errorf("geocode weather location: %w", err)
 	}
@@ -108,7 +136,7 @@ func (r *Registry) handleGetWeather(ctx context.Context, payload json.RawMessage
 		return "", fmt.Errorf("build weather forecast request: %w", err)
 	}
 
-	forecastResp, err := http.DefaultClient.Do(forecastReq)
+	forecastResp, err := webClient.Do(forecastReq)
 	if err != nil {
 		return "", fmt.Errorf("fetch weather forecast: %w", err)
 	}
@@ -183,78 +211,284 @@ func (r *Registry) handleSearchWeb(ctx context.Context, payload json.RawMessage)
 		return "", fmt.Errorf("query must not be empty")
 	}
 
-	searchURL := "https://api.duckduckgo.com/?format=json&no_html=1&no_redirect=1&q=" + url.QueryEscape(query)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("build web search request: %w", err)
+	braveKey := os.Getenv("BRAVE_SEARCH_API_KEY")
+	if braveKey == "" {
+		braveKey = os.Getenv("BRAVE_API_KEY")
+	}
+	if braveKey != "" {
+		return searchBrave(ctx, query, braveKey)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	tavilyKey := os.Getenv("TAVILY_API_KEY")
+	if tavilyKey != "" {
+		return searchTavily(ctx, query, tavilyKey)
+	}
+
+	return searchBuiltIn(ctx, query)
+}
+
+func searchBrave(ctx context.Context, query, apiKey string) (string, error) {
+	searchURL := "https://api.search.brave.com/res/v1/web/search?count=8&q=" + url.QueryEscape(query)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("search web: %w", err)
+		return "", fmt.Errorf("build Brave search request: %w", err)
+	}
+	req.Header.Set("X-Subscription-Token", apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := webClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("brave search %q: %w", query, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("search web: API error (%d)", resp.StatusCode)
+		return "", fmt.Errorf("brave search %q: API error (%d)", query, resp.StatusCode)
 	}
 
 	var parsed struct {
-		Heading       string `json:"Heading"`
-		AbstractText  string `json:"AbstractText"`
-		AbstractURL   string `json:"AbstractURL"`
-		Answer        string `json:"Answer"`
-		Definition    string `json:"Definition"`
-		RelatedTopics []struct {
-			Text     string `json:"Text"`
-			FirstURL string `json:"FirstURL"`
-			Topics   []struct {
-				Text     string `json:"Text"`
-				FirstURL string `json:"FirstURL"`
-			} `json:"Topics"`
-		} `json:"RelatedTopics"`
+		Web struct {
+			Results []struct {
+				Title       string `json:"title"`
+				URL         string `json:"url"`
+				Description string `json:"description"`
+			} `json:"results"`
+		} `json:"web"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return "", fmt.Errorf("decode web search response: %w", err)
+		return "", fmt.Errorf("decode brave search response: %w", err)
 	}
 
-	results := make([]map[string]any, 0, 8)
-	appendTopic := func(text string, firstURL string) {
-		text = strings.TrimSpace(text)
-		firstURL = strings.TrimSpace(firstURL)
-		if text == "" && firstURL == "" {
-			return
-		}
+	results := make([]map[string]any, 0, len(parsed.Web.Results))
+	for _, item := range parsed.Web.Results {
 		results = append(results, map[string]any{
-			"text": text,
-			"url":  firstURL,
+			"title":       strings.TrimSpace(item.Title),
+			"url":         strings.TrimSpace(item.URL),
+			"description": strings.TrimSpace(item.Description),
 		})
 	}
+	return jsonResult(map[string]any{
+		"engine":  "brave",
+		"query":   query,
+		"results": results,
+	})
+}
 
-	for _, topic := range parsed.RelatedTopics {
-		appendTopic(topic.Text, topic.FirstURL)
-		for _, nested := range topic.Topics {
-			appendTopic(nested.Text, nested.FirstURL)
-			if len(results) >= 8 {
-				break
+func searchTavily(ctx context.Context, query, apiKey string) (string, error) {
+	body, _ := json.Marshal(map[string]any{
+		"query":       query,
+		"max_results": 8,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.tavily.com/search", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("build Tavily search request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := webClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("tavily search %q: %w", query, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("tavily search %q: API error (%d)", query, resp.StatusCode)
+	}
+
+	var parsed struct {
+		Answer  string `json:"answer"`
+		Results []struct {
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Content string `json:"content"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return "", fmt.Errorf("decode tavily search response: %w", err)
+	}
+
+	results := make([]map[string]any, 0, len(parsed.Results))
+	for _, item := range parsed.Results {
+		results = append(results, map[string]any{
+			"title":       strings.TrimSpace(item.Title),
+			"url":         strings.TrimSpace(item.URL),
+			"description": strings.TrimSpace(item.Content),
+		})
+	}
+	return jsonResult(map[string]any{
+		"engine":  "tavily",
+		"query":   query,
+		"answer":  strings.TrimSpace(parsed.Answer),
+		"results": results,
+	})
+}
+
+func searchBuiltIn(ctx context.Context, query string) (string, error) {
+	results := make([]map[string]any, 0, 10)
+
+	// Hacker News Algolia API (covers developer projects, startups, tools, and technical discussions)
+	hnURL := "https://hn.algolia.com/api/v1/search?tags=story&hitsPerPage=6&query=" + url.QueryEscape(query)
+	if req, err := http.NewRequestWithContext(ctx, http.MethodGet, hnURL, nil); err == nil {
+		if resp, err := webClient.Do(req); err == nil && resp.StatusCode == http.StatusOK {
+			defer resp.Body.Close()
+			var parsed struct {
+				Hits []struct {
+					Title     string `json:"title"`
+					URL       string `json:"url"`
+					StoryText string `json:"story_text"`
+					Points    int    `json:"points"`
+					ObjectID  string `json:"objectID"`
+				} `json:"hits"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&parsed); err == nil {
+				for _, h := range parsed.Hits {
+					targetURL := strings.TrimSpace(h.URL)
+					if targetURL == "" && h.ObjectID != "" {
+						targetURL = "https://news.ycombinator.com/item?id=" + h.ObjectID
+					}
+					results = append(results, map[string]any{
+						"source":      "hacker_news",
+						"title":       strings.TrimSpace(h.Title),
+						"url":         targetURL,
+						"description": strings.TrimSpace(h.StoryText),
+						"points":      h.Points,
+					})
+				}
 			}
 		}
-		if len(results) >= 8 {
-			break
+	}
+
+	// Wikipedia opensearch API (definitions and encyclopedic articles)
+	wikiURL := "https://en.wikipedia.org/w/api.php?action=opensearch&limit=4&namespace=0&format=json&search=" + url.QueryEscape(query)
+	if req, err := http.NewRequestWithContext(ctx, http.MethodGet, wikiURL, nil); err == nil {
+		req.Header.Set("User-Agent", "lumen-agent/1.0 (https://github.com/FahadBinHussain/lumen-agent)")
+		if resp, err := webClient.Do(req); err == nil && resp.StatusCode == http.StatusOK {
+			defer resp.Body.Close()
+			var wikiRaw []any
+			if err := json.NewDecoder(resp.Body).Decode(&wikiRaw); err == nil && len(wikiRaw) >= 4 {
+				titles, _ := wikiRaw[1].([]any)
+				descs, _ := wikiRaw[2].([]any)
+				urls, _ := wikiRaw[3].([]any)
+				for i := range titles {
+					tStr, _ := titles[i].(string)
+					dStr := ""
+					if i < len(descs) {
+						dStr, _ = descs[i].(string)
+					}
+					uStr := ""
+					if i < len(urls) {
+						uStr, _ = urls[i].(string)
+					}
+					if tStr != "" && uStr != "" {
+						results = append(results, map[string]any{
+							"source":      "wikipedia",
+							"title":       tStr,
+							"url":         uStr,
+							"description": dStr,
+						})
+					}
+				}
+			}
 		}
 	}
 
 	return jsonResult(map[string]any{
-		"query": query,
-		"summary": map[string]any{
-			"heading":      strings.TrimSpace(parsed.Heading),
-			"abstract":     strings.TrimSpace(parsed.AbstractText),
-			"abstract_url": strings.TrimSpace(parsed.AbstractURL),
-			"answer":       strings.TrimSpace(parsed.Answer),
-			"definition":   strings.TrimSpace(parsed.Definition),
-		},
+		"engine":  "hn_algolia+wikipedia [tip: set BRAVE_SEARCH_API_KEY or TAVILY_API_KEY for broad web indexing]",
+		"query":   query,
 		"results": results,
 	})
+}
+
+func (r *Registry) handleFetchWebPage(ctx context.Context, payload json.RawMessage) (string, error) {
+	type args struct {
+		URL string `json:"url"`
+	}
+	var input args
+	if err := decodeArgs(payload, &input); err != nil {
+		return "", err
+	}
+
+	rawURL := strings.TrimSpace(input.URL)
+	if rawURL == "" {
+		return "", fmt.Errorf("url must not be empty")
+	}
+
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		return "", fmt.Errorf("invalid URL %q: must start with http:// or https://", rawURL)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request for %s: %w", rawURL, err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
+
+	resp, err := webClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch %s: %w", rawURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("fetch %s: HTTP %d %s", rawURL, resp.StatusCode, resp.Status)
+	}
+
+	lr := io.LimitReader(resp.Body, 256*1024)
+	bodyBytes, err := io.ReadAll(lr)
+	if err != nil {
+		return "", fmt.Errorf("read response body from %s: %w", rawURL, err)
+	}
+
+	rawHTML := string(bodyBytes)
+	title := extractHTMLTitle(rawHTML)
+	desc := extractMetaDescription(rawHTML)
+	cleaned := htmlToCleanText(rawHTML)
+
+	if len(cleaned) > 6000 {
+		cleaned = cleaned[:6000] + "\n... [truncated]"
+	}
+
+	return jsonResult(map[string]any{
+		"url":         rawURL,
+		"title":       title,
+		"description": desc,
+		"content":     cleaned,
+	})
+}
+
+func extractHTMLTitle(raw string) string {
+	if m := titleRegex.FindStringSubmatch(raw); len(m) > 1 {
+		return strings.TrimSpace(html.UnescapeString(m[1]))
+	}
+	return ""
+}
+
+func extractMetaDescription(raw string) string {
+	if m := metaDescRegex.FindStringSubmatch(raw); len(m) > 1 {
+		return strings.TrimSpace(html.UnescapeString(m[1]))
+	}
+	return ""
+}
+
+func htmlToCleanText(raw string) string {
+	s := scriptStyleRegex.ReplaceAllString(raw, "")
+	s = lineBreakRegex.ReplaceAllString(s, "\n")
+	s = tagRegex.ReplaceAllString(s, "")
+	s = html.UnescapeString(s)
+
+	lines := strings.Split(s, "\n")
+	cleanLines := make([]string, 0, len(lines))
+	for _, l := range lines {
+		l = strings.TrimSpace(spaceRegex.ReplaceAllString(l, " "))
+		if l != "" {
+			cleanLines = append(cleanLines, l)
+		}
+	}
+	return strings.Join(cleanLines, "\n")
 }
 
 func (r *Registry) handleSearchNews(ctx context.Context, payload json.RawMessage) (string, error) {
@@ -286,7 +520,7 @@ func (r *Registry) handleSearchNews(ctx context.Context, payload json.RawMessage
 		return "", fmt.Errorf("build news search request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := webClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("search news: %w", err)
 	}

@@ -440,6 +440,7 @@ func isParallelSafeTool(name string) bool {
 		"grep_search",
 		"search_web",
 		"search_news",
+		"fetch_web_page",
 		"get_weather",
 		"search_gifs",
 		"list_rss_feeds",

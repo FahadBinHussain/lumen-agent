@@ -123,6 +123,7 @@ tools:
     - get_weather
     - search_web
     - search_news
+    - fetch_web_page
   exec_shell: /bin/bash
   exec_timeout: 120s
   max_file_bytes: 1048576

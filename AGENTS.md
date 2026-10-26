@@ -439,6 +439,16 @@ another message, the quoted text is captured from Meta (`ReplySnippet` or
 and prepended to the prompt as `[Replying to: %q]\n%s` (truncated at 1500 chars).
 This allows the model to immediately understand references like "what r ur thoughts on this?"
 even for old messages or automated notifications sent before session history recording.
+
+Web tools and search engine backends (2026-10-26): `api.duckduckgo.com` was
+deprecated and blocked cloud datacenter IPs (like Render) with anti-bot CAPTCHAs,
+and `http.DefaultClient` had no timeout, causing `search_web` to hang until
+agent context cancellation. Fixed by: (1) using `webClient` (10s timeout) across
+all web tools so nothing hangs unbounded; (2) rewriting `search_web` to check for
+`BRAVE_SEARCH_API_KEY`/`TAVILY_API_KEY`, using HN Algolia + Wikipedia search
+when no external key is set; (3) adding `fetch_web_page` tool to fetch public URLs,
+extract title/meta description, and clean HTML into readable text so the agent can
+read linked articles and repositories directly.
 No murmur `/ai`
 subcommands (models/image) — the fork uses the single `llm.model` config.
 

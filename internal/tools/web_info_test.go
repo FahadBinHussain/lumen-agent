@@ -11,43 +11,89 @@ import (
 
 func TestHandleSearchWeb(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.Method != http.MethodGet {
-			t.Fatalf("unexpected method %s", req.Method)
+		if req.URL.Host == "hn.algolia.com" {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(`{
+					"hits":[{"title":"Go 1.25 released","url":"https://go.dev","points":150,"objectID":"12345"}]
+				}`)),
+			}, nil
 		}
-		if req.URL.Host != "api.duckduckgo.com" {
-			t.Fatalf("unexpected host %s", req.URL.Host)
+		if req.URL.Host == "en.wikipedia.org" {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(`["golang",["Go (programming language)"],["A compiled language"],["https://en.wikipedia.org/wiki/Go"]]`)),
+			}, nil
 		}
-		if req.URL.Query().Get("q") != "golang" {
-			t.Fatalf("unexpected query %q", req.URL.Query().Get("q"))
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body: io.NopCloser(strings.NewReader(`{
-				"Heading":"Go",
-				"AbstractText":"Go is a programming language.",
-				"AbstractURL":"https://go.dev",
-				"Answer":"",
-				"Definition":"",
-				"RelatedTopics":[{"Text":"Go documentation","FirstURL":"https://pkg.go.dev"}]
-			}`)),
-		}, nil
+		return &http.Response{StatusCode: http.StatusNotFound}, nil
 	})}
 
-	prev := http.DefaultClient
-	http.DefaultClient = client
-	defer func() { http.DefaultClient = prev }()
+	prev := webClient
+	webClient = client
+	defer func() { webClient = prev }()
 
 	registry := &Registry{}
 	result, err := registry.handleSearchWeb(context.Background(), json.RawMessage(`{"query":"golang"}`))
 	if err != nil {
 		t.Fatalf("handleSearchWeb returned error: %v", err)
 	}
-	if !strings.Contains(result, `"heading": "Go"`) {
-		t.Fatalf("expected heading in result, got %s", result)
+	if !strings.Contains(result, `"title": "Go 1.25 released"`) {
+		t.Fatalf("expected title in result, got %s", result)
 	}
-	if !strings.Contains(result, `"url": "https://pkg.go.dev"`) {
-		t.Fatalf("expected related URL in result, got %s", result)
+	if !strings.Contains(result, `"url": "https://go.dev"`) {
+		t.Fatalf("expected URL in result, got %s", result)
+	}
+}
+
+func TestHandleFetchWebPage(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://example.com/test" {
+			t.Fatalf("unexpected URL %s", req.URL.String())
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/html"}},
+			Body: io.NopCloser(strings.NewReader(`
+				<!DOCTYPE html>
+				<html>
+				<head>
+					<title>Test Page Title</title>
+					<meta name="description" content="A test page description.">
+					<style>body { color: red; }</style>
+					<script>alert("bad");</script>
+				</head>
+				<body>
+					<h1>Welcome to Test</h1>
+					<p>This is the first paragraph with &amp; entity.</p>
+					<div>Second block with content.</div>
+				</body>
+				</html>
+			`)),
+		}, nil
+	})}
+
+	prev := webClient
+	webClient = client
+	defer func() { webClient = prev }()
+
+	registry := &Registry{}
+	result, err := registry.handleFetchWebPage(context.Background(), json.RawMessage(`{"url":"https://example.com/test"}`))
+	if err != nil {
+		t.Fatalf("handleFetchWebPage returned error: %v", err)
+	}
+	if !strings.Contains(result, `"title": "Test Page Title"`) {
+		t.Fatalf("expected title in result, got %s", result)
+	}
+	if !strings.Contains(result, `"description": "A test page description."`) {
+		t.Fatalf("expected description in result, got %s", result)
+	}
+	if strings.Contains(result, "alert") || strings.Contains(result, "color: red") {
+		t.Fatalf("expected script and style to be stripped, got %s", result)
+	}
+	if !strings.Contains(result, "This is the first paragraph with") {
+		t.Fatalf("expected cleaned paragraph text, got %s", result)
 	}
 }
 
@@ -68,9 +114,9 @@ func TestHandleSearchNews(t *testing.T) {
 		}, nil
 	})}
 
-	prev := http.DefaultClient
-	http.DefaultClient = client
-	defer func() { http.DefaultClient = prev }()
+	prev := webClient
+	webClient = client
+	defer func() { webClient = prev }()
 
 	registry := &Registry{}
 	result, err := registry.handleSearchNews(context.Background(), json.RawMessage(`{"query":"openai","limit":3}`))
@@ -111,9 +157,9 @@ func TestHandleGetWeather(t *testing.T) {
 		}
 	})}
 
-	prev := http.DefaultClient
-	http.DefaultClient = client
-	defer func() { http.DefaultClient = prev }()
+	prev := webClient
+	webClient = client
+	defer func() { webClient = prev }()
 
 	registry := &Registry{}
 	result, err := registry.handleGetWeather(context.Background(), json.RawMessage(`{"location":"brisbane","days":1}`))
