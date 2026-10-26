@@ -1594,6 +1594,16 @@ fake outbox pairs through the real bnp route:
   stream flag), retries, loud failures, SSE parsing and image loading
   against httptest - no network needed.
 
+## Tech News multi-feed notifications & command toggle (2026-10-26)
+
+- Added multi-feed tech news poller in `internal/notify/technews.go` supporting Ars Technica, The Verge, BleepingComputer, and Hacker News.
+- Deduplication: tracked via Neon DB table `public.tech_seen (guid, source, title, seen_at)`.
+- Anti-spam baseline seeding: on startup (first pass 5s after boot), if a feed has 0 seen items in `public.tech_seen`, it seeds all currently active items so old backlog is never blasted to the thread. Subsequent ticker intervals (default `15m`) post only newly published articles.
+- Commands: `/notify tech [on|off]` (aliases: `technews`, `news`) toggles tech news notifications on the active chat thread. Supported across WhatsApp and Messenger.
+- Gotchas:
+  - `The Verge` RSS feed endpoint is `https://www.theverge.com/rss/index.xml` (`/tech/rss/index.xml` returns 404).
+  - When adding pollers to `internal/notify`, wire config in `cmd/element-orion/main.go` `buildNotify` function, otherwise `notify.Config` omits the section and defaults to disabled.
+
 Upstream is `PUT-Request/Element-Orion` (canonical as of 2026-09-04; the old
 path `eli32-vlc/lumen-agent` redirects — the author moved all their projects
 into the new `PUT Request` org that day and restored the original
