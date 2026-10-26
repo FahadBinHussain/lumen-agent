@@ -16,7 +16,7 @@ import (
 
 var defaultTechFeeds = []TechNewsFeedCfg{
 	{Name: "Ars Technica", URL: "https://feeds.arstechnica.com/arstechnica/index"},
-	{Name: "The Verge", URL: "https://www.theverge.com/tech/rss/index.xml"},
+	{Name: "The Verge", URL: "https://www.theverge.com/rss/index.xml"},
 	{Name: "BleepingComputer", URL: "https://www.bleepingcomputer.com/feed/"},
 	{Name: "Hacker News", URL: "https://news.ycombinator.com/rss"},
 }

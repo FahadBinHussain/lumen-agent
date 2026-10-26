@@ -402,7 +402,7 @@ notify:
       - name: "Ars Technica"
         url: "https://feeds.arstechnica.com/arstechnica/index"
       - name: "The Verge"
-        url: "https://www.theverge.com/tech/rss/index.xml"
+        url: "https://www.theverge.com/rss/index.xml"
       - name: "BleepingComputer"
         url: "https://www.bleepingcomputer.com/feed/"
       - name: "Hacker News"
