@@ -124,6 +124,18 @@ func (s *Service) drainPending(ctx context.Context) {
 			continue
 		}
 
+		// Prevent infinite loops: drop after repeated delivery failures and mark delivered.
+		if p.Attempts >= 3 {
+			log.Printf("bridge: pending %d dropped after %d failed attempts (source=%s platform=%s thread=%s)", p.ID, p.Attempts, p.Source, p.Platform, p.ThreadID)
+			if p.DedupeKey != "" {
+				_ = s.neon.MarkDelivered(ctx, p.DedupeKey)
+			}
+			if err := s.neon.DeletePending(ctx, p.ID); err != nil {
+				log.Printf("bridge: pending max-attempts delete %d failed: %v", p.ID, err)
+			}
+			continue
+		}
+
 		// Re-check mouth is still up for this row's platform.
 		if !s.isPlatformConnected(p.Platform) {
 			continue

@@ -751,7 +751,8 @@ func (c *Client) SendText(ctx context.Context, threadID int64, text string) stri
 				if resp != nil {
 					n = len(resp.LSReplaceOptimsiticMessage)
 				}
-				log.Printf("messenger: send chunk returned no message id (otid=%d, replaces=%d) — Meta may have rejected the message", otid, n)
+				log.Printf("messenger: send chunk returned no message id (otid=%d, replaces=%d, tables=%s) — using synthetic otid", otid, n, nonEmptyTableFields(resp))
+				lastMsgID = fmt.Sprintf("otid_%d", otid)
 			}
 		}
 		return lastMsgID
@@ -787,7 +788,8 @@ func (c *Client) SendText(ctx context.Context, threadID int64, text string) stri
 		if resp != nil {
 			n = len(resp.LSReplaceOptimsiticMessage)
 		}
-		log.Printf("messenger: send returned no message id (otid=%d, replaces=%d) — Meta may have rejected the message", otid, n)
+		log.Printf("messenger: send returned no message id (otid=%d, replaces=%d, tables=%s) — using synthetic otid", otid, n, nonEmptyTableFields(resp))
+		msgID = fmt.Sprintf("otid_%d", otid)
 	}
 	return msgID
 }

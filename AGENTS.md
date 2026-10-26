@@ -564,6 +564,13 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
   (dailybnp must not emit bare `scrape.do` in message text — rewrite as
   `scrapedo`); do NOT sanitize silently on the send side. Diagnostic filter:
   `text=insertMessageSendError` on the Render logs API.
+- **Meta send without optimistic replace table (fixed 2026-10-26)**:
+  When Meta delivers messages with complex URLs or sync transactions (e.g. `LSExecuteFirstBlockForSyncTransactionV4`),
+  `resp.LSReplaceOptimsiticMessage` may be omitted in the immediate RPC reply even though `ExecuteTasks` succeeded (`err == nil`)
+  and the message is actually posted to the thread. If `SendText` returns `""` in this case, `bridge.SendMessage` returned
+  `messenger send returned no message id`, which caused `drainPending` to believe the delivery failed and retry every 5 minutes,
+  resulting in duplicate sends to the chat. Fixed by using a synthetic ID (`otid_<otid>`) on successful task completion when
+  no replace table is present, and adding a 3-attempt ceiling in `drainPending` to prevent infinite loops.
 - `exec_command` tool is POSIX-only (upstream `exec.Command(shell, "-lc", ...)`) —
   keep it disabled/`pwsh`-only on Windows; the merge plan documents this constraint.
 - Superseded murmur bits (better-native replacements, added 2026-08-12):

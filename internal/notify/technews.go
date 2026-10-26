@@ -129,6 +129,9 @@ func parseTechFeedData(feedName string, data []byte) []techFeedItem {
 				title = "Untitled update"
 			}
 			summary := cleanFeedText(it.Description)
+			if strings.EqualFold(summary, "comments") || strings.EqualFold(summary, "description") {
+				summary = ""
+			}
 			if len(summary) > 400 {
 				summary = summary[:397] + "..."
 			}
@@ -176,6 +179,9 @@ func parseTechFeedData(feedName string, data []byte) []techFeedItem {
 				rawSummary = en.Content
 			}
 			summary := cleanFeedText(rawSummary)
+			if strings.EqualFold(summary, "comments") || strings.EqualFold(summary, "description") {
+				summary = ""
+			}
 			if len(summary) > 400 {
 				summary = summary[:397] + "..."
 			}
