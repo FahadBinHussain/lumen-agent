@@ -52,16 +52,11 @@
 
 ## Deployment fixes (2026-09-23)
 
-- Production's active model is `mimo` = `mimo-v2.6-flash-free` on the opencode
-  zen free lane (`llm.api_type: zen`, base_url `https://opencode.ai/zen/v1`,
-  key `public`) since 2026-10-16 — the port of diit-chatbot's production zen
-  client, see "Zen chat lane" below. `atria-dawn` (`Atria-Dawn-Preview` via
-  Atria ASI `https://api.atria-asi.ai/v1`, key in Render env `ATRIA_API_KEY`,
-  never commit it) was the active model 2026-10-02..2026-10-16, when the local
-  deepseek-v4-flash box `49.205.178.204:11434` was found dead (ping + every
-  port failed) and removed from the catalog; atria-dawn stays enabled in the
-  catalog for a one-line switch back (flip `llm.model` AND `llm.api_type`
-  back to `openai` together — `api_type` is top-level, NOT per entry).
+- Production's active model is `deepseek-v4.1-flash` = `deepseek-v4.1-flash-1017` via
+  LiteLLM gateway (`https://alchoholpad-litellm.hf.space/v1`, key in Render env `LITELLM_API_KEY`,
+  `api_type: openai`, `reasoning_effort: low`) since 2026-10-26 — mirroring dailybnp's live lane.
+  The opencode zen free lane (`mimo` / `mimo-v2.6-flash-free`) suffered rate-limiting/exhaustion
+  leaving chat turns stuck at "thinking.". Kept in catalog as disabled fallback.
 - Windows test runs must not assume `/bin/zsh`; the exec tests use `pwsh` on
   Windows while production Linux keeps its configured shell.
 - The Messenger cookie upload endpoint accepts the mainframe cookie-vault

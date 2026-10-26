@@ -13,27 +13,27 @@ app:
     preserve_recent_messages: 16
 
 llm:
-  # Active transport (2026-10-16): the opencode zen free lane (`api_type: zen`).
-  # The free tier needs the main-agent body shape (a tools array + stream:true,
-  # both added by internal/zengate) plus a correctly generated opencode session
-  # id header; api_key "public" is the anonymous key, not a secret. History is
-  # folded into the system message (exactly one live user message per request).
-  # Switching back to a normal OpenAI-compatible provider (e.g. atria-dawn)
-  # also needs api_type: openai.
-  api_type: zen
-  base_url: https://opencode.ai/zen/v1
-  api_key: public
-  api_key_env: ""
-  model: mimo
+  # Active transport (2026-10-26): LiteLLM gateway on HF Space (`api_type: openai`)
+  # routing to deepseek-v4.1-flash-1017 (same lane as dailybnp).
+  api_type: openai
+  base_url: https://alchoholpad-litellm.hf.space/v1
+  api_key: ""
+  api_key_env: LITELLM_API_KEY
+  model: deepseek-v4.1-flash
   models:
+    - name: deepseek-v4.1-flash
+      model: deepseek-v4.1-flash-1017
+      enabled: true
+      base_url: https://alchoholpad-litellm.hf.space/v1
+      api_key_env: LITELLM_API_KEY
     - name: mimo
       model: mimo-v2.6-flash-free
-      enabled: true
+      enabled: false
       base_url: https://opencode.ai/zen/v1
       api_key: public
     - name: atria-dawn
       model: Atria-Dawn-Preview
-      enabled: true
+      enabled: false
       base_url: https://api.atria-asi.ai/v1
       api_key_env: ATRIA_API_KEY
     - name: mistral-large
@@ -76,7 +76,7 @@ llm:
       enabled: false
       base_url: https://alchoholpad-litellm.hf.space/v1
       api_key_env: LITELLM_API_KEY
-  reasoning_effort: off
+  reasoning_effort: low
   max_thinking_token: off
   temperature: 0.4
   max_tokens: 3200

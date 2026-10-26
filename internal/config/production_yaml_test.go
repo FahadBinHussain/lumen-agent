@@ -34,7 +34,7 @@ func TestProductionYamlValidates(t *testing.T) {
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("validate production.yaml: %v", err)
 	}
-	if got := cfg.ResolveLLMModel(); got != "mimo-v2.6-flash-free" {
-		t.Errorf("ResolveLLMModel = %q, want mimo-v2.6-flash-free", got)
+	if got := cfg.ResolveLLMModel(); got != "deepseek-v4.1-flash-1017" {
+		t.Errorf("ResolveLLMModel = %q, want deepseek-v4.1-flash-1017", got)
 	}
 }
