@@ -49,6 +49,13 @@ func newDedupeDB(ctx context.Context, dsn string) (*dedupeDB, error) {
 			title    TEXT NOT NULL,
 			seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
+		`CREATE TABLE IF NOT EXISTS public.tech_deliveries (
+			id SERIAL PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			guid TEXT NOT NULL,
+			delivered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS tech_deliveries_thread_delivered_idx ON public.tech_deliveries (thread_id, delivered_at)`,
 	} {
 		if _, err := pool.Exec(ctx, stmt); err != nil {
 			pool.Close()
@@ -98,6 +105,35 @@ func (s *Service) dbHasSeenSource(ctx context.Context, source string) (bool, err
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func (s *Service) dbCountTechDeliveriesToday(ctx context.Context, threadID string) (int, error) {
+	if s.db == nil {
+		return 0, nil
+	}
+	var count int
+	query := `
+		SELECT COUNT(*)
+		FROM public.tech_deliveries
+		WHERE thread_id = $1
+		  AND (delivered_at AT TIME ZONE 'Asia/Dhaka')::date = (NOW() AT TIME ZONE 'Asia/Dhaka')::date
+	`
+	err := s.db.pool.QueryRow(ctx, query, threadID).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (s *Service) dbRecordTechDelivery(ctx context.Context, threadID, guid string) error {
+	if s.db == nil {
+		return nil
+	}
+	_, err := s.db.pool.Exec(ctx, `
+		INSERT INTO public.tech_deliveries (thread_id, guid, delivered_at)
+		VALUES ($1, $2, NOW())
+	`, threadID, guid)
+	return err
 }
 
 // dbQuery returns the set of already-seen ids for the table's id column

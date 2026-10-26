@@ -314,26 +314,42 @@ func (s *Service) pollTechNews(ctx context.Context) error {
 				msg += "\nDiscussion: " + item.Comments
 			}
 
-			ok := true
-			for _, tid := range threads {
-				if err := s.postWebhook(ctx, s.cfg.TechNews.WebhookURL, "tech-news", tid,
-					title, msg, item.Link, item.GUID); err != nil {
-					ok = false
-					log.Printf("tech-news: delivery to %s failed: %v", tid, err)
-					time.Sleep(300 * time.Millisecond)
-					break
-				}
-				time.Sleep(300 * time.Millisecond)
-			}
-			if !ok {
-				continue
+			maxPerDay := s.cfg.TechNews.MaxPerDay
+			if maxPerDay <= 0 {
+				maxPerDay = 3
 			}
 
+			deliveredAny := false
+			for _, tid := range threads {
+				countToday, err := s.dbCountTechDeliveriesToday(ctx, tid)
+				if err != nil {
+					log.Printf("tech-news: count deliveries for %s failed: %v", tid, err)
+				} else if countToday >= maxPerDay {
+					log.Printf("tech-news: daily cap (%d/%d) reached for thread %s today, skipping %q", countToday, maxPerDay, tid, item.Title)
+					continue
+				}
+
+				if err := s.postWebhook(ctx, s.cfg.TechNews.WebhookURL, "tech-news", tid,
+					title, msg, item.Link, item.GUID); err != nil {
+					log.Printf("tech-news: delivery to %s failed: %v", tid, err)
+					time.Sleep(300 * time.Millisecond)
+					continue
+				}
+
+				if err := s.dbRecordTechDelivery(ctx, tid, item.GUID); err != nil {
+					log.Printf("tech-news: record delivery to %s failed: %v", tid, err)
+				}
+				deliveredAny = true
+				time.Sleep(300 * time.Millisecond)
+			}
+
+			// Always mark seen in database so items past the daily cap don't accumulate into a backlog
 			_ = s.dbInsertSeen(ctx, "public.tech_seen", "guid", map[string]string{
 				"guid":   item.GUID,
 				"source": feedName,
 				"title":  item.Title,
 			})
+			_ = deliveredAny
 		}
 	}
 	return nil

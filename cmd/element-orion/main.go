@@ -286,6 +286,7 @@ func buildNotify(cfg *config.Config) (*notify.Service, error) {
 			Enabled:    n.TechNews.Enabled,
 			Interval:   n.TechNews.Interval,
 			ThreadIDs:  n.TechNews.ThreadIDs,
+			MaxPerDay:  n.TechNews.MaxPerDay,
 			WebhookURL: n.TechNews.WebhookURL,
 			Feeds:      techNewsFeeds(n.TechNews.Feeds),
 		},

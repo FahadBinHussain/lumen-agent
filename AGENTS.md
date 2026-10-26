@@ -1602,6 +1602,7 @@ fake outbox pairs through the real bnp route:
 - Deduplication: tracked via Neon DB table `public.tech_seen (guid, source, title, seen_at)`.
 - Anti-spam baseline seeding: on startup (first pass 5s after boot), if a feed has 0 seen items in `public.tech_seen`, it seeds all currently active items so old backlog is never blasted to the thread. Subsequent ticker intervals (default `15m`) post only newly published articles.
 - Commands: `/notify tech [on|off]` (aliases: `technews`, `news`) toggles tech news notifications on the active chat thread. Supported across WhatsApp and Messenger.
+- Daily delivery cap: `notify.tech_news.max_per_day` (default 3) caps deliveries per thread per calendar day in Asia/Dhaka (+06:00) using Neon table `public.tech_deliveries (thread_id, guid, delivered_at)`. Items past the cap are still marked in `public.tech_seen` to prevent stale backlogs.
 - Gotchas:
   - `The Verge` RSS feed endpoint is `https://www.theverge.com/rss/index.xml` (`/tech/rss/index.xml` returns 404).
   - When adding pollers to `internal/notify`, wire config in `cmd/element-orion/main.go` `buildNotify` function, otherwise `notify.Config` omits the section and defaults to disabled.

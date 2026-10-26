@@ -284,6 +284,7 @@ type NotifyTechNews struct {
 	Enabled    bool                 `yaml:"enabled"`
 	Interval   string               `yaml:"interval"`
 	ThreadIDs  string               `yaml:"thread_ids"`
+	MaxPerDay  int                  `yaml:"max_per_day"`
 	WebhookURL string               `yaml:"webhook_url"`
 	Feeds      []NotifyTechNewsFeed `yaml:"feeds"`
 }
@@ -679,7 +680,7 @@ func defaultConfig() Config {
 			},
 			Supabase:   NotifySupabase{Enabled: false, Interval: "6h", AppStateTable: "public.app_state", EgressThreshold: 0.8, DBThreshold: 0.8},
 			CrackWatch: NotifyCrackWatch{Enabled: false, Interval: "5m", FeedURL: "https://www.reddit.com/r/CrackWatch/.rss", ThreadIDs: ""},
-			TechNews:   NotifyTechNews{Enabled: false, Interval: "15m", ThreadIDs: ""},
+			TechNews:   NotifyTechNews{Enabled: false, Interval: "15m", ThreadIDs: "", MaxPerDay: 3},
 		},
 		GIFs: GIFConfig{
 			Enabled:       false,

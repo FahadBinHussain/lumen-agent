@@ -33,6 +33,7 @@ type TechNewsCfg struct {
 	Enabled    bool              `yaml:"enabled"`
 	Interval   string            `yaml:"interval"`
 	ThreadIDs  string            `yaml:"thread_ids"`
+	MaxPerDay  int               `yaml:"max_per_day"`
 	WebhookURL string            `yaml:"webhook_url"`
 	Feeds      []TechNewsFeedCfg `yaml:"feeds"`
 }
