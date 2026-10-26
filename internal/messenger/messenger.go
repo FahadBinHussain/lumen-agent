@@ -32,16 +32,18 @@ import (
 const maxMsgLen = 900 // bytes, not Unicode characters
 
 type Incoming struct {
-	MessageID   string
-	ThreadID    int64
-	SenderID    int64
-	Text        string
-	Timestamp   int64
-	ReplySource string
-	ReplyToUser int64
-	MentionIDs  []int64
-	MentionOffs []int
-	MentionLens []int
+	MessageID    string
+	ThreadID     int64
+	SenderID     int64
+	Text         string
+	Timestamp    int64
+	ReplySource  string
+	ReplyToUser  int64
+	ReplySnippet string
+	ReplyText    string
+	MentionIDs   []int64
+	MentionOffs  []int
+	MentionLens  []int
 }
 
 type Handler func(ctx context.Context, msg Incoming)
@@ -325,16 +327,18 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 					continue
 				}
 				c.relay(evtCtx, Incoming{
-					MessageID:   msg.MessageId,
-					ThreadID:    msg.ThreadKey,
-					SenderID:    msg.SenderId,
-					Text:        msg.Text,
-					Timestamp:   msg.TimestampMs,
-					ReplySource: msg.ReplySourceId,
-					ReplyToUser: msg.ReplyToUserId,
-					MentionIDs:  parseMentionIDs(msg.MentionIds),
-					MentionOffs: parseMentionInts(msg.MentionOffsets),
-					MentionLens: parseMentionInts(msg.MentionLengths),
+					MessageID:    msg.MessageId,
+					ThreadID:     msg.ThreadKey,
+					SenderID:     msg.SenderId,
+					Text:         msg.Text,
+					Timestamp:    msg.TimestampMs,
+					ReplySource:  msg.ReplySourceId,
+					ReplyToUser:  msg.ReplyToUserId,
+					ReplySnippet: msg.ReplySnippet,
+					ReplyText:    msg.ReplyMessageText,
+					MentionIDs:   parseMentionIDs(msg.MentionIds),
+					MentionOffs:  parseMentionInts(msg.MentionOffsets),
+					MentionLens:  parseMentionInts(msg.MentionLengths),
 				})
 			}
 
@@ -347,16 +351,18 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 						continue
 					}
 					c.relay(evtCtx, Incoming{
-						MessageID:   msg.MessageId,
-						ThreadID:    threadID,
-						SenderID:    msg.SenderId,
-						Text:        msg.Text,
-						Timestamp:   msg.TimestampMs,
-						ReplySource: msg.ReplySourceId,
-						ReplyToUser: msg.ReplyToUserId,
-						MentionIDs:  parseMentionIDs(msg.MentionIds),
-						MentionOffs: parseMentionInts(msg.MentionOffsets),
-						MentionLens: parseMentionInts(msg.MentionLengths),
+						MessageID:    msg.MessageId,
+						ThreadID:     threadID,
+						SenderID:     msg.SenderId,
+						Text:         msg.Text,
+						Timestamp:    msg.TimestampMs,
+						ReplySource:  msg.ReplySourceId,
+						ReplyToUser:  msg.ReplyToUserId,
+						ReplySnippet: msg.ReplySnippet,
+						ReplyText:    msg.ReplyMessageText,
+						MentionIDs:   parseMentionIDs(msg.MentionIds),
+						MentionOffs:  parseMentionInts(msg.MentionOffsets),
+						MentionLens:  parseMentionInts(msg.MentionLengths),
 					})
 				}
 			}

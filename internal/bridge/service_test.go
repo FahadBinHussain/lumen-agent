@@ -600,3 +600,24 @@ func TestWhatsAppTriggerPrompt(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatWithQuoted(t *testing.T) {
+	if got := formatWithQuoted("", "hello"); got != "hello" {
+		t.Fatalf("expected hello, got %q", got)
+	}
+	if got := formatWithQuoted("   ", "hello"); got != "hello" {
+		t.Fatalf("expected hello, got %q", got)
+	}
+
+	quoted := "📰 Hacker News: The Curse of Soldered RAM"
+	expected := "[Replying to: \"📰 Hacker News: The Curse of Soldered RAM\"]\nwhat r ur thoughts on this?"
+	if got := formatWithQuoted(quoted, "what r ur thoughts on this?"); got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+
+	longQuote := strings.Repeat("A", 2000)
+	got := formatWithQuoted(longQuote, "query")
+	if !strings.HasPrefix(got, "[Replying to: \""+strings.Repeat("A", 1500)+"...\"]\nquery") {
+		t.Fatalf("expected truncated quote, got len=%d", len(got))
+	}
+}

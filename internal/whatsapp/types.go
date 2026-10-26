@@ -16,6 +16,7 @@ type ParsedMessage struct {
 	ReplyToID        string    `json:"ReplyToID"`
 	ReplyToSenderJID string    `json:"ReplyToSenderJID"`
 	ReplyToDisplay   string    `json:"ReplyToDisplay"`
+	QuotedText       string    `json:"QuotedText"`
 	IsReplyToUs      bool      `json:"IsReplyToUs"`
 	MentionsMe       bool      `json:"MentionsMe"`
 	MentionedJIDs    []string  `json:"MentionedJIDs"`

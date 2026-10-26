@@ -370,6 +370,12 @@ func (s *Service) handleMessengerMessage(ctx context.Context, msg messenger.Inco
 		return
 	}
 
+	quoted := msg.ReplyText
+	if quoted == "" {
+		quoted = msg.ReplySnippet
+	}
+	prompt = formatWithQuoted(quoted, prompt)
+
 	log.Printf("bridge: messenger message from %d in thread %s", msg.SenderID, threadID)
 	s.agentRun(ctx, "messenger", threadID, "", prompt)
 }
@@ -401,8 +407,21 @@ func (s *Service) handleWhatsAppMessage(ctx context.Context, msg whatsapp.Parsed
 		return
 	}
 
+	prompt = formatWithQuoted(msg.QuotedText, prompt)
+
 	log.Printf("bridge: whatsapp message from %s in chat %s", msg.SenderJID, chatJID)
 	s.agentRun(ctx, "whatsapp", chatJID, chatJID, prompt)
+}
+
+func formatWithQuoted(quoted, prompt string) string {
+	quoted = strings.TrimSpace(quoted)
+	if quoted == "" {
+		return prompt
+	}
+	if len(quoted) > 1500 {
+		quoted = quoted[:1500] + "..."
+	}
+	return fmt.Sprintf("[Replying to: %q]\n%s", quoted, prompt)
 }
 
 // whatsappTriggerPrompt mirrors messenger's trigger semantics: /ai prefix,

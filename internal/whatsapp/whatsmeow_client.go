@@ -298,14 +298,29 @@ func (w *WhatsmeowClient) handleMessage(evt *events.Message) {
 		Server: chat.Server,
 	}
 
-	var replyToID, replyToSender string
+	var replyToID, replyToSender, quotedText string
 	var isReplyToUs, mentionsMe bool
 	var mentionedJIDs []string
 	if ext := evt.Message.GetExtendedTextMessage(); ext != nil {
 		if ctx := ext.GetContextInfo(); ctx != nil {
 			replyToID = ctx.GetStanzaID()
 			replyToSender = ctx.GetParticipant()
-			if replyToID != "" && ctx.GetQuotedMessage() != nil && w.isRecentSent(replyToID) {
+			if qm := ctx.GetQuotedMessage(); qm != nil {
+				quotedText = qm.GetConversation()
+				if quotedText == "" && qm.ExtendedTextMessage != nil {
+					quotedText = qm.ExtendedTextMessage.GetText()
+				}
+				if quotedText == "" && qm.ImageMessage != nil {
+					quotedText = qm.ImageMessage.GetCaption()
+				}
+				if quotedText == "" && qm.VideoMessage != nil {
+					quotedText = qm.VideoMessage.GetCaption()
+				}
+				if quotedText == "" && qm.DocumentMessage != nil {
+					quotedText = qm.DocumentMessage.GetCaption()
+				}
+			}
+			if replyToID != "" && ctx.GetQuotedMessage() != nil && (w.isRecentSent(replyToID) || (w.ownJID() != "" && replyToSender == w.ownJID())) {
 				isReplyToUs = true
 			}
 			if own := w.ownJID(); own != "" {
@@ -329,6 +344,7 @@ func (w *WhatsmeowClient) handleMessage(evt *events.Message) {
 		PushName:         evt.Info.PushName,
 		ReplyToID:        replyToID,
 		ReplyToSenderJID: replyToSender,
+		QuotedText:       quotedText,
 		IsReplyToUs:      isReplyToUs,
 		MentionsMe:       mentionsMe,
 		MentionedJIDs:    mentionedJIDs,

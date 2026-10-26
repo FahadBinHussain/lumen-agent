@@ -431,7 +431,15 @@ literal `@<name>` tokens, collapsing the leftover double spaces; unresolvable
 names leave the text unchanged. Mirrors messenger's offset-based
 CleanMentions, which also strips only our own mention. Media-only replies/mentions
 stay silent on both. The `/ai` prefix
-is stripped; the rest becomes the prompt for the agent runner. No murmur `/ai`
+is stripped; the rest becomes the prompt for the agent runner.
+
+Quote-reply context forwarding (2026-10-26): when an incoming message replies to
+another message, the quoted text is captured from Meta (`ReplySnippet` or
+`ReplyMessageText` on `table.LSInsertMessage`) and WhatsApp (`ctx.GetQuotedMessage()`),
+and prepended to the prompt as `[Replying to: %q]\n%s` (truncated at 1500 chars).
+This allows the model to immediately understand references like "what r ur thoughts on this?"
+even for old messages or automated notifications sent before session history recording.
+No murmur `/ai`
 subcommands (models/image) — the fork uses the single `llm.model` config.
 
 Command surface (added 2026-08-18, symmetric with discord slash commands): a
