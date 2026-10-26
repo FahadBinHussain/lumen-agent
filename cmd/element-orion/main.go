@@ -251,7 +251,7 @@ func runServe(args []string) error {
 // when everything is off so the base binary behaves exactly as before.
 func buildNotify(cfg *config.Config) (*notify.Service, error) {
 	n := cfg.Notify
-	anyEnabled := n.SteamUpdates.Enabled || n.FreeGames.Enabled || n.NeonUsage.Enabled || n.Supabase.Enabled || n.CrackWatch.Enabled
+	anyEnabled := n.SteamUpdates.Enabled || n.FreeGames.Enabled || n.NeonUsage.Enabled || n.Supabase.Enabled || n.CrackWatch.Enabled || n.TechNews.Enabled
 	if !anyEnabled {
 		return nil, nil
 	}
@@ -281,6 +281,13 @@ func buildNotify(cfg *config.Config) (*notify.Service, error) {
 			FeedURL:    n.CrackWatch.FeedURL,
 			ThreadIDs:  n.CrackWatch.ThreadIDs,
 			WebhookURL: n.CrackWatch.WebhookURL,
+		},
+		TechNews: notify.TechNewsCfg{
+			Enabled:    n.TechNews.Enabled,
+			Interval:   n.TechNews.Interval,
+			ThreadIDs:  n.TechNews.ThreadIDs,
+			WebhookURL: n.TechNews.WebhookURL,
+			Feeds:      techNewsFeeds(n.TechNews.Feeds),
 		},
 		NeonUsage: notify.NeonUsageCfg{
 			Enabled:           n.NeonUsage.Enabled,
@@ -346,4 +353,13 @@ func printUsage() {
 
 func usageText() string {
 	return "Element Orion\n\nUsage:\n  element-orion [serve] [-config path] [-workspace-dir path]\n  element-orion system-event -text \"Check urgent follow-ups\" [-mode now|next-heartbeat] [-config path]\n  element-orion help\n\nEnvironment:\n  ELEMENT_ORION_WORKSPACE_DIR   Override the workspace directory at runtime\n\nCommands:\n  serve         Run the agent service (Discord + optional Messenger/WhatsApp bridge)\n  system-event  Queue a heartbeat system event for the running service\n  help          Show this help text\n"
+}
+
+// techNewsFeeds maps the config feed list onto the notify package's feed type.
+func techNewsFeeds(in []config.NotifyTechNewsFeed) []notify.TechNewsFeedCfg {
+	out := make([]notify.TechNewsFeedCfg, 0, len(in))
+	for _, f := range in {
+		out = append(out, notify.TechNewsFeedCfg{Name: f.Name, URL: f.URL})
+	}
+	return out
 }

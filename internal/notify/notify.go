@@ -303,6 +303,16 @@ func (s *Service) Run(ctx context.Context) error {
 	for _, j := range jobs {
 		j := j
 		go func() {
+			// Run initial pass after 5s so pollers don't idle for a full interval on boot
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+				if err := j.run(ctx); err != nil {
+					log.Printf("notify: %s initial run: %v", j.name, err)
+				}
+			}
+
 			ticker := time.NewTicker(j.iv)
 			defer ticker.Stop()
 			for {
