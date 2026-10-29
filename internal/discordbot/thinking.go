@@ -39,7 +39,7 @@ type thinkingAnim struct {
 // proceeds without it). Only user conversations animate — heartbeat/dream/
 // background skip it.
 func (s *Service) startThinking(prompt inboundPrompt) *thinkingAnim {
-	if prompt.Kind == promptKindHeartbeat || prompt.Kind == promptKindDream || prompt.Kind == promptKindBackground {
+	if prompt.Kind == promptKindHeartbeat || prompt.Kind == promptKindDream || prompt.Kind == promptKindBackground || prompt.Kind == promptKindReaction {
 		return nil
 	}
 

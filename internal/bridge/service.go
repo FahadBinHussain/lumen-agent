@@ -396,7 +396,27 @@ func (s *Service) handleMessengerReaction(ctx context.Context, react messenger.R
 	if !s.threadAllowed("messenger", threadID) {
 		return
 	}
+	if strings.TrimSpace(react.Reaction) == "" {
+		return
+	}
+	if s.messenger != nil && react.ActorID == s.messenger.UID() {
+		return
+	}
+
 	log.Printf("bridge: messenger reaction from %d in thread %s on msg %s: %q", react.ActorID, threadID, react.MessageID, react.Reaction)
+
+	if s.runner == nil {
+		return
+	}
+
+	prompt := fmt.Sprintf("[reaction] User %d reacted with %s to message %s", react.ActorID, react.Reaction, react.MessageID)
+	runCtx := tools.WithMessengerToolContext(ctx, tools.MessengerToolContext{
+		ThreadID:  threadID,
+		UserID:    strconv.FormatInt(react.ActorID, 10),
+		MessageID: react.MessageID,
+	})
+
+	s.agentRun(runCtx, "messenger", threadID, "", prompt)
 }
 
 func (s *Service) handleWhatsAppMessage(ctx context.Context, msg whatsapp.ParsedMessage) {
@@ -515,39 +535,42 @@ func (s *Service) agentRun(ctx context.Context, platform string, threadID string
 	if entry, ok := s.cfg.LLM.ActiveModelEntry(); ok && strings.TrimSpace(entry.Name) != "" {
 		modelName = entry.Name
 	}
+	isReaction := strings.HasPrefix(prompt, "[reaction]")
 	var msgID string
 	var stopThinking chan struct{}
 	var stream chan streamSignal
-	switch platform {
-	case "messenger":
-		msgID = s.send(platform, threadID, jid, "thinking.")
-		if msgID != "" {
-			stopThinking = make(chan struct{})
-			go func() {
-				dots := []string{"thinking.", "thinking..", "thinking..."}
-				i := 0
-				for edits := 0; edits < 4; edits++ {
-					select {
-					case <-stopThinking:
-						return
-					case <-time.After(500 * time.Millisecond):
-						i = (i + 1) % len(dots)
-						s.editMessage(threadID, msgID, dots[i])
+	if !isReaction {
+		switch platform {
+		case "messenger":
+			msgID = s.send(platform, threadID, jid, "thinking.")
+			if msgID != "" {
+				stopThinking = make(chan struct{})
+				go func() {
+					dots := []string{"thinking.", "thinking..", "thinking..."}
+					i := 0
+					for edits := 0; edits < 4; edits++ {
+						select {
+						case <-stopThinking:
+							return
+						case <-time.After(500 * time.Millisecond):
+							i = (i + 1) % len(dots)
+							s.editMessage(threadID, msgID, dots[i])
+						}
 					}
-				}
-			}()
-		}
-	case "whatsapp":
-		if s.whatsapp != nil {
-			id, err := s.whatsapp.SendText(ctx, jid, "thinking.")
-			if err != nil {
-				log.Printf("bridge: whatsapp thinking message failed: %v", err)
-				break
+				}()
 			}
-			msgID = id
-			stopThinking = make(chan struct{})
-			stream = make(chan streamSignal, 64)
-			go renderThinkingEdits(ctx, s.whatsapp, jid, msgID, stream, stopThinking)
+		case "whatsapp":
+			if s.whatsapp != nil {
+				id, err := s.whatsapp.SendText(ctx, jid, "thinking.")
+				if err != nil {
+					log.Printf("bridge: whatsapp thinking message failed: %v", err)
+					break
+				}
+				msgID = id
+				stopThinking = make(chan struct{})
+				stream = make(chan streamSignal, 64)
+				go renderThinkingEdits(ctx, s.whatsapp, jid, msgID, stream, stopThinking)
+			}
 		}
 	}
 	if stream != nil {
@@ -581,9 +604,14 @@ func (s *Service) agentRun(ctx context.Context, platform string, threadID string
 	}
 
 	reply := lastAssistantContent(newHistory)
-	if reply == "" {
-		log.Printf("bridge: agent returned empty reply (%s %s)", platform, threadID)
-		s.sendReply(platform, threadID, jid, msgID, "[error] model returned empty response")
+	trimmedReply := strings.TrimSpace(reply)
+	if trimmedReply == "" || trimmedReply == agent.NoReplyToken {
+		log.Printf("bridge: agent chose silence for %s %s", platform, threadID)
+		s.mu.Lock()
+		kept := agent.CompactHistoryForStorage(s.cfg, newHistory)
+		s.sessions[key] = kept
+		s.mu.Unlock()
+		s.saveHistory()
 		return
 	}
 

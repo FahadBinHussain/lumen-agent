@@ -486,3 +486,34 @@ func TestEmptyReplyNoticeTextIsLoudAndNamesReason(t *testing.T) {
 		t.Fatalf("expected blank reason to fall back to empty_reply, got %q", fallback)
 	}
 }
+
+func TestHandleMessageReactionAddIgnoresOwnOrUnauthorized(t *testing.T) {
+	service := &Service{
+		application: "self-user",
+		cfg: config.Config{
+			Discord: config.DiscordConfig{
+				AllowDirectMessages: false,
+			},
+		},
+	}
+
+	// 1. Own reaction should be ignored
+	service.handleMessageReactionAdd(nil, &discordgo.MessageReactionAdd{
+		MessageReaction: &discordgo.MessageReaction{
+			UserID:    "self-user",
+			ChannelID: "dm-channel",
+			MessageID: "msg-1",
+			Emoji:     discordgo.Emoji{Name: "👍"},
+		},
+	})
+
+	// 2. Unauthorized DM should be ignored
+	service.handleMessageReactionAdd(nil, &discordgo.MessageReactionAdd{
+		MessageReaction: &discordgo.MessageReaction{
+			UserID:    "other-user",
+			ChannelID: "dm-channel",
+			MessageID: "msg-1",
+			Emoji:     discordgo.Emoji{Name: "👍"},
+		},
+	})
+}

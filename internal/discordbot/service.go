@@ -63,6 +63,7 @@ const (
 	promptKindHeartbeat  promptKind = "heartbeat"
 	promptKindDream      promptKind = "dream"
 	promptKindBackground promptKind = "background"
+	promptKindReaction   promptKind = "reaction"
 )
 
 type Service struct {
@@ -198,7 +199,9 @@ func New(cfg config.Config, runner *agent.Runner, audit *auditlog.Logger, sandbo
 	if cfg.DiscordUsesBotToken() {
 		session.Identify.Intents = discordgo.IntentsGuilds |
 			discordgo.IntentsGuildMessages |
+			discordgo.IntentsGuildMessageReactions |
 			discordgo.IntentsDirectMessages |
+			discordgo.IntentsDirectMessageReactions |
 			discordgo.IntentsMessageContent
 	}
 
@@ -223,6 +226,7 @@ func New(cfg config.Config, runner *agent.Runner, audit *auditlog.Logger, sandbo
 
 	session.AddHandler(service.handleInteractionCreate)
 	session.AddHandler(service.handleMessageCreate)
+	session.AddHandler(service.handleMessageReactionAdd)
 	// NOTE: discordgo handlers MUST take (session, event) — single-arg funcs
 	// are rejected at runtime ("Invalid handler type, will never be called").
 	// That exact bug lived here: Ready/Resumed never fired, so IsConnected()
@@ -839,6 +843,111 @@ func (s *Service) isOwnMessage(message *discordgo.MessageCreate) bool {
 	}
 
 	return strings.TrimSpace(message.Author.ID) == applicationID
+}
+
+func (s *Service) isOwnUser(userID string) bool {
+	s.mu.RLock()
+	applicationID := strings.TrimSpace(s.application)
+	s.mu.RUnlock()
+	if applicationID == "" {
+		return false
+	}
+	return strings.TrimSpace(userID) == applicationID
+}
+
+func (s *Service) handleMessageReactionAdd(_ *discordgo.Session, reaction *discordgo.MessageReactionAdd) {
+	if reaction == nil || reaction.MessageReaction == nil {
+		return
+	}
+	userID := strings.TrimSpace(reaction.UserID)
+	if userID == "" || s.isOwnUser(userID) {
+		return
+	}
+
+	if reaction.GuildID == "" {
+		if !s.cfg.DMAllowedForUser(userID) && !s.cfg.Discord.AllowDirectMessages {
+			return
+		}
+	} else {
+		if !s.cfg.DiscordChannelAllowed(reaction.ChannelID, "") {
+			return
+		}
+		if ok, _ := s.authorizeContext(reaction.GuildID, userID); !ok {
+			return
+		}
+	}
+
+	var msg *discordgo.Message
+	if s.discord != nil {
+		var err error
+		msg, err = s.discord.ChannelMessage(reaction.ChannelID, reaction.MessageID)
+		if err != nil && reaction.GuildID != "" {
+			return
+		}
+	}
+
+	if reaction.GuildID != "" {
+		if msg == nil || msg.Author == nil || !s.isOwnUser(msg.Author.ID) {
+			return
+		}
+	}
+
+	emojiName := reaction.Emoji.Name
+	if reaction.Emoji.ID != "" {
+		emojiName = fmt.Sprintf("<:%s:%s>", reaction.Emoji.Name, reaction.Emoji.ID)
+	}
+
+	username := userID
+	if reaction.Member != nil && reaction.Member.User != nil && reaction.Member.User.Username != "" {
+		username = reaction.Member.User.Username
+	}
+
+	var content string
+	if msg != nil {
+		target := "your message"
+		if msg.Author != nil && !s.isOwnUser(msg.Author.ID) {
+			target = fmt.Sprintf("@%s's message", msg.Author.Username)
+		}
+		msgContent := strings.TrimSpace(msg.Content)
+		if len(msgContent) > 200 {
+			msgContent = msgContent[:197] + "..."
+		}
+		if msgContent != "" {
+			content = fmt.Sprintf("[reaction] @%s reacted with %s to %s: %q", username, emojiName, target, msgContent)
+		} else {
+			content = fmt.Sprintf("[reaction] @%s reacted with %s to %s", username, emojiName, target)
+		}
+	} else {
+		content = fmt.Sprintf("[reaction] @%s reacted with %s to message %s", username, emojiName, reaction.MessageID)
+	}
+
+	key := s.sessionKey(reaction.GuildID, reaction.ChannelID, userID)
+	session := s.lookupSession(key)
+	if session == nil {
+		var resetErr error
+		session, _, resetErr = s.resetSession(key)
+		if resetErr != nil {
+			return
+		}
+	}
+
+	prompt := inboundPrompt{
+		Kind:         promptKindReaction,
+		Content:      content,
+		RawContent:   content,
+		AuthorID:     userID,
+		GuildID:      reaction.GuildID,
+		ChannelID:    reaction.ChannelID,
+		MessageID:    reaction.MessageID,
+		UseIndicator: false,
+	}
+
+	select {
+	case <-session.Context.Done():
+		return
+	case session.Queue <- prompt:
+	default:
+	}
 }
 
 func (s *Service) resetSession(key sessionKey) (*sessionState, bool, error) {

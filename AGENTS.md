@@ -1636,6 +1636,16 @@ fake outbox pairs through the real bnp route:
   - Inbound Observability: `messenger.Client` parses `*table.LSTable` events for `LSUpsertReaction` and `LSDeleteReaction`, logs reactions clearly, and fires a registered `ReactionHandler` (`bridge.handleMessengerReaction`) for incoming user reactions.
   - Configuration: `add_messenger_reaction` added to default enabled tools in `internal/config/config.go`, `config/production.yaml`, and `config/element-orion.example.yaml`.
 
+## Incoming reaction handling and autonomous silence support (2026-10-29)
+
+- Inbound reaction awareness across platforms:
+  - Discord: registered `handleMessageReactionAdd` with gateway intents `IntentsGuildMessageReactions` and `IntentsDirectMessageReactions`. Ignores bot's own reactions. In guild channels, only activates if reacting to the bot's own message (prevents noisy channel spam). Passes `[reaction] @user reacted with <emoji> to your message: "<text>"` as an inbound prompt with `promptKindReaction`.
+  - Messenger: `handleMessengerReaction` feeds non-empty incoming user reactions to `s.agentRun` with `tools.WithMessengerToolContext` for tool context defaults.
+- Autonomous agent response & silence:
+  - No rigid "never reply" constraints in prompt: the model has full autonomy to reply with text, react back using tools (`add_discord_reaction` / `add_messenger_reaction`), or stay silent using the `<NO_REPLY>` token.
+  - Silent turns (`<NO_REPLY>`) discard without errors or stray messages on both Discord (`anim.discard()`, no thinking anim created for `promptKindReaction`) and Messenger (skips `thinking.` message upfront on `[reaction]` turns; handles `<NO_REPLY>` cleanly without empty reply error).
+  - Reaction events and decisions persist into conversation history so the model organically remembers user reactions when asked later.
+
 Upstream is `PUT-Request/Element-Orion` (canonical as of 2026-09-04; the old
 path `eli32-vlc/lumen-agent` redirects — the author moved all their projects
 into the new `PUT Request` org that day and restored the original

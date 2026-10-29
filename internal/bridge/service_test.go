@@ -647,4 +647,12 @@ func TestHandleMessengerReactionAllowlistGate(t *testing.T) {
 		ActorID:   789,
 		Reaction:  "❤️",
 	})
+
+	// empty reaction (reaction removed) should be skipped cleanly
+	s.handleMessengerReaction(context.Background(), messenger.ReactionEvent{
+		ThreadID:  123,
+		MessageID: "msg-1",
+		ActorID:   789,
+		Reaction:  "",
+	})
 }
