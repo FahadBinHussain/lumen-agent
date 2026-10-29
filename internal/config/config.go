@@ -575,6 +575,7 @@ func defaultConfig() Config {
 			Enabled: []string{
 				"send_discord_message",
 				"add_discord_reaction",
+				"add_messenger_reaction",
 				"discord_api_request",
 				"read_file",
 				"write_file",
@@ -1574,6 +1575,18 @@ func (c Config) MessengerThreadAllowed(threadID string) bool {
 		}
 	}
 	return false
+}
+
+func (c Config) MessengerThreadAllowedTarget(targetThreadID string, activeThreadID string) bool {
+	targetThreadID = strings.TrimSpace(targetThreadID)
+	activeThreadID = strings.TrimSpace(activeThreadID)
+	if targetThreadID == "" {
+		return false
+	}
+	if activeThreadID != "" && targetThreadID == activeThreadID {
+		return true
+	}
+	return c.MessengerThreadAllowed(targetThreadID)
 }
 
 func (c Config) WhatsAppJIDAllowed(jid string) bool {

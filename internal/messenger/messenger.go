@@ -48,6 +48,16 @@ type Incoming struct {
 
 type Handler func(ctx context.Context, msg Incoming)
 
+type ReactionEvent struct {
+	ThreadID  int64
+	MessageID string
+	ActorID   int64
+	Reaction  string // unicode emoji, or empty string if reaction removed
+	Timestamp int64
+}
+
+type ReactionHandler func(ctx context.Context, react ReactionEvent)
+
 // dispatchItem is one inbound message parked for the dispatcher goroutine.
 type dispatchItem struct {
 	ctx context.Context
@@ -63,11 +73,12 @@ type ThreadInfo struct {
 }
 
 type Client struct {
-	client      *messagix.Client
-	uid         int64
-	platform    types.Platform
-	handler     Handler
-	cookiesPath string
+	client          *messagix.Client
+	uid             int64
+	platform        types.Platform
+	handler         Handler
+	reactionHandler ReactionHandler
+	cookiesPath     string
 	startTime   time.Time
 	seenMu      sync.Mutex
 	seen        map[string]time.Time
@@ -149,6 +160,10 @@ func New(cookiesPath string, handler Handler) (*Client, error) {
 
 func (c *Client) SetHandler(handler Handler) {
 	c.handler = handler
+}
+
+func (c *Client) SetReactionHandler(handler ReactionHandler) {
+	c.reactionHandler = handler
 }
 
 func (c *Client) UID() int64 {
@@ -302,8 +317,9 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 				break
 			}
 			up, ins := e.WrapMessages()
-			log.Printf("messenger: publish resp: threads=%d insert_msgs=%d upsert_msgs=%d table=[%s]",
+			log.Printf("messenger: publish resp: threads=%d insert_msgs=%d upsert_msgs=%d reactions=%d delete_reactions=%d table=[%s]",
 				len(e.LSDeleteThenInsertThread), len(ins), len(up),
+				len(e.LSUpsertReaction), len(e.LSDeleteReaction),
 				nonEmptyTableFields(e))
 			for _, th := range e.LSDeleteThenInsertThread {
 				if th == nil || th.GetThreadKey() == 0 {
@@ -366,6 +382,41 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 					})
 				}
 			}
+
+			for _, r := range e.LSUpsertReaction {
+				if r == nil || r.MessageId == "" {
+					continue
+				}
+				log.Printf("messenger: reaction upsert: actor=%d thread=%d msg=%s reaction=%q",
+					r.ActorId, r.ThreadKey, r.MessageId, r.Reaction)
+				if c.reactionHandler != nil {
+					c.reactionHandler(evtCtx, ReactionEvent{
+						ThreadID:  r.ThreadKey,
+						MessageID: r.MessageId,
+						ActorID:   r.ActorId,
+						Reaction:  r.Reaction,
+						Timestamp: r.TimestampMs,
+					})
+				}
+			}
+
+			for _, r := range e.LSDeleteReaction {
+				if r == nil || r.MessageId == "" {
+					continue
+				}
+				log.Printf("messenger: reaction delete: actor=%d thread=%d msg=%s",
+					r.ActorId, r.ThreadKey, r.MessageId)
+				if c.reactionHandler != nil {
+					c.reactionHandler(evtCtx, ReactionEvent{
+						ThreadID:  r.ThreadKey,
+						MessageID: r.MessageId,
+						ActorID:   r.ActorId,
+						Reaction:  "",
+						Timestamp: time.Now().UnixMilli(),
+					})
+				}
+			}
+
 			// Advance sync cursors carried in the table (mirrors upstream
 			// connector); without this, Meta sees a client that never acks
 			// its transactions.
@@ -837,6 +888,22 @@ func (c *Client) DeleteMessage(ctx context.Context, messageID string) error {
 	})
 	if err != nil {
 		return fmt.Errorf("delete message: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) SendReaction(ctx context.Context, threadID int64, messageID string, reaction string) error {
+	_, err := c.executeRetry(ctx, "send reaction", &socket.SendReactionTask{
+		ThreadKey:       threadID,
+		TimestampMs:     time.Now().UnixMilli(),
+		MessageID:       messageID,
+		Reaction:        reaction,
+		ActorID:         c.uid,
+		SyncGroup:       1,
+		SendAttribution: table.MESSENGER_INBOX_IN_THREAD,
+	})
+	if err != nil {
+		return fmt.Errorf("send reaction: %w", err)
 	}
 	return nil
 }

@@ -22,6 +22,7 @@ import (
 	"element-orion/internal/llm"
 	"element-orion/internal/messenger"
 	"element-orion/internal/neon"
+	"element-orion/internal/tools"
 	"element-orion/internal/whatsapp"
 )
 
@@ -142,6 +143,10 @@ func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
 			return nil, err
 		}
 		s.messenger = client
+		client.SetReactionHandler(s.handleMessengerReaction)
+		if runner != nil && runner.Registry() != nil {
+			runner.Registry().SetMessengerReactionSender(client)
+		}
 		log.Printf("bridge: messenger enabled with uid %d", client.UID())
 	}
 
@@ -376,8 +381,22 @@ func (s *Service) handleMessengerMessage(ctx context.Context, msg messenger.Inco
 	}
 	prompt = formatWithQuoted(quoted, prompt)
 
+	runCtx := tools.WithMessengerToolContext(ctx, tools.MessengerToolContext{
+		ThreadID:  threadID,
+		UserID:    strconv.FormatInt(msg.SenderID, 10),
+		MessageID: msg.MessageID,
+	})
+
 	log.Printf("bridge: messenger message from %d in thread %s", msg.SenderID, threadID)
-	s.agentRun(ctx, "messenger", threadID, "", prompt)
+	s.agentRun(runCtx, "messenger", threadID, "", prompt)
+}
+
+func (s *Service) handleMessengerReaction(ctx context.Context, react messenger.ReactionEvent) {
+	threadID := strconv.FormatInt(react.ThreadID, 10)
+	if !s.threadAllowed("messenger", threadID) {
+		return
+	}
+	log.Printf("bridge: messenger reaction from %d in thread %s on msg %s: %q", react.ActorID, threadID, react.MessageID, react.Reaction)
 }
 
 func (s *Service) handleWhatsAppMessage(ctx context.Context, msg whatsapp.ParsedMessage) {

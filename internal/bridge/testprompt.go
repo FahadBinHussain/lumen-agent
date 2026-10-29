@@ -94,6 +94,12 @@ func (s *Service) runAgentPrompt(ctx context.Context, platform, threadID, prompt
 			UserID:    strings.TrimSpace(userID),
 		})
 	}
+	if platform == "messenger" && strings.TrimSpace(threadID) != "" {
+		runCtx = tools.WithMessengerToolContext(runCtx, tools.MessengerToolContext{
+			ThreadID: strings.TrimSpace(threadID),
+			UserID:   strings.TrimSpace(userID),
+		})
+	}
 
 	s.mu.Lock()
 	history := cloneMessages(s.sessions[key])

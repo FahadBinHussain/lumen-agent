@@ -13,6 +13,7 @@ import (
 
 	"element-orion/internal/config"
 	"element-orion/internal/llm"
+	"element-orion/internal/messenger"
 	"element-orion/internal/vision"
 	"element-orion/internal/whatsapp"
 )
@@ -620,4 +621,30 @@ func TestFormatWithQuoted(t *testing.T) {
 	if !strings.HasPrefix(got, "[Replying to: \""+strings.Repeat("A", 1500)+"...\"]\nquery") {
 		t.Fatalf("expected truncated quote, got len=%d", len(got))
 	}
+}
+
+
+func TestHandleMessengerReactionAllowlistGate(t *testing.T) {
+	s := &Service{
+		cfg: config.Config{
+			Messenger: config.MessengerConfig{
+				AllowedThreadIDs: []string{"123"},
+			},
+		},
+	}
+	// unallowed thread should be skipped cleanly
+	s.handleMessengerReaction(context.Background(), messenger.ReactionEvent{
+		ThreadID:  456,
+		MessageID: "msg-1",
+		ActorID:   789,
+		Reaction:  "👍",
+	})
+
+	// allowed thread should process cleanly
+	s.handleMessengerReaction(context.Background(), messenger.ReactionEvent{
+		ThreadID:  123,
+		MessageID: "msg-1",
+		ActorID:   789,
+		Reaction:  "❤️",
+	})
 }

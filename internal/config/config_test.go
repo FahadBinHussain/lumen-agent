@@ -773,6 +773,22 @@ func TestMessengerThreadAllowedListedAndUnlisted(t *testing.T) {
 	}
 }
 
+func TestMessengerThreadAllowedTargetAcceptsActiveOrAllowlistedThread(t *testing.T) {
+	cfg := Config{Messenger: MessengerConfig{AllowedThreadIDs: []string{"thread-1"}}}
+	if !cfg.MessengerThreadAllowedTarget("thread-1", "thread-1") {
+		t.Fatal("allowlisted target should be allowed")
+	}
+	if !cfg.MessengerThreadAllowedTarget("thread-2", "thread-2") {
+		t.Fatal("active thread should be allowed even if unlisted")
+	}
+	if cfg.MessengerThreadAllowedTarget("thread-3", "thread-2") {
+		t.Fatal("unlisted target different from active thread should be blocked")
+	}
+	if cfg.MessengerThreadAllowedTarget("", "thread-2") {
+		t.Fatal("empty target should be blocked")
+	}
+}
+
 func TestWhatsAppJIDAllowedEmptyListAllowsAll(t *testing.T) {
 	cfg := Config{WhatsApp: WhatsAppConfig{AllowedJIDs: []string{}}}
 	if !cfg.WhatsAppJIDAllowed("8801711472629@s.whatsapp.net") {

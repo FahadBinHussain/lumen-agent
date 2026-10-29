@@ -94,6 +94,7 @@ tools:
   enabled:
     - send_discord_message
     - add_discord_reaction
+    - add_messenger_reaction
     - discord_api_request
     - read_file
     - write_file

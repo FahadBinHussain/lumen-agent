@@ -35,8 +35,9 @@ type Registry struct {
 	backgroundTasks  BackgroundTaskManager
 	scheduledWakeups ScheduledWakeupManager
 	sandboxes        SandboxManager
-	locks            *resourceLockManager
-	secretsPath      string
+	locks                   *resourceLockManager
+	secretsPath             string
+	messengerReactionSender MessengerReactionSender
 }
 
 func NewRegistry(cfg config.Config) (*Registry, error) {
@@ -63,6 +64,7 @@ func NewRegistry(cfg config.Config) (*Registry, error) {
 	registry.registerFilesystemTools()
 	registry.registerExecTool()
 	registry.registerDiscordTool()
+	registry.registerMessengerTool()
 	registry.registerContextCompactionTool()
 	registry.registerBackgroundTaskTools()
 	registry.registerHeartbeatWakeTools()

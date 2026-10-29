@@ -1626,6 +1626,16 @@ fake outbox pairs through the real bnp route:
   - `The Verge` RSS feed endpoint is `https://www.theverge.com/rss/index.xml` (`/tech/rss/index.xml` returns 404).
   - When adding pollers to `internal/notify`, wire config in `cmd/element-orion/main.go` `buildNotify` function, otherwise `notify.Config` omits the section and defaults to disabled.
 
+## Messenger reactions support (2026-10-29)
+
+- Added symmetric Messenger reaction support modeled directly after `add_discord_reaction`:
+  - Tool: `add_messenger_reaction` in `internal/tools/messenger.go` takes `emoji` (required), `message_id` (optional, defaults to triggering message in context), and `thread_id` (optional, defaults to triggering thread in context).
+  - Tool Context: `tools.WithMessengerToolContext` injects `ThreadID`, `UserID`, and `MessageID` into context during Messenger agent runs (`bridge.handleMessengerMessage`), allowing the model to react to the incoming user message without manually specifying the thread or message ID.
+  - Allowlist Gate: `cfg.MessengerThreadAllowedTarget(targetThreadID, activeThreadID)` verifies the thread is allowed by config or matches the currently active thread context.
+  - Outbound Execution: `messenger.Client.SendReaction(ctx, threadID, messageID, reaction)` uses `socket.SendReactionTask` with retry/reconnect through `executeRetry`.
+  - Inbound Observability: `messenger.Client` parses `*table.LSTable` events for `LSUpsertReaction` and `LSDeleteReaction`, logs reactions clearly, and fires a registered `ReactionHandler` (`bridge.handleMessengerReaction`) for incoming user reactions.
+  - Configuration: `add_messenger_reaction` added to default enabled tools in `internal/config/config.go`, `config/production.yaml`, and `config/element-orion.example.yaml`.
+
 Upstream is `PUT-Request/Element-Orion` (canonical as of 2026-09-04; the old
 path `eli32-vlc/lumen-agent` redirects — the author moved all their projects
 into the new `PUT Request` org that day and restored the original
