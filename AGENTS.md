@@ -57,6 +57,10 @@
   `api_type: openai`, `reasoning_effort: low`) since 2026-10-26 — mirroring dailybnp's live lane.
   The opencode zen free lane (`mimo` / `mimo-v2.6-flash-free`) suffered rate-limiting/exhaustion
   leaving chat turns stuck at "thinking.". Kept in catalog as disabled fallback.
+- Vision describer (2026-11-06): switched from opencode zen free tier (opencode.ai/zen/v1, mimo-v2.6-flash-free
+  with zengate envelope) to the LiteLLM gateway (https://alchoholpad-litellm.hf.space/v1, gemini-2.5-flash,
+  key in Render env LITELLM_API_KEY). Removed zengate envelope requirement from internal/vision/vision.go
+  and simplified to standard OpenAI-compatible chat completions with image_url parts.
 - Windows test runs must not assume `/bin/zsh`; the exec tests use `pwsh` on
   Windows while production Linux keeps its configured shell.
 - The Messenger cookie upload endpoint accepts the mainframe cookie-vault

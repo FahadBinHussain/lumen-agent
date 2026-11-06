@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -24,9 +23,9 @@ func testConfig(baseURL string) config.VisionConfig {
 	return config.VisionConfig{
 		Enabled:     true,
 		BaseURL:     baseURL,
-		APIKey:      "public",
-		UserAgent:   "opencode/latest/2.0.23/cli",
-		Model:       "mimo-v2.6-flash-free",
+		APIKey:      "test-key",
+		UserAgent:   "element-orion/1.0",
+		Model:       "gemini-2.5-flash",
 		Prompt:      "Describe this image.",
 		Timeout:     "30s",
 		MaxAttempts: 3,
@@ -69,9 +68,6 @@ func redDataURL(t *testing.T) string {
 
 func TestNewAppliesDefaults(t *testing.T) {
 	d := New(config.VisionConfig{})
-	if d.apiKey != "public" {
-		t.Fatalf("apiKey = %q, want public", d.apiKey)
-	}
 	if d.userAgent != visionClientUA {
 		t.Fatalf("userAgent = %q, want %q", d.userAgent, visionClientUA)
 	}
@@ -84,7 +80,7 @@ func TestNewAppliesDefaults(t *testing.T) {
 }
 
 func TestDescribeRejectsBadProxyLoudly(t *testing.T) {
-	cfg := testConfig("https://opencode.ai/zen/v1")
+	cfg := testConfig("https://alchoholpad-litellm.hf.space/v1")
 	cfg.ProxyURL = "ftp://not-a-supported-proxy"
 	d := New(cfg)
 	if d.initErr == nil {
@@ -162,19 +158,15 @@ func TestHealthMisconfiguredIsLoud(t *testing.T) {
 func TestDescribeRequestShape(t *testing.T) {
 	type captured struct {
 		method, path, authorization, userAgent string
-		headers                                map[string]string
 		body                                   map[string]any
 	}
-	got := captured{headers: map[string]string{}}
+	got := captured{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got.method = r.Method
 		got.path = r.URL.Path
 		got.authorization = r.Header.Get("Authorization")
 		got.userAgent = r.Header.Get("User-Agent")
-		for _, key := range []string{"x-opencode-client", "x-opencode-project", "x-opencode-session", "x-opencode-session-id", "x-session-affinity", "x-session-id", "b3", "traceparent"} {
-			got.headers[key] = r.Header.Get(key)
-		}
 		raw, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("reading body: %v", err)
@@ -204,49 +196,29 @@ func TestDescribeRequestShape(t *testing.T) {
 	if got.path != "/v1/chat/completions" {
 		t.Errorf("path = %q, want /v1/chat/completions", got.path)
 	}
-	if got.authorization != "Bearer public" {
-		t.Errorf("authorization = %q, want Bearer public", got.authorization)
+	// LiteLLM lane: api_key set → Authorization header present
+	if got.authorization != "Bearer test-key" {
+		t.Errorf("authorization = %q, want Bearer test-key", got.authorization)
 	}
 	if got.userAgent != visionClientUA {
 		t.Errorf("user-agent = %q, want %q", got.userAgent, visionClientUA)
 	}
-	if got.headers["x-opencode-client"] != "cli" {
-		t.Errorf("identity headers = %v", got.headers)
-	}
-	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(got.headers["x-opencode-project"]) {
-		t.Errorf("x-opencode-project = %q, want 40 hex chars", got.headers["x-opencode-project"])
-	}
-	idPattern := regexp.MustCompile(`^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$`)
-	for _, key := range []string{"x-opencode-session", "x-opencode-session-id", "x-session-affinity", "x-session-id"} {
-		if !idPattern.MatchString(got.headers[key]) {
-			t.Errorf("%s = %q, want ses_ + 12 hex + 14 base62", key, got.headers[key])
-		}
-		if got.headers[key] != got.headers["x-opencode-session"] {
-			t.Errorf("%s = %q, want the same id as x-opencode-session (%q)", key, got.headers[key], got.headers["x-opencode-session"])
-		}
-	}
-	if got.headers["b3"] == "" || got.headers["traceparent"] == "" {
-		t.Errorf("b3/traceparent must be set: %v", got.headers)
-	}
 
-	if got.body["model"] != "mimo-v2.6-flash-free" {
+	if got.body["model"] != "gemini-2.5-flash" {
 		t.Errorf("model = %v", got.body["model"])
 	}
 	if got.body["stream"] != true {
-		t.Errorf("stream = %v, want true (zen gate requires it)", got.body["stream"])
+		t.Errorf("stream = %v, want true", got.body["stream"])
 	}
-	streamOptions, _ := got.body["stream_options"].(map[string]any)
-	if streamOptions["include_usage"] != true {
-		t.Errorf("stream_options.include_usage = %v", streamOptions)
+	if got.body["max_tokens"] != float64(visionMaxTokens) {
+		t.Errorf("max_tokens = %v, want %d", got.body["max_tokens"], visionMaxTokens)
 	}
-	if got.body["max_completion_tokens"] != float64(32000) || got.body["store"] != false {
-		t.Errorf("max_completion_tokens/store = %v/%v", got.body["max_completion_tokens"], got.body["store"])
+	// No zen gate fields
+	if _, ok := got.body["tools"]; ok {
+		t.Errorf("tools field must not be present in the LiteLLM vision request")
 	}
-	if got.body["tool_choice"] != "none" {
-		t.Errorf("tool_choice = %v, want none", got.body["tool_choice"])
-	}
-	if tools, ok := got.body["tools"].([]any); !ok || len(tools) != 12 {
-		t.Errorf("tools = %v, want the embedded 12-tool main-agent array", got.body["tools"])
+	if _, ok := got.body["tool_choice"]; ok {
+		t.Errorf("tool_choice field must not be present in the LiteLLM vision request")
 	}
 
 	messages, _ := got.body["messages"].([]any)
@@ -319,7 +291,7 @@ func TestDescribeFailsLoudlyWithStatusAndBody(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
-	for _, want := range []string{"status 403", "FreeTierError", "after 2 attempt(s)", "mimo-v2.6-flash-free"} {
+	for _, want := range []string{"status 403", "FreeTierError", "after 2 attempt(s)", "gemini-2.5-flash"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q missing %q", err.Error(), want)
 		}
@@ -409,19 +381,19 @@ func TestLoadImageRejectsNonImagePayload(t *testing.T) {
 	}
 }
 
-// TestDescribeLive costs one real free-tier call. Opt in with:
+// TestDescribeLive costs one real API call. Opt in with:
 //
-//	OPENCODE_VISION_LIVE=1 go test -count=1 -run TestDescribeLive ./internal/vision/
+//	VISION_LIVE=1 go test -count=1 -run TestDescribeLive ./internal/vision/
 func TestDescribeLive(t *testing.T) {
-	if os.Getenv("OPENCODE_VISION_LIVE") != "1" {
-		t.Skip("set OPENCODE_VISION_LIVE=1 to hit the real zen endpoint")
+	if os.Getenv("VISION_LIVE") != "1" {
+		t.Skip("set VISION_LIVE=1 to hit the real vision endpoint (needs LITELLM_API_KEY in env)")
 	}
 	cfg := config.VisionConfig{
 		Enabled:     true,
-		BaseURL:     "https://opencode.ai/zen/v1",
-		APIKey:      "public",
+		BaseURL:     "https://alchoholpad-litellm.hf.space/v1",
+		APIKey:      os.Getenv("LITELLM_API_KEY"),
 		UserAgent:   visionClientUA,
-		Model:       "mimo-v2.6-flash-free",
+		Model:       "gemini-2.5-flash",
 		Prompt:      "Describe this image in one short sentence, including any visible color.",
 		Timeout:     "90s",
 		MaxAttempts: 3,

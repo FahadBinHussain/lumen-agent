@@ -1,14 +1,13 @@
-// Package vision describes images over plain HTTP against the opencode zen
-// endpoint (https://opencode.ai/zen/v1) using the free-tier model
-// mimo-v2.6-flash-free. No opencode CLI is involved.
+// Package vision describes images over plain HTTP against an OpenAI-compatible
+// vision endpoint (e.g. the LiteLLM HF Space gateway). No special gate
+// protocol is required: the request is a standard chat completions POST with
+// an image_url content part, Bearer auth, and stream:true for the SSE reply.
 //
-// The zen free tier answers 403 FreeTierError ("can only be used from within
-// OpenCode") unless the request passes the gate (re-bisected 2026-10-16; see
-// internal/zengate for the full model): the body must carry a tools array
-// (the main-agent branch) and "stream": true, and the session header group
-// must carry a correctly generated opencode session id. System content is
-// free on this branch, so this package sends a short vision instruction
-// instead of the byte-exact prompt capture the old recipe needed.
+// Previously this package hit the opencode zen free tier (opencode.ai/zen/v1)
+// which required a zen gate envelope (zengate tools, opencode session headers).
+// That lane is retired — the gateway is now the LiteLLM proxy at
+// https://alchoholpad-litellm.hf.space/v1 using gemini-2.5-flash.
+// internal/zengate is kept as a library but no longer called from here.
 package vision
 
 import (
@@ -30,20 +29,16 @@ import (
 	"golang.org/x/net/proxy"
 
 	"element-orion/internal/config"
-	"element-orion/internal/zengate"
 )
 
-// visionSystemPrompt is the system message. The zen gate does not inspect
-// system content on the tools-bearing branch, so this is a plain instruction
-// rather than a byte-exact prompt capture.
+// visionSystemPrompt is the system message sent to the vision model.
 const visionSystemPrompt = "You are a vision assistant. For every request, reply with only the raw result the user asks for (for example a plain factual description of an image: what it shows, colors, and any visible text verbatim)."
 
-// Constant request shape pinned to the proven main-agent envelope (bisected
-// 2026-10-16 against captured opencode v2.0.23 traffic).
+// Defaults for the plain OpenAI-compatible vision lane.
 const (
-	visionMaxCompletionTokens = 32000
-	visionClientUA            = "opencode/latest/2.0.23/cli"
-	visionDefaultAPIKey       = "public"
+	visionMaxTokens     = 2048
+	visionClientUA      = "element-orion/1.0"
+	visionDefaultAPIKey = ""
 )
 
 const maxImageBytes = 25 << 20
@@ -88,9 +83,6 @@ func New(cfg config.VisionConfig) *Describer {
 		prompt:    strings.TrimSpace(cfg.Prompt),
 		timeout:   timeout,
 		attempts:  attempts,
-	}
-	if d.apiKey == "" {
-		d.apiKey = visionDefaultAPIKey
 	}
 	if d.userAgent == "" {
 		d.userAgent = visionClientUA
@@ -175,12 +167,12 @@ func (d *Describer) Health() Health {
 	}
 	if d.baseURL == "" {
 		h.Status = StatusMisconfigured
-		h.LastError = "vision.base_url is empty - set vision.base_url (default https://opencode.ai/zen/v1)"
+		h.LastError = "vision.base_url is empty - set vision.base_url (e.g. https://alchoholpad-litellm.hf.space/v1)"
 		return h
 	}
 	if d.model == "" {
 		h.Status = StatusMisconfigured
-		h.LastError = "vision.model is empty - set vision.model (default mimo-v2.6-flash-free)"
+		h.LastError = "vision.model is empty - set vision.model (e.g. gemini-2.5-flash)"
 		return h
 	}
 	d.mu.Lock()
@@ -212,10 +204,10 @@ func (d *Describer) describe(ctx context.Context, imageURL string) (string, erro
 		return "", fmt.Errorf("vision: cannot describe image: %w", d.initErr)
 	}
 	if d.baseURL == "" {
-		return "", errors.New("vision: base_url is empty - set vision.base_url (default https://opencode.ai/zen/v1)")
+		return "", errors.New("vision: base_url is empty - set vision.base_url (e.g. https://alchoholpad-litellm.hf.space/v1)")
 	}
 	if d.model == "" {
-		return "", errors.New("vision: model is empty - set vision.model (default mimo-v2.6-flash-free)")
+		return "", errors.New("vision: model is empty - set vision.model (e.g. gemini-2.5-flash)")
 	}
 
 	dataURL, err := loadImage(ctx, d.client, imageURL)
@@ -247,17 +239,14 @@ type chatMessage struct {
 	Content any    `json:"content"`
 }
 
+// chatRequestBody is the standard OpenAI-compatible chat completions request.
+// No zen gate fields (tools, tool_choice, opencode session headers) — this
+// goes straight to the LiteLLM proxy which forwards to the upstream model.
 type chatRequestBody struct {
-	Model         string          `json:"model"`
-	Messages      []chatMessage   `json:"messages"`
-	Tools         json.RawMessage `json:"tools"`
-	ToolChoice    string          `json:"tool_choice"`
-	Stream        bool            `json:"stream"`
-	MaxCompletion int             `json:"max_completion_tokens"`
-	Store         bool            `json:"store"`
-	StreamOptions struct {
-		IncludeUsage bool `json:"include_usage"`
-	} `json:"stream_options"`
+	Model     string        `json:"model"`
+	Messages  []chatMessage `json:"messages"`
+	Stream    bool          `json:"stream"`
+	MaxTokens int           `json:"max_tokens"`
 }
 
 func (d *Describer) runOnce(ctx context.Context, dataURL string) (string, error) {
@@ -273,20 +262,12 @@ func (d *Describer) runOnce(ctx context.Context, dataURL string) (string, error)
 				{"type": "image_url", "image_url": map[string]string{"url": dataURL}},
 			}},
 		},
-		Tools:         zengate.Tools(),
-		ToolChoice:    "none",
-		Stream:        true,
-		MaxCompletion: visionMaxCompletionTokens,
-		Store:         false,
+		Stream:    true,
+		MaxTokens: visionMaxTokens,
 	}
-	body.StreamOptions.IncludeUsage = true
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return "", fmt.Errorf("encoding request: %w", err)
-	}
-	sessionID, err := zengate.SessionID()
-	if err != nil {
-		return "", err
 	}
 
 	endpoint := d.baseURL + "/chat/completions"
@@ -294,20 +275,14 @@ func (d *Describer) runOnce(ctx context.Context, dataURL string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("building request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+d.apiKey)
+	if d.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+d.apiKey)
+	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "*/*")
-	req.Header.Set("User-Agent", d.userAgent)
-	req.Header.Set("x-opencode-client", "cli")
-	req.Header.Set("x-opencode-project", zengate.ProjectID())
-	session := "ses_" + sessionID
-	req.Header.Set("x-opencode-session", session)
-	req.Header.Set("x-opencode-session-id", session)
-	req.Header.Set("x-session-affinity", session)
-	req.Header.Set("x-session-id", session)
-	b3, traceparent := zengate.TraceHeaders()
-	req.Header.Set("b3", b3)
-	req.Header.Set("traceparent", traceparent)
+	req.Header.Set("Accept", "text/event-stream")
+	if d.userAgent != "" {
+		req.Header.Set("User-Agent", d.userAgent)
+	}
 
 	resp, err := d.client.Do(req)
 	if err != nil {

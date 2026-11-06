@@ -225,19 +225,17 @@ image_gen:
   output_dir: ./.element-orion/generated
 
 vision:
-  # Direct HTTP to opencode zen (no CLI - plain OpenAI-compatible POST, a few
-  # MB RSS, safe on the 512 MB free instance). The zen free tier 403s unless
-  # the request carries the main-agent shape (tools array + stream:true) and a
-  # generated opencode session id; that recipe lives in internal/vision +
-  # internal/zengate (bisection notes in their package docs).
-  # proxy_url: leave empty for direct egress; set socks5://127.0.0.1:1055
-  # (tailscale exit node = home IP) only if zen rejects datacenter IPs with
-  # FreeTierError.
+  # Plain OpenAI-compatible POST to the LiteLLM HF Space gateway — no zen
+  # gate protocol needed. gemini-2.5-flash supports vision (image_url content
+  # parts). api_key_env resolves to LITELLM_API_KEY in Render env.
+  # proxy_url: leave empty; set socks5://127.0.0.1:1055 only if the gateway
+  # is unreachable from the Render datacenter.
   enabled: true
-  base_url: https://opencode.ai/zen/v1
-  api_key: public
-  user_agent: "opencode/latest/2.0.23/cli"
-  model: mimo-v2.6-flash-free
+  base_url: https://alchoholpad-litellm.hf.space/v1
+  api_key: ""
+  api_key_env: LITELLM_API_KEY
+  user_agent: "element-orion/1.0"
+  model: gemini-2.5-flash
   prompt: "Describe this image in full detail for a chat companion: any visible text verbatim first, then the objects, people, layout, colors and context. Reply with the description only, no preamble."
   timeout: 120s
   max_attempts: 3

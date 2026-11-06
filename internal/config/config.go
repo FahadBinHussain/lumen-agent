@@ -433,16 +433,12 @@ type ImageGenConfig struct {
 	OutputDir string `yaml:"output_dir"`
 }
 
-// VisionConfig drives the image describer. Descriptions come from a direct
-// HTTP call to the opencode zen endpoint (no opencode CLI): the free-tier
-// model mimo-v2.6-flash-free answers only requests whose system prompt is a
-// verbatim official prompt prefix and that ask for stream:true (403
-// FreeTierError otherwise) - internal/vision owns that recipe. The text
-// description is then handed to the normal chat model.
+// VisionConfig drives the image describer. Descriptions come from a direct\r\n// HTTP call to any OpenAI-compatible vision endpoint (e.g. the LiteLLM HF\r\n// Space gateway at https://alchoholpad-litellm.hf.space/v1 with\r\n// gemini-2.5-flash). The text description is then handed to the normal chat\r\n// model. No special gate protocol is required.
 type VisionConfig struct {
 	Enabled     bool   `yaml:"enabled"`
 	BaseURL     string `yaml:"base_url"`
 	APIKey      string `yaml:"api_key"`
+	APIKeyEnv   string `yaml:"api_key_env"`
 	UserAgent   string `yaml:"user_agent"`
 	Model       string `yaml:"model"`
 	Prompt      string `yaml:"prompt"`
@@ -985,19 +981,21 @@ func (c *Config) resolvePaths() error {
 	}
 	c.Vision.BaseURL = strings.TrimRight(strings.TrimSpace(c.Vision.BaseURL), "/")
 	if c.Vision.BaseURL == "" {
-		c.Vision.BaseURL = "https://opencode.ai/zen/v1"
+		c.Vision.BaseURL = "https://alchoholpad-litellm.hf.space/v1"
 	}
 	c.Vision.APIKey = strings.TrimSpace(c.Vision.APIKey)
-	if c.Vision.APIKey == "" {
-		c.Vision.APIKey = "public"
+	if c.Vision.APIKey == "" && c.Vision.APIKeyEnv != "" {
+		if v := os.Getenv(strings.TrimSpace(c.Vision.APIKeyEnv)); v != "" {
+			c.Vision.APIKey = v
+		}
 	}
 	c.Vision.UserAgent = strings.TrimSpace(c.Vision.UserAgent)
 	if c.Vision.UserAgent == "" {
-		c.Vision.UserAgent = "opencode/1.18.25 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
+		c.Vision.UserAgent = "element-orion/1.0"
 	}
 	c.Vision.Model = strings.TrimSpace(c.Vision.Model)
 	if c.Vision.Model == "" {
-		c.Vision.Model = "mimo-v2.6-flash-free"
+		c.Vision.Model = "gemini-2.5-flash"
 	}
 	c.Vision.Prompt = strings.TrimSpace(c.Vision.Prompt)
 	if c.Vision.Prompt == "" {
