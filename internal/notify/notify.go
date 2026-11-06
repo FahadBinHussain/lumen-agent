@@ -53,10 +53,12 @@ type SteamUpdatesCfg struct {
 }
 
 type FreeGamesCfg struct {
-	Enabled    bool   `yaml:"enabled"`
-	Interval   string `yaml:"interval"`
-	ThreadIDs  string `yaml:"thread_ids"`
-	WebhookURL string `yaml:"webhook_url"`
+	Enabled      bool   `yaml:"enabled"`
+	Interval     string `yaml:"interval"`
+	ThreadIDs    string `yaml:"thread_ids"`
+	WebhookURL   string `yaml:"webhook_url"`
+	FeedURL      string `yaml:"feed_url"`
+	EpicPromoURL string `yaml:"epic_promo_url"`
 }
 
 type CrackWatchCfg struct {
@@ -134,6 +136,12 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	if cfg.FreeGames.Interval == "" {
 		cfg.FreeGames.Interval = "1m"
+	}
+	if cfg.FreeGames.FeedURL == "" {
+		cfg.FreeGames.FeedURL = "https://feed.eikowagenknecht.com/lootscraper.xml"
+	}
+	if cfg.FreeGames.EpicPromoURL == "" {
+		cfg.FreeGames.EpicPromoURL = "https://store-site-backend-static-ipv4.ak.epicgames.com/freeGamesPromotions?locale=en-US&country=US&allowCountries=US"
 	}
 	if cfg.CrackWatch.Interval == "" {
 		cfg.CrackWatch.Interval = "5m"

@@ -270,10 +270,12 @@ func buildNotify(cfg *config.Config) (*notify.Service, error) {
 			WebhookURL: n.SteamUpdates.WebhookURL,
 		},
 		FreeGames: notify.FreeGamesCfg{
-			Enabled:    n.FreeGames.Enabled,
-			Interval:   n.FreeGames.Interval,
-			ThreadIDs:  n.FreeGames.ThreadIDs,
-			WebhookURL: n.FreeGames.WebhookURL,
+			Enabled:      n.FreeGames.Enabled,
+			Interval:     n.FreeGames.Interval,
+			ThreadIDs:    n.FreeGames.ThreadIDs,
+			WebhookURL:   n.FreeGames.WebhookURL,
+			FeedURL:      n.FreeGames.FeedURL,
+			EpicPromoURL: n.FreeGames.EpicPromoURL,
 		},
 		CrackWatch: notify.CrackWatchCfg{
 			Enabled:    n.CrackWatch.Enabled,

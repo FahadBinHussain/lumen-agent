@@ -95,6 +95,26 @@ func (s *Service) dbCrackTitles(ctx context.Context) (map[string]bool, error) {
 	return seen, rows.Err()
 }
 
+func (s *Service) dbGameTitles(ctx context.Context) (map[string]bool, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("no dedupe db")
+	}
+	rows, err := s.db.pool.Query(ctx, `SELECT title FROM public.game_seen`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	for rows.Next() {
+		var title string
+		if err := rows.Scan(&title); err != nil {
+			return nil, err
+		}
+		seen[normalizeGameTitle(title)] = true
+	}
+	return seen, rows.Err()
+}
+
 func (s *Service) dbHasSeenSource(ctx context.Context, source string) (bool, error) {
 	if s.db == nil {
 		return false, fmt.Errorf("no dedupe db")

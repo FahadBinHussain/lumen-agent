@@ -304,10 +304,12 @@ type NotifySteamCfg struct {
 }
 
 type NotifyFreeGames struct {
-	Enabled    bool   `yaml:"enabled"`
-	Interval   string `yaml:"interval"`
-	ThreadIDs  string `yaml:"thread_ids"`
-	WebhookURL string `yaml:"webhook_url"`
+	Enabled      bool   `yaml:"enabled"`
+	Interval     string `yaml:"interval"`
+	ThreadIDs    string `yaml:"thread_ids"`
+	WebhookURL   string `yaml:"webhook_url"`
+	FeedURL      string `yaml:"feed_url"`
+	EpicPromoURL string `yaml:"epic_promo_url"`
 }
 
 // NotifyCrackWatch polls the r/CrackWatch RSS feed for scene releases

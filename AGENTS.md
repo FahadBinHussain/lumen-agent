@@ -1646,6 +1646,14 @@ fake outbox pairs through the real bnp route:
   - Silent turns (`<NO_REPLY>`) discard without errors or stray messages on both Discord (`anim.discard()`, no thinking anim created for `promptKindReaction`) and Messenger (skips `thinking.` message upfront on `[reaction]` turns; handles `<NO_REPLY>` cleanly without empty reply error).
   - Reaction events and decisions persist into conversation history so the model organically remembers user reactions when asked later.
 
+## Direct Epic Games Store promotions polling (2026-11-06)
+
+- Problem: Upstream lootscraper RSS feed (`https://feed.eikowagenknecht.com/lootscraper.xml`) frequently lags or misses weekly Epic Games Store giveaways (e.g., missed *Flotsam* on 2026-11-05 because its Epic scraper stalled on 2026-10-29).
+- Solution: Added direct polling of Epic Games Store official catalog promotions API (`https://store-site-backend-static-ipv4.ak.epicgames.com/freeGamesPromotions`) in `internal/notify/freegames.go`.
+- Deduplication: Both guid (`epic:<id>`) and normalized title (`normalizeGameTitle`) dedupe against Neon `public.game_seen` so entries seen under alternative URLs or titles are never re-sent.
+- Filter: Lootscraper feed parser skips Epic Games items so direct Epic official API is the single authoritative source for Epic giveaways, while lootscraper continues providing Steam, GOG, Humble, itch.io, etc.
+- Config: Added `feed_url` and `epic_promo_url` to `NotifyFreeGames` / `FreeGamesCfg` (with defaults) and wired in `cmd/element-orion/main.go`.
+
 Upstream is `PUT-Request/Element-Orion` (canonical as of 2026-09-04; the old
 path `eli32-vlc/lumen-agent` redirects — the author moved all their projects
 into the new `PUT Request` org that day and restored the original
