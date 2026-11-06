@@ -14,17 +14,22 @@ app:
 
 llm:
   # Active transport (2026-11-06): LiteLLM gateway on HF Space (`api_type: openai`)
-  # routing to groq/gpt-oss-120b (Groq free tier with ample headroom; deepseek
-  # intern-ai quota exhausted).
+  # routing to gemini-2.5-flash (1M TPM headroom, native tool calling & vision,
+  # no 6k-TPM starvation like Groq).
   api_type: openai
   base_url: https://alchoholpad-litellm.hf.space/v1
   api_key: ""
   api_key_env: LITELLM_API_KEY
-  model: gpt-oss-120b
+  model: gemini-2.5-flash
   models:
+    - name: gemini-2.5-flash
+      model: gemini-2.5-flash
+      enabled: true
+      base_url: https://alchoholpad-litellm.hf.space/v1
+      api_key_env: LITELLM_API_KEY
     - name: gpt-oss-120b
       model: groq/gpt-oss-120b
-      enabled: true
+      enabled: false
       base_url: https://alchoholpad-litellm.hf.space/v1
       api_key_env: LITELLM_API_KEY
     - name: deepseek-v4.1-flash

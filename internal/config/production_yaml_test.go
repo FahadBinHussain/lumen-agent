@@ -34,7 +34,7 @@ func TestProductionYamlValidates(t *testing.T) {
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("validate production.yaml: %v", err)
 	}
-	if got := cfg.ResolveLLMModel(); got != "groq/gpt-oss-120b" {
-		t.Errorf("ResolveLLMModel = %q, want groq/gpt-oss-120b", got)
+	if got := cfg.ResolveLLMModel(); got != "gemini-2.5-flash" {
+		t.Errorf("ResolveLLMModel = %q, want gemini-2.5-flash", got)
 	}
 }
