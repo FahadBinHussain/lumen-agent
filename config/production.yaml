@@ -13,17 +13,23 @@ app:
     preserve_recent_messages: 16
 
 llm:
-  # Active transport (2026-10-26): LiteLLM gateway on HF Space (`api_type: openai`)
-  # routing to deepseek-v4.1-flash-1017 (same lane as dailybnp).
+  # Active transport (2026-11-06): LiteLLM gateway on HF Space (`api_type: openai`)
+  # routing to groq/gpt-oss-120b (Groq free tier with ample headroom; deepseek
+  # intern-ai quota exhausted).
   api_type: openai
   base_url: https://alchoholpad-litellm.hf.space/v1
   api_key: ""
   api_key_env: LITELLM_API_KEY
-  model: deepseek-v4.1-flash
+  model: gpt-oss-120b
   models:
+    - name: gpt-oss-120b
+      model: groq/gpt-oss-120b
+      enabled: true
+      base_url: https://alchoholpad-litellm.hf.space/v1
+      api_key_env: LITELLM_API_KEY
     - name: deepseek-v4.1-flash
       model: deepseek-v4.1-flash-1017
-      enabled: true
+      enabled: false
       base_url: https://alchoholpad-litellm.hf.space/v1
       api_key_env: LITELLM_API_KEY
     - name: mimo

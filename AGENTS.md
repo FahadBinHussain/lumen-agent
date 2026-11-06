@@ -56,7 +56,7 @@
   LiteLLM gateway (`https://alchoholpad-litellm.hf.space/v1`, key in Render env `LITELLM_API_KEY`,
   `api_type: openai`, `reasoning_effort: low`) since 2026-10-26 — mirroring dailybnp's live lane.
   The opencode zen free lane (`mimo` / `mimo-v2.6-flash-free`) suffered rate-limiting/exhaustion
-  leaving chat turns stuck at "thinking.". Kept in catalog as disabled fallback.
+  The prior deepseek-v4.1-flash-1017 lane was exhausted/in cooldown on intern-ai quota.
 - Vision describer (2026-11-06): switched from opencode zen free tier (opencode.ai/zen/v1, mimo-v2.6-flash-free
   with zengate envelope) to the LiteLLM gateway (https://alchoholpad-litellm.hf.space/v1, gemini-2.5-flash,
   key in Render env LITELLM_API_KEY). Removed zengate envelope requirement from internal/vision/vision.go

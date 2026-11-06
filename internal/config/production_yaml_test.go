@@ -34,7 +34,7 @@ func TestProductionYamlValidates(t *testing.T) {
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("validate production.yaml: %v", err)
 	}
-	if got := cfg.ResolveLLMModel(); got != "deepseek-v4.1-flash-1017" {
-		t.Errorf("ResolveLLMModel = %q, want deepseek-v4.1-flash-1017", got)
+	if got := cfg.ResolveLLMModel(); got != "groq/gpt-oss-120b" {
+		t.Errorf("ResolveLLMModel = %q, want groq/gpt-oss-120b", got)
 	}
 }
