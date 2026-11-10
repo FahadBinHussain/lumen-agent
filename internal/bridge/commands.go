@@ -313,6 +313,8 @@ func (s *Service) commandStatus(platform, threadID string) string {
 	if s.messenger != nil {
 		if s.messenger.IsConnected() {
 			msg = "connected"
+		} else if authErr := s.messenger.AuthError(); authErr != "" {
+			msg = "halted (" + authErr + ")"
 		} else {
 			msg = "disconnected"
 		}

@@ -174,6 +174,9 @@ func (s *Service) checkHealth(name string, st *healthState, alive bool, deadAfte
 		if name == "whatsapp" && s.whatsapp != nil && !s.whatsapp.IsLoggedIn() {
 			return name + " is logged out (needs phone re-pair via QR - not auto-recovering)"
 		}
+		if name == "messenger" && s.messenger != nil && s.messenger.IsAuthHalted() {
+			return name + " is logged out / halted (" + s.messenger.AuthError() + " — auto-reconnect stopped; check Meta account before uploading fresh cookies)"
+		}
 		if name == "whatsapp" {
 			if diag := s.diagnoseWhatsAppDead(); diag != "" {
 				log.Printf("health-watch: whatsapp dead diagnosis: %s", diag)

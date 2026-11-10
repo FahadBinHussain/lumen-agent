@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"reflect"
 	"runtime/debug"
@@ -16,9 +17,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/coder/websocket"
 	"github.com/rs/zerolog"
 
 	"go.mau.fi/mautrix-meta/pkg/messagix"
+	"go.mau.fi/mautrix-meta/pkg/messagix/dgw"
 	"go.mau.fi/mautrix-meta/pkg/messagix/httpclient"
 	"go.mau.fi/mautrix-meta/pkg/messagix/socket"
 	"go.mau.fi/mautrix-meta/pkg/messagix/table"
@@ -89,6 +92,17 @@ type Client struct {
 
 	connMu    sync.Mutex
 	connected bool
+	connEpoch atomic.Int64 // increments on each ConnectedEvent / ReconnectedEvent
+
+	// authMu guards terminal credential/account halts (DGW 4003 Unauthorized,
+	// Meta checkpoint/suspended/challenge/consent/1357053, invalid cookies).
+	// When non-empty, all auto-reconnects and outbound tasks stop loudly until
+	// fresh cookies are uploaded via ReloadCookies.
+	authMu    sync.RWMutex
+	authError string
+
+	forceReconnMu   sync.Mutex
+	lastForceReconn time.Time
 
 	// Inbound dispatch (2026-10-09): messagix v0.2609 feeds every *table.LSTable
 	// event through ONE frame-handler goroutine (dgw readLoop -> incoming chan
@@ -102,21 +116,27 @@ type Client struct {
 	dispatchCond *sync.Cond
 	dispatchQ    []dispatchItem
 
-	// auto-reconnect (2026-10-04): a messagix permanent error used to be
-	// terminal - the client logged it and gave up forever, so a single
-	// refused reconnect (connection code 24) left messenger dead until an
-	// external refresh (the 2026-10-03 17h outage). armReconnect keeps a
-	// full reload+relog cycle going until the socket is back.
+	// auto-reconnect: only runs for non-terminal transient failures; terminal
+	// credential/account halts stop immediately so Meta is never hammered with
+	// repeated /messages or handshake attempts on flagged cookies.
 	reconnMu        sync.Mutex
 	reconnScheduled bool
-	reconnectDelay  time.Duration // first attempt after a permanent error
-	retryDelay      time.Duration // backoff between failed attempts
+	reconnTimer     *time.Timer
+	reconnFailures  int
+	reconnectDelay  time.Duration // first attempt after a non-auth permanent error
+	retryDelay      time.Duration // base backoff between non-terminal failed attempts
 	reloadFn        func(context.Context) error
 	reloadMu        sync.Mutex // serializes ReloadCookies (external upload vs auto-reconnect)
-	keepaliveOnce   sync.Once  // one keepalive ticker across reloads
 }
 
-// IsConnected reports whether the MQTT socket is currently up (Ready or
+var (
+	errInvalidCookies     = errors.New("invalid or missing cookies")
+	maxReconnectBackoff   = 30 * time.Minute
+	minForceReconnectGap  = 30 * time.Second
+	sendEpochPollInterval = 100 * time.Millisecond
+)
+
+// IsConnected reports whether the DGW socket is currently up (Connected or
 // Reconnected seen, no socket error since). Used by the bridge health watch.
 func (c *Client) IsConnected() bool {
 	c.connMu.Lock()
@@ -127,7 +147,98 @@ func (c *Client) IsConnected() bool {
 func (c *Client) setConnected(v bool) {
 	c.connMu.Lock()
 	c.connected = v
+	if v {
+		c.connEpoch.Add(1)
+	}
 	c.connMu.Unlock()
+}
+
+func (c *Client) connectedEpoch() int64 {
+	return c.connEpoch.Load()
+}
+
+// AuthError returns the terminal credential/account error that halted
+// Messenger (4003 Unauthorized, checkpoint, suspension, invalid cookies), or ""
+// when Messenger is not halted.
+func (c *Client) AuthError() string {
+	if c == nil {
+		return ""
+	}
+	c.authMu.RLock()
+	defer c.authMu.RUnlock()
+	return c.authError
+}
+
+// IsAuthHalted reports whether auto-reconnect and sends are halted for a
+// terminal credential or Meta account error.
+func (c *Client) IsAuthHalted() bool {
+	return c.AuthError() != ""
+}
+
+func (c *Client) haltAuth(reason string) {
+	c.authMu.Lock()
+	c.authError = reason
+	c.authMu.Unlock()
+	c.cancelPendingReconnect()
+}
+
+func (c *Client) clearAuthHalt() {
+	c.authMu.Lock()
+	c.authError = ""
+	c.authMu.Unlock()
+}
+
+func (c *Client) cancelPendingReconnect() {
+	c.reconnMu.Lock()
+	c.reconnScheduled = false
+	if c.reconnTimer != nil {
+		c.reconnTimer.Stop()
+		c.reconnTimer = nil
+	}
+	c.reconnFailures = 0
+	c.reconnMu.Unlock()
+}
+
+func (c *Client) allowForceReconnect() bool {
+	c.forceReconnMu.Lock()
+	defer c.forceReconnMu.Unlock()
+	if !c.lastForceReconn.IsZero() && time.Since(c.lastForceReconn) < minForceReconnectGap {
+		return false
+	}
+	c.lastForceReconn = time.Now()
+	return true
+}
+
+func isTerminalAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if websocket.CloseStatus(err) == dgw.CloseStatusUnauthorized {
+		return true
+	}
+	if httpclient.IsPermanentRequestError(err) {
+		return true
+	}
+	if errors.Is(err, errInvalidCookies) || errors.Is(err, os.ErrNotExist) || errors.Is(err, httpclient.ErrVersionIDNotFound) {
+		return true
+	}
+	var lsErr *types.ErrorResponse
+	if errors.As(err, &lsErr) && lsErr.ErrorCode == 1357053 {
+		return true
+	}
+	return false
+}
+
+func isAlreadyClosedConnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, dgw.ErrSocketNotOpen) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "closed network connection") ||
+		strings.Contains(msg, "socket is not open")
 }
 
 // ParsePlatform maps config strings ("messenger", "facebook", or empty for
@@ -239,9 +350,19 @@ func (c *Client) Login(ctx context.Context) (int64, string, error) {
 	}
 	userInfo, _, err := mc.LoadMessagesPage(ctx)
 	if err != nil {
+		if isTerminalAuthError(err) {
+			c.haltAuth(err.Error())
+			log.Printf("messenger: AUTH HALTED on login (platform=%s): %v — auto-reconnect disabled until fresh cookies are uploaded", c.platform, err)
+		}
 		return 0, "", fmt.Errorf("load messages page: %w", err)
 	}
 	uid := userInfo.GetFBID()
+	if uid == 0 {
+		err := fmt.Errorf("load messages page: %w", httpclient.ErrUserIDIsZero)
+		c.haltAuth(err.Error())
+		return 0, "", err
+	}
+	c.clearAuthHalt()
 	c.uid.Store(uid)
 	return uid, userInfo.GetName(), nil
 }
@@ -251,7 +372,7 @@ func (c *Client) Start(ctx context.Context) error {
 	if mc == nil {
 		return fmt.Errorf("messenger client not initialized (upload fresh cookies)")
 	}
-	mc.SetEventHandler(c.makeEventHandler(ctx, mc))
+	mc.SetEventHandler(c.makeEventHandler(mc))
 	go func() {
 		err := mc.Connect(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
@@ -267,30 +388,49 @@ func (c *Client) ReloadCookies(ctx context.Context) error {
 	if err := validatePlatform(c.platform); err != nil {
 		return err
 	}
+	c.clearAuthHalt()
+	c.cancelPendingReconnect()
 	c.setConnected(false)
+
 	cookieMap, err := cookies.LoadFromFile(c.cookiesPath)
 	if err != nil {
-		return fmt.Errorf("load cookies: %w", err)
+		wrapped := fmt.Errorf("load cookies: %w (%w)", errInvalidCookies, err)
+		c.haltAuth(wrapped.Error())
+		c.setClient(nil)
+		return wrapped
 	}
 
 	cc := cookies.ToMessagix(cookieMap, c.platform)
 	if missing := cookies.GetMissing(cc); len(missing) > 0 {
-		return fmt.Errorf("missing cookies: %v", missing)
+		err := fmt.Errorf("%w: missing %v", errInvalidCookies, missing)
+		c.haltAuth(err.Error())
+		c.setClient(nil)
+		return err
 	}
 
 	if old := c.currentClient(); old != nil {
 		old.Disconnect()
 	}
 	c.uid.Store(0)
+	c.setClient(nil)
 	logger := zerolog.New(os.Stderr).With().Str("component", "messagix").Timestamp().Logger()
 	newClient := messagix.NewClient(cc, logger, &messagix.Config{})
-	c.setClient(newClient)
 
 	userInfo, _, err := newClient.LoadMessagesPage(ctx)
 	if err != nil {
+		if isTerminalAuthError(err) {
+			c.haltAuth(err.Error())
+			log.Printf("messenger: AUTH HALTED during reload (platform=%s): %v — auto-reconnect disabled until fresh cookies are uploaded", c.platform, err)
+		}
 		return fmt.Errorf("load messages page: %w", err)
 	}
 	uid := userInfo.GetFBID()
+	if uid == 0 {
+		err := fmt.Errorf("load messages page: %w", httpclient.ErrUserIDIsZero)
+		c.haltAuth(err.Error())
+		return err
+	}
+	c.setClient(newClient)
 	c.uid.Store(uid)
 	log.Printf("messenger: cookies reloaded (platform=%s), logged in as %s (%d)", c.platform, userInfo.GetName(), uid)
 
@@ -298,95 +438,113 @@ func (c *Client) ReloadCookies(ctx context.Context) error {
 }
 
 func (c *Client) Disconnect() {
+	c.cancelPendingReconnect()
 	if mc := c.currentClient(); mc != nil {
 		mc.Disconnect()
 	}
 }
 
 // armReconnect schedules one auto-reconnect attempt unless one is already
-// pending or the socket is back up. The timer path (attemptReconnect) is the
-// only thing that clears the pending flag, so events + keepalive ticks can
-// call this freely without stacking attempts.
+// pending, the socket is back up, or auth is halted on a terminal error.
 func (c *Client) armReconnect(reason string, delay time.Duration) {
+	if c.IsAuthHalted() {
+		log.Printf("messenger: auto-reconnect suppressed (%s): auth halted (%s)", reason, c.AuthError())
+		return
+	}
 	c.reconnMu.Lock()
 	if c.reconnScheduled || c.IsConnected() {
 		c.reconnMu.Unlock()
 		return
 	}
 	c.reconnScheduled = true
+	c.reconnTimer = time.AfterFunc(delay, c.attemptReconnect)
 	c.reconnMu.Unlock()
 	log.Printf("messenger: auto-reconnect armed in %s (%s)", delay, reason)
-	time.AfterFunc(delay, c.attemptReconnect)
 }
 
-// attemptReconnect does a full reload+relog cycle (same path as the cookie
-// upload endpoint, but with the cookies already on disk) and re-arms itself
-// until the socket is actually up. Never gives up: a refused reconnect used
-// to be terminal (17h dead, 2026-10-03), now it retries every retryDelay
-// while the external cookie watchdog can still push fresh cookies on top.
+func (c *Client) nextReconnectBackoff(failures int) time.Duration {
+	base := c.retryDelay
+	if base <= 0 {
+		base = 5 * time.Minute
+	}
+	if failures <= 1 {
+		return base
+	}
+	shift := failures - 1
+	if shift > 3 {
+		shift = 3
+	}
+	next := base << shift
+	if base <= maxReconnectBackoff && next > maxReconnectBackoff {
+		next = maxReconnectBackoff
+	}
+	return next
+}
+
+// attemptReconnect runs a single reload+relog cycle for non-terminal errors
+// and backs off exponentially. Any terminal credential or Meta account error
+// (4003 Unauthorized, checkpoint, suspension, invalidated token, 1357053)
+// immediately halts auto-reconnect so Meta is never hammered with dead cookies.
 func (c *Client) attemptReconnect() {
 	c.reconnMu.Lock()
 	c.reconnScheduled = false
+	c.reconnTimer = nil
 	c.reconnMu.Unlock()
-	if c.IsConnected() {
+	if c.IsConnected() || c.IsAuthHalted() {
 		return
 	}
 	log.Printf("messenger: auto-reconnect: reloading cookies and relogging")
 	// Background ctx on purpose: must not be canceled when the caller that
 	// triggered the event returns (same trap as the old cookie-upload bug).
 	if err := c.reloadFn(context.Background()); err != nil {
-		log.Printf("messenger: auto-reconnect reload failed: %v (retrying in %s)", err, c.retryDelay)
-		c.armReconnect("reload failed", c.retryDelay)
+		if isTerminalAuthError(err) || c.IsAuthHalted() {
+			if !c.IsAuthHalted() {
+				c.haltAuth(err.Error())
+			}
+			log.Printf("messenger: AUTH HALTED — auto-reconnect stopping permanently on terminal error: %v", err)
+			return
+		}
+		c.reconnMu.Lock()
+		c.reconnFailures++
+		nextDelay := c.nextReconnectBackoff(c.reconnFailures)
+		c.reconnMu.Unlock()
+		log.Printf("messenger: auto-reconnect reload failed: %v (retrying in %s)", err, nextDelay)
+		c.armReconnect("reload failed", nextDelay)
 		return
 	}
-	// the MQTT connect after a reload is async - give it a moment before
+	// the DGW connect after a reload is async - give it a moment before
 	// deciding the reload didn't actually help.
 	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) && !c.IsConnected() {
+	for time.Now().Before(deadline) && !c.IsConnected() && !c.IsAuthHalted() {
 		time.Sleep(time.Second)
 	}
+	if c.IsAuthHalted() {
+		log.Printf("messenger: auto-reconnect aborted — auth halted during handshake (%s)", c.AuthError())
+		return
+	}
 	if c.IsConnected() {
+		c.reconnMu.Lock()
+		c.reconnFailures = 0
+		c.reconnMu.Unlock()
 		log.Printf("messenger: auto-reconnect succeeded")
 		return
 	}
-	log.Printf("messenger: auto-reconnect relogged but socket still down (retrying in %s)", c.retryDelay)
-	c.armReconnect("socket still down after relog", c.retryDelay)
+	c.reconnMu.Lock()
+	c.reconnFailures++
+	nextDelay := c.nextReconnectBackoff(c.reconnFailures)
+	c.reconnMu.Unlock()
+	log.Printf("messenger: auto-reconnect relogged but socket still down (retrying in %s)", nextDelay)
+	c.armReconnect("socket still down after relog", nextDelay)
 }
 
-func (c *Client) makeEventHandler(ctx context.Context, mc *messagix.Client) func(context.Context, any) {
+func (c *Client) makeEventHandler(mc *messagix.Client) func(context.Context, any) {
 	return func(evtCtx context.Context, evt any) {
 		switch e := evt.(type) {
 		case *messagix.ConnectedEvent:
+			c.clearAuthHalt()
+			c.cancelPendingReconnect()
 			c.setConnected(true)
-			log.Printf("messenger: MQTT connected")
-			c.keepaliveOnce.Do(func() {
-				go func() {
-					ticker := time.NewTicker(60 * time.Second)
-					defer ticker.Stop()
-					for {
-						select {
-						case <-ctx.Done():
-							return
-						case <-ticker.C:
-							if cl := c.currentClient(); cl != nil {
-								_, err := cl.ExecuteTasks(ctx, &socket.ReportAppStateTask{
-									AppState:  table.FOREGROUND,
-									RequestID: fmt.Sprintf("keepalive-%d", time.Now().UnixMilli()),
-								})
-								if err != nil {
-									log.Printf("messenger: foreground keepalive failed: %v", err)
-								}
-							}
-							// safety net: if the socket is still down when the
-							// keepalive fires, arm the full reconnect (covers
-							// deaths that produced no permanent-error event).
-							if !c.IsConnected() {
-								c.armReconnect("keepalive sees disconnected", c.retryDelay)
-							}
-						}
-					}
-				}()
-			})
+			log.Printf("messenger: DGW connected")
 
 		case *table.LSTable:
 			// Arrival observability (2026-10-08): no incoming message ever
@@ -514,11 +672,18 @@ func (c *Client) makeEventHandler(ctx context.Context, mc *messagix.Client) func
 		case *messagix.PermanentErrorEvent:
 			c.setConnected(false)
 			log.Printf("messenger: permanent error: %v", e.Err)
-			c.armReconnect("permanent error", c.reconnectDelay)
+			if websocket.CloseStatus(e.Err) == dgw.CloseStatusUnauthorized || isTerminalAuthError(e.Err) {
+				c.haltAuth(e.Err.Error())
+				log.Printf("messenger: AUTH HALTED (%v) — auto-reconnect stopped to prevent Meta ban/lock escalation; upload fresh cookies after resolving account state", e.Err)
+			} else {
+				c.armReconnect("permanent error", c.reconnectDelay)
+			}
 
 		case *messagix.ReconnectedEvent:
+			c.clearAuthHalt()
+			c.cancelPendingReconnect()
 			c.setConnected(true)
-			log.Printf("messenger: MQTT reconnected")
+			log.Printf("messenger: DGW reconnected")
 
 		default:
 			// Never swallow silently: an unknown event type means inbound
@@ -564,6 +729,9 @@ func (c *Client) Threads() []ThreadInfo {
 // NudgeThreadSync asks the server to push inbox thread metadata (sync group 1
 // = full thread info, matching mautrix-meta's connector).
 func (c *Client) NudgeThreadSync(ctx context.Context) {
+	if c == nil || c.IsAuthHalted() {
+		return
+	}
 	mc := c.currentClient()
 	if mc == nil || (c.UID() == 0 && !c.IsConnected()) {
 		return
@@ -820,6 +988,9 @@ func retryLSTable(
 		if ctx.Err() != nil {
 			return nil, err
 		}
+		if isTerminalAuthError(err) {
+			return nil, fmt.Errorf("terminal auth error (not retrying): %w", err)
+		}
 		lastErr = err
 		if attempt >= len(sendRetryBackoffs) {
 			return nil, fmt.Errorf("gave up after %d attempts: %w", attempt+1, lastErr)
@@ -833,6 +1004,9 @@ func retryLSTable(
 		case <-time.After(sendReconnectGrace):
 		}
 		if werr := waitReady(); werr != nil {
+			if isTerminalAuthError(werr) {
+				return nil, fmt.Errorf("terminal auth error during retry wait: %w", werr)
+			}
 			log.Printf("messenger: %s: socket not ready: %v — backing off %v", what, werr, sendRetryBackoffs[attempt])
 			select {
 			case <-ctx.Done():
@@ -845,18 +1019,73 @@ func retryLSTable(
 	}
 }
 
+func (c *Client) waitForSocketReady(ctx context.Context, timeout time.Duration, requireMinEpoch int64, forcedReconnect bool, lastErr error) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if authErr := c.AuthError(); authErr != "" {
+			return fmt.Errorf("%w: %s", errInvalidCookies, authErr)
+		}
+		mc := c.currentClient()
+		if mc == nil {
+			return fmt.Errorf("messenger client not initialized (upload fresh cookies)")
+		}
+		if c.IsConnected() && mc.IsConnected() && c.connectedEpoch() >= requireMinEpoch {
+			rem := time.Until(deadline)
+			if rem <= 0 {
+				rem = time.Millisecond
+			}
+			return mc.WaitUntilCanSendMessages(ctx, rem)
+		}
+		rem := time.Until(deadline)
+		if rem <= 0 {
+			if forcedReconnect {
+				return fmt.Errorf("timeout waiting for fresh reconnect after %v (last err: %v)", timeout, lastErr)
+			}
+			return fmt.Errorf("timeout waiting for socket readiness after %v", timeout)
+		}
+		sleep := sendEpochPollInterval
+		if sleep > rem {
+			sleep = rem
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(sleep):
+		}
+	}
+}
+
 // executeRetry is the messagix-task wrapper around retryLSTable: one task,
-// retried across a forced socket reconnect. Fails immediately when not logged in
-// or initialized so unauthenticated boots don't spin reconnect waits per attempt.
+// retried safely with at most one cooldown-gated ForceReconnect and real epoch
+// waiting so retries cannot slam Meta's WebSocket with rapid open/close bursts.
 func (c *Client) executeRetry(ctx context.Context, what string, task socket.Task) (*table.LSTable, error) {
-	if c == nil || c.currentClient() == nil {
+	if c == nil {
+		return nil, fmt.Errorf("messenger client not initialized (upload fresh cookies)")
+	}
+	if authErr := c.AuthError(); authErr != "" {
+		return nil, fmt.Errorf("messenger auth halted (%s) — upload fresh cookies after resolving", authErr)
+	}
+	if c.currentClient() == nil {
 		return nil, fmt.Errorf("messenger client not initialized (upload fresh cookies)")
 	}
 	if c.UID() == 0 && !c.IsConnected() {
 		return nil, fmt.Errorf("messenger not logged in (upload fresh cookies)")
 	}
+
+	var nudgeMu sync.Mutex
+	nudged := false
+	forcedReconnectThisCall := false
+	var targetEpoch int64
+	var nudgeErr error
+
 	return retryLSTable(ctx, what,
 		func() (*table.LSTable, error) {
+			if authErr := c.AuthError(); authErr != "" {
+				return nil, fmt.Errorf("%w: %s", errInvalidCookies, authErr)
+			}
 			mc := c.currentClient()
 			if mc == nil {
 				return nil, fmt.Errorf("messenger client not initialized (upload fresh cookies)")
@@ -864,16 +1093,39 @@ func (c *Client) executeRetry(ctx context.Context, what string, task socket.Task
 			return mc.ExecuteTasks(ctx, task)
 		},
 		func(err error) {
-			if mc := c.currentClient(); mc != nil {
-				mc.ForceReconnect()
+			nudgeMu.Lock()
+			defer nudgeMu.Unlock()
+			nudgeErr = err
+			epochBefore := c.connectedEpoch()
+			targetEpoch = epochBefore
+			forcedReconnectThisCall = false
+
+			mc := c.currentClient()
+			if mc == nil || c.IsAuthHalted() {
+				return
 			}
+			if nudged || isAlreadyClosedConnErr(err) || !mc.IsConnected() || !c.allowForceReconnect() {
+				log.Printf("messenger: %s: skipping ForceReconnect (nudged=%v, socket_up=%v, err=%v)",
+					what, nudged, mc.IsConnected(), err)
+				return
+			}
+			nudged = true
+			forcedReconnectThisCall = true
+			targetEpoch = epochBefore + 1
+			log.Printf("messenger: %s: forcing single socket reconnect (epoch=%d)", what, epochBefore)
+			mc.ForceReconnect()
 		},
 		func() error {
-			mc := c.currentClient()
-			if mc == nil {
-				return fmt.Errorf("messenger client not initialized (upload fresh cookies)")
+			nudgeMu.Lock()
+			forced := forcedReconnectThisCall
+			reqEpoch := targetEpoch
+			lastErr := nudgeErr
+			nudgeMu.Unlock()
+
+			if !forced && c.IsConnected() {
+				return fmt.Errorf("reconnect cooldown active; backing off before retry")
 			}
-			return mc.WaitUntilCanSendMessages(ctx, sendReadyTimeout)
+			return c.waitForSocketReady(ctx, sendReadyTimeout, reqEpoch, forced, lastErr)
 		})
 }
 
@@ -1015,6 +1267,12 @@ func (c *Client) SendReaction(ctx context.Context, threadID int64, messageID str
 }
 
 func (c *Client) SendImage(ctx context.Context, threadID int64, imageData []byte, mimeType string) error {
+	if c == nil {
+		return fmt.Errorf("messenger client not initialized (upload fresh cookies)")
+	}
+	if authErr := c.AuthError(); authErr != "" {
+		return fmt.Errorf("messenger auth halted (%s) — upload fresh cookies after resolving", authErr)
+	}
 	mc := c.currentClient()
 	if mc == nil {
 		return fmt.Errorf("messenger client not initialized (upload fresh cookies)")
@@ -1028,6 +1286,10 @@ func (c *Client) SendImage(ctx context.Context, threadID int64, imageData []byte
 		MediaData: imageData,
 	})
 	if err != nil {
+		if isTerminalAuthError(err) {
+			c.haltAuth(err.Error())
+			return fmt.Errorf("messenger auth halted (%s): %w", err.Error(), err)
+		}
 		c.SendText(ctx, threadID, "[image upload failed]")
 		return err
 	}

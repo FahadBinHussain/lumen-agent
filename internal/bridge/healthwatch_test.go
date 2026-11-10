@@ -1,10 +1,14 @@
 package bridge
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"element-orion/internal/discordbot"
+	"element-orion/internal/messenger"
+	"go.mau.fi/mautrix-meta/pkg/messagix/types"
 )
 
 func TestCheckHealthTransitions(t *testing.T) {
@@ -148,5 +152,32 @@ func TestPlatformAliveDiscord(t *testing.T) {
 	s.SetDiscord(&fakeDiscordHealthClient{connected: true})
 	if !s.platformAlive("discord") {
 		t.Fatal("discord should be alive while connected")
+	}
+}
+
+func TestCheckHealthMessengerHaltedMessage(t *testing.T) {
+	cookiesPath := filepath.Join(t.TempDir(), "missing.json")
+	mClient, err := messenger.NewUnauthenticatedWithPlatform(cookiesPath, types.Facebook, nil)
+	if err != nil {
+		t.Fatalf("NewUnauthenticatedWithPlatform failed: %v", err)
+	}
+	// ReloadCookies on missing file halts auth with terminal cookie error.
+	_ = mClient.ReloadCookies(t.Context())
+	if !mClient.IsAuthHalted() {
+		t.Fatal("expected ReloadCookies on missing file to halt auth")
+	}
+
+	s := &Service{messenger: mClient}
+	st := &healthState{}
+	deadAfter := time.Millisecond
+	minNotify := time.Millisecond
+
+	s.checkHealth("messenger", st, true, deadAfter, minNotify)  // arm on first connect
+	s.checkHealth("messenger", st, false, deadAfter, minNotify) // start dead timer
+	time.Sleep(5 * time.Millisecond)
+
+	msg := s.checkHealth("messenger", st, false, deadAfter, minNotify)
+	if !strings.Contains(msg, "logged out / halted") || !strings.Contains(msg, "auto-reconnect stopped") {
+		t.Fatalf("expected loud halt alert instead of generic auto-retrying, got %q", msg)
 	}
 }

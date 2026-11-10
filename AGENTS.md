@@ -1670,6 +1670,19 @@ fake outbox pairs through the real bnp route:
   - Now `bridge.New` logs the cookie failure loudly and initializes `messenger.NewUnauthenticatedWithPlatform` so `ReloadCookies` can still bring Messenger online later, and `bridge.Service.Run` logs failed `Login`/`Start` loudly instead of returning an error — keeping `/api/health` (`platforms.messenger: false`), `/api/cookies/upload`, Discord, WhatsApp, and BNP alive so uploading fresh cookies heals Messenger live without a reboot.
   - `messenger.Client.executeRetry` / `SendImage` / `NudgeThreadSync` fail immediately when unauthenticated (`UID() == 0 && !IsConnected()`) instead of burning reconnect backoffs. `handleCookieUpload` creates missing parent dirs and triggers `s.toucher()` so valid cookies sync to Supabase immediately.
 
+## Messenger auth-halt & anti-burst hardening (2026-11-10)
+
+- **Root cause of Meta `4003 Unauthorized` + checkpoint escalation (verified against live `lumen-sg` logs + `mautrix-meta@v0.2609.0`)**:
+  - `internal/messenger/messenger.go` had three custom automation triggers not present in upstream `mautrix/meta`:
+    1. A 60s `ReportAppStateTask{FOREGROUND}` loop on `ConnectedEvent` (`dgw/socket.go` already sends binary `PingFrame` every 10s, and type-3 `OneOffStream` expects a response frame so every `ReportAppStateTask` errored with `dgw: stream closed before ack` every minute while flagging continuous active-foreground presence 24/7).
+    2. Rapid 5-attempt `ForceReconnect()` send bursts in `retryLSTable`/`executeRetry`: `messagix.Client.WaitUntilCanSendMessages` could return `nil` on a stale `canSendMessages` flag from a closing socket, causing all 5 attempts to close and re-dial Meta's DGW WebSocket inside ~4 seconds (`13:44:10Z`–`13:44:14Z`, immediately followed by `4003 Unauthorized 401` at `13:44:15Z` and checkpoint suspension).
+    3. Unconditional `armReconnect` (`60s` -> `5m` forever) on `PermanentErrorEvent` / `ReloadCookies` failure, which kept scraping `GET /messages` every 5m even after `4003 Unauthorized` or `checkpoint required`.
+- **Fixes applied in `internal/messenger/messenger.go`, `internal/bridge/healthwatch.go`, `notifications.go`, `commands.go`**:
+  - Removed the 60s `ReportAppStateTask{FOREGROUND}` ticker (DGW handles 10s WebSocket pings and `messagix.Client.Connect` handles transient WebSocket backoff internally up to 5m).
+  - Added terminal auth-halt state (`AuthError()` / `IsAuthHalted()`) for `dgw.CloseStatusUnauthorized` (`4003`), `httpclient.IsPermanentRequestError` (`checkpoint`, `suspended`, `challenge`, `consent`, `token invalidated`, `429`, `too many redirects`), `types.ErrorResponse` `1357053`, `ErrVersionIDNotFound`, and invalid/missing cookies. Halts auto-reconnect and outbound tasks immediately until explicit `ReloadCookies` (`/api/cookies/upload`) runs; non-terminal reload failures back off exponentially up to 30m.
+  - Hardened `executeRetry` with `connectedEpoch` tracking (`connEpoch` incremented on `ConnectedEvent`/`ReconnectedEvent`), at most one `ForceReconnect()` per `executeRetry` call subject to `minForceReconnectGap` (30s) and never when the socket is already closed (`isAlreadyClosedConnErr`), forcing `sendRetryBackoffs` (`2/5/10/15s`) whenever reconnect is throttled or skipped.
+  - Surfaced `AuthError()` loudly in `healthwatch.go` (`logged out / halted — auto-reconnect stopped`), `/api/health` (`messenger_error`), and `/status` (`halted (...)`).
+
 Upstream is `PUT-Request/Element-Orion` (canonical as of 2026-09-04; the old
 path `eli32-vlc/lumen-agent` redirects — the author moved all their projects
 into the new `PUT Request` org that day and restored the original

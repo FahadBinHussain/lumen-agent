@@ -80,7 +80,7 @@ func (s *Service) serveHTTP(ctx context.Context) error {
 		// that keyword-match still find "ok" in the body.
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		payload := map[string]interface{}{
 			"status": "ok",
 			"platforms": map[string]bool{
 				"messenger": s.isPlatformConnected("messenger"),
@@ -88,7 +88,13 @@ func (s *Service) serveHTTP(ctx context.Context) error {
 				"discord":   s.isPlatformConnected("discord"),
 			},
 			"vision": s.visionHealth(),
-		})
+		}
+		if s.messenger != nil {
+			if authErr := s.messenger.AuthError(); authErr != "" {
+				payload["messenger_error"] = authErr
+			}
+		}
+		json.NewEncoder(w).Encode(payload)
 	})
 
 	server := &http.Server{

@@ -3,11 +3,18 @@ package messenger
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
 	"strings"
 	"testing"
 	"time"
 
+	"go.mau.fi/mautrix-meta/pkg/messagix"
+	"go.mau.fi/mautrix-meta/pkg/messagix/dgw"
+	"go.mau.fi/mautrix-meta/pkg/messagix/httpclient"
+	"go.mau.fi/mautrix-meta/pkg/messagix/socket"
 	"go.mau.fi/mautrix-meta/pkg/messagix/table"
+	"go.mau.fi/mautrix-meta/pkg/messagix/types"
 )
 
 // The schedule must ride out a forced-reconnect cycle: messagix normally
@@ -109,5 +116,69 @@ func TestRetryLSTableStopsOnCanceledContext(t *testing.T) {
 	}
 	if calls != 1 || nudges != 0 {
 		t.Fatalf("calls=%d nudges=%d, want 1/0 — no reconnect kick after cancel", calls, nudges)
+	}
+}
+
+func TestRetryLSTableStopsImmediatelyOnTerminalAuthError(t *testing.T) {
+	shrinkTimers(t)
+	calls, nudges := 0, 0
+	_, err := retryLSTable(context.Background(), "send reply",
+		func() (*table.LSTable, error) {
+			calls++
+			return nil, httpclient.ErrCheckpointRequired
+		},
+		func(error) { nudges++ },
+		func() error { return nil })
+	if err == nil || !errors.Is(err, httpclient.ErrCheckpointRequired) {
+		t.Fatalf("expected wrapped ErrCheckpointRequired, got %v", err)
+	}
+	if calls != 1 || nudges != 0 {
+		t.Fatalf("calls=%d nudges=%d, want 1/0 — terminal auth error must not trigger ForceReconnect retries", calls, nudges)
+	}
+}
+
+func TestExecuteRetryFailsFastWhenAuthHalted(t *testing.T) {
+	c := newClientShell(&messagix.Client{}, "unused.json", types.Facebook, nil)
+	c.setConnected(true)
+	c.haltAuth("checkpoint required: redirected")
+
+	start := time.Now()
+	_, err := c.executeRetry(context.Background(), "send reply", &socket.SendMessageTask{ThreadId: 123, Text: "hi"})
+	if err == nil || !strings.Contains(err.Error(), "auth halted") {
+		t.Fatalf("expected fast auth halted error, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Fatalf("executeRetry took too long when auth halted: %v", elapsed)
+	}
+}
+
+func TestForceReconnectCooldownAndClosedConnDetection(t *testing.T) {
+	origGap := minForceReconnectGap
+	minForceReconnectGap = 80 * time.Millisecond
+	t.Cleanup(func() { minForceReconnectGap = origGap })
+
+	c := newClientShell(nil, "unused.json", types.Facebook, nil)
+	if !c.allowForceReconnect() {
+		t.Fatal("first ForceReconnect must be allowed")
+	}
+	if c.allowForceReconnect() {
+		t.Fatal("second immediate ForceReconnect must be blocked by cooldown")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !c.allowForceReconnect() {
+		t.Fatal("ForceReconnect after cooldown elapsed must be allowed")
+	}
+
+	if !isAlreadyClosedConnErr(dgw.ErrSocketNotOpen) {
+		t.Fatal("expected dgw.ErrSocketNotOpen to be recognized as already-closed")
+	}
+	if !isAlreadyClosedConnErr(net.ErrClosed) {
+		t.Fatal("expected net.ErrClosed to be recognized as already-closed")
+	}
+	if !isAlreadyClosedConnErr(errors.New("failed to write msg: use of closed network connection")) {
+		t.Fatal("expected closed network connection string to be recognized")
+	}
+	if isAlreadyClosedConnErr(io.EOF) {
+		t.Fatal("generic io.EOF should not suppress initial ForceReconnect check unless socket is closed")
 	}
 }
