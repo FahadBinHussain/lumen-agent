@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -358,6 +359,11 @@ func (s *Service) handleCookieUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := os.MkdirAll(filepath.Dir(s.cfg.Messenger.CookiesPath), 0o755); err != nil {
+		http.Error(w, "Failed to create cookies directory: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	if err := os.WriteFile(s.cfg.Messenger.CookiesPath, data, 0o644); err != nil {
 		http.Error(w, "Failed to write cookies file: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -374,6 +380,9 @@ func (s *Service) handleCookieUpload(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to reload cookies: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+	}
+	if s.toucher != nil {
+		s.toucher()
 	}
 
 	w.Header().Set("Content-Type", "application/json")

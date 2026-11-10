@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -655,4 +656,128 @@ func TestHandleMessengerReactionAllowlistGate(t *testing.T) {
 		ActorID:   789,
 		Reaction:  "",
 	})
+}
+
+func TestBridgeRunSurvivesUnauthenticatedMessengerAndServesHealth(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+
+	dir := t.TempDir()
+	missingCookies := filepath.Join(dir, "missing-cookies.json")
+	cfgText := `
+app:
+  workspace_root: .
+  session_dir: ./.element-orion
+llm:
+  base_url: https://example.invalid/v1
+  api_key: "test"
+  model: test-model
+discord:
+  token_mode: bot
+  bot_token: "dummy"
+  allow_direct_messages: true
+messenger:
+  enabled: true
+  platform: facebook
+  cookies_path: ` + filepath.ToSlash(missingCookies) + `
+bridge:
+  enabled: true
+  bnp_enabled: false
+  listen_addr: ` + addr + `
+  notifications_path: /api/automation/notifications
+`
+	cfgPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfgText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	s, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("New should survive missing cookies so /api/cookies/upload stays reachable, got: %v", err)
+	}
+	if s.messenger == nil || s.messenger.Platform().String() != "facebook" {
+		t.Fatalf("expected initialized unauthenticated facebook messenger client, got %+v", s.messenger)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- s.Run(ctx)
+	}()
+
+	var healthBody struct {
+		Status    string          `json:"status"`
+		Platforms map[string]bool `json:"platforms"`
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	var lastErr error
+	ok := false
+	for time.Now().Before(deadline) {
+		resp, err := http.Get("http://" + addr + "/api/health")
+		if err == nil {
+			decErr := json.NewDecoder(resp.Body).Decode(&healthBody)
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK && decErr == nil {
+				ok = true
+				break
+			}
+			lastErr = decErr
+		} else {
+			lastErr = err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !ok {
+		t.Fatalf("/api/health never responded while messenger was unauthenticated: %v", lastErr)
+	}
+	if healthBody.Status != "ok" || healthBody.Platforms["messenger"] {
+		t.Fatalf("unexpected health payload: %+v", healthBody)
+	}
+
+	cancel()
+	select {
+	case err := <-runErrCh:
+		if err != nil {
+			t.Fatalf("Service.Run returned error on shutdown: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Service.Run did not shut down after cancel")
+	}
+}
+
+func TestHandleCookieUploadWritesFileAndFiresToucher(t *testing.T) {
+	cfg := writeTestConfig(t, "")
+	cfg.Messenger.CookiesPath = filepath.Join(t.TempDir(), "nested", "messenger-cookies.json")
+	s, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("new bridge: %v", err)
+	}
+	defer s.Close()
+
+	touched := 0
+	s.SetPersistenceToucher(func() {
+		touched++
+	})
+
+	req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1/api/cookies/upload", bytes.NewBufferString(`{"c_user":"1","xs":"2","datr":"3"}`))
+	rec := newRecorder()
+	s.handleCookieUpload(rec, req)
+	if rec.status != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.status, rec.body.String())
+	}
+	if touched != 1 {
+		t.Fatalf("expected persistence toucher to be called once, got %d", touched)
+	}
+	if _, err := os.Stat(cfg.Messenger.CookiesPath); err != nil {
+		t.Fatalf("cookies file not written: %v", err)
+	}
 }

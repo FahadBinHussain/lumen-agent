@@ -160,6 +160,7 @@ type DiscordConfig struct {
 
 type MessengerConfig struct {
 	Enabled          bool     `yaml:"enabled"`
+	Platform         string   `yaml:"platform"`
 	CookiesPath      string   `yaml:"cookies_path"`
 	AllowedThreadIDs []string `yaml:"allowed_thread_ids"`
 }
@@ -649,6 +650,7 @@ func defaultConfig() Config {
 			DownloadIncomingAttachments: true,
 		},
 		Messenger: MessengerConfig{
+			Platform:         "messenger",
 			AllowedThreadIDs: []string{},
 		},
 		WhatsApp: WhatsAppConfig{},
@@ -830,6 +832,10 @@ func (c *Config) resolvePaths() error {
 	}
 	c.Discord.IncomingAttachmentsDir = resolvedAttachmentsDir
 
+	c.Messenger.Platform = strings.ToLower(strings.TrimSpace(c.Messenger.Platform))
+	if c.Messenger.Platform == "" {
+		c.Messenger.Platform = "messenger"
+	}
 	c.Messenger.CookiesPath = strings.TrimSpace(c.Messenger.CookiesPath)
 	if c.Messenger.CookiesPath != "" {
 		resolvedCookiesPath, err := absFromBase(configDir, c.Messenger.CookiesPath)
@@ -1426,6 +1432,11 @@ func (c Config) validate() error {
 	}
 
 	if c.Messenger.Enabled {
+		switch strings.ToLower(strings.TrimSpace(c.Messenger.Platform)) {
+		case "", "messenger", "facebook":
+		default:
+			return fmt.Errorf("messenger.platform must be \"messenger\" or \"facebook\" when messenger.enabled is true, got %q", c.Messenger.Platform)
+		}
 		if strings.TrimSpace(c.Messenger.CookiesPath) == "" {
 			return fmt.Errorf("messenger.cookies_path must be set when messenger.enabled is true")
 		}

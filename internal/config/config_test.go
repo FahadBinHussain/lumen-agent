@@ -964,6 +964,44 @@ func TestWhatsAppJIDAllowedListedAndUnlisted(t *testing.T) {
 	}
 }
 
+func TestMessengerPlatformDefaultNormalizeAndValidation(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.Messenger.Platform != "messenger" {
+		t.Fatalf("default messenger.platform = %q, want messenger", cfg.Messenger.Platform)
+	}
+
+	cfg.sourcePath = filepath.Join(t.TempDir(), "lumen.yaml")
+	cfg.App.WorkspaceRoot = "."
+	cfg.App.SessionDir = ".element-orion"
+	cfg.Discord.BotToken = "token"
+	cfg.Discord.TokenMode = "bot"
+	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
+	cfg.Messenger.Enabled = true
+	cfg.Messenger.CookiesPath = "./cookies.json"
+	cfg.Messenger.Platform = "  Facebook  "
+
+	if err := cfg.resolvePaths(); err != nil {
+		t.Fatalf("resolvePaths returned error: %v", err)
+	}
+	if cfg.Messenger.Platform != "facebook" {
+		t.Fatalf("normalized messenger.platform = %q, want facebook", cfg.Messenger.Platform)
+	}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate failed for facebook platform: %v", err)
+	}
+
+	cfg.Messenger.Platform = "messenger"
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate failed for messenger platform: %v", err)
+	}
+
+	cfg.Messenger.Platform = "instagram"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "messenger.platform must be") {
+		t.Fatalf("expected invalid messenger.platform error, got: %v", err)
+	}
+}
+
 
 
 

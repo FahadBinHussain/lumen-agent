@@ -127,6 +127,7 @@ discord:
 # Cookies file: export from the logged-in account (see murmur-cookie-refresher.mjs).
 messenger:
   enabled: false
+  platform: messenger
   cookies_path: ./config/messenger-cookies.json
   allowed_thread_ids: []
 

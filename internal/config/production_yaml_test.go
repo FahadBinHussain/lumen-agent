@@ -37,4 +37,7 @@ func TestProductionYamlValidates(t *testing.T) {
 	if got := cfg.ResolveLLMModel(); got != "gemini-2.5-flash" {
 		t.Errorf("ResolveLLMModel = %q, want gemini-2.5-flash", got)
 	}
+	if got := cfg.Messenger.Platform; got != "facebook" {
+		t.Errorf("Messenger.Platform = %q, want facebook", got)
+	}
 }

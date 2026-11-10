@@ -1659,6 +1659,17 @@ fake outbox pairs through the real bnp route:
 - Filter: Lootscraper feed parser skips Epic Games items so direct Epic official API is the single authoritative source for Epic giveaways, while lootscraper continues providing Steam, GOG, Humble, itch.io, etc.
 - Config: Added `feed_url` and `epic_promo_url` to `NotifyFreeGames` / `FreeGamesCfg` (with defaults) and wired in `cmd/element-orion/main.go`.
 
+## Messenger platform selection & non-fatal boot recovery (2026-11-10)
+
+- **`messenger.platform` config (`messenger` default | `facebook`)**:
+  - `mautrix-meta`'s `types.Facebook` uses `https://www.facebook.com` cookies instead of `https://www.messenger.com` (`types.Messenger`), allowing the dedicated bot account on `www.facebook.com` to stay isolated from a personal account signed into `www.messenger.com` in the same browser.
+  - `config.MessengerConfig.Platform` normalizes to lowercase and validates against `messenger` or `facebook` when `messenger.enabled` is true.
+  - `config/production.yaml` sets `messenger.platform: facebook`. `messenger.NewWithPlatform` / `ParsePlatform` wire `types.Platform` through `Client.ReloadCookies` as well.
+- **Resilient boot when cookies are missing, scrubbed, or revoked**:
+  - Previously, missing cookies in `bridge.New` OR a failed `s.messenger.Login` in `bridge.Service.Run` caused `main` to exit `1` and Render deploys to fail (`update_failed`) before `/api/cookies/upload` ever listened.
+  - Now `bridge.New` logs the cookie failure loudly and initializes `messenger.NewUnauthenticatedWithPlatform` so `ReloadCookies` can still bring Messenger online later, and `bridge.Service.Run` logs failed `Login`/`Start` loudly instead of returning an error — keeping `/api/health` (`platforms.messenger: false`), `/api/cookies/upload`, Discord, WhatsApp, and BNP alive so uploading fresh cookies heals Messenger live without a reboot.
+  - `messenger.Client.executeRetry` / `SendImage` / `NudgeThreadSync` fail immediately when unauthenticated (`UID() == 0 && !IsConnected()`) instead of burning reconnect backoffs. `handleCookieUpload` creates missing parent dirs and triggers `s.toucher()` so valid cookies sync to Supabase immediately.
+
 Upstream is `PUT-Request/Element-Orion` (canonical as of 2026-09-04; the old
 path `eli32-vlc/lumen-agent` redirects — the author moved all their projects
 into the new `PUT Request` org that day and restored the original

@@ -138,16 +138,24 @@ func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
 	s.loadDisabledNotifs()
 
 	if cfg.Messenger.Enabled {
-		client, err := messenger.New(cfg.Messenger.CookiesPath, s.handleMessengerMessage)
+		platform, err := messenger.ParsePlatform(cfg.Messenger.Platform)
 		if err != nil {
 			return nil, err
+		}
+		client, err := messenger.NewWithPlatform(cfg.Messenger.CookiesPath, platform, s.handleMessengerMessage)
+		if err != nil {
+			log.Printf("bridge: initial messenger cookie load failed (platform=%s): %v — starting unauthenticated; upload fresh cookies via POST /api/cookies/upload", platform, err)
+			client, err = messenger.NewUnauthenticatedWithPlatform(cfg.Messenger.CookiesPath, platform, s.handleMessengerMessage)
+			if err != nil {
+				return nil, err
+			}
 		}
 		s.messenger = client
 		client.SetReactionHandler(s.handleMessengerReaction)
 		if runner != nil && runner.Registry() != nil {
 			runner.Registry().SetMessengerReactionSender(client)
 		}
-		log.Printf("bridge: messenger enabled with uid %d", client.UID())
+		log.Printf("bridge: messenger enabled (platform=%s) with uid %d", client.Platform(), client.UID())
 	}
 
 	if cfg.WhatsApp.Enabled {
@@ -202,12 +210,14 @@ func (s *Service) Run(ctx context.Context) error {
 	if s.messenger != nil {
 		uid, name, err := s.messenger.Login(ctx)
 		if err != nil {
-			log.Printf("bridge: messenger login failed: %v", err)
-			return err
-		}
-		log.Printf("bridge: messenger logged in as %s (%d)", name, uid)
-		if err := s.messenger.Start(ctx); err != nil {
-			return err
+			// Non-fatal on boot: keep HTTP (/api/health, /api/cookies/upload), Discord,
+			// WhatsApp, and BNP alive so fresh cookies can heal Messenger without a deploy crash.
+			log.Printf("bridge: MESSENGER LOGIN FAILED (platform=%s): %v — continuing boot with messenger disconnected; upload fresh cookies via POST /api/cookies/upload", s.messenger.Platform(), err)
+		} else {
+			log.Printf("bridge: messenger logged in (platform=%s) as %s (%d)", s.messenger.Platform(), name, uid)
+			if err := s.messenger.Start(ctx); err != nil {
+				log.Printf("bridge: MESSENGER START FAILED (platform=%s): %v — continuing boot with messenger disconnected", s.messenger.Platform(), err)
+			}
 		}
 	}
 

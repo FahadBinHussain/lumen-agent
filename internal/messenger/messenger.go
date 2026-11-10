@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -73,8 +74,9 @@ type ThreadInfo struct {
 }
 
 type Client struct {
+	clientMu        sync.RWMutex
 	client          *messagix.Client
-	uid             int64
+	uid             atomic.Int64
 	platform        types.Platform
 	handler         Handler
 	reactionHandler ReactionHandler
@@ -128,13 +130,40 @@ func (c *Client) setConnected(v bool) {
 	c.connMu.Unlock()
 }
 
+// ParsePlatform maps config strings ("messenger", "facebook", or empty for
+// default "messenger") to mautrix-meta's types.Platform. Rejects unknown values loudly.
+func ParsePlatform(raw string) (types.Platform, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "messenger":
+		return types.Messenger, nil
+	case "facebook":
+		return types.Facebook, nil
+	default:
+		return types.Unset, fmt.Errorf("invalid messenger platform %q: must be \"messenger\" or \"facebook\"", raw)
+	}
+}
+
+func validatePlatform(platform types.Platform) error {
+	if platform != types.Messenger && platform != types.Facebook {
+		return fmt.Errorf("unsupported messenger platform %q: must be messenger or facebook", platform.String())
+	}
+	return nil
+}
+
 func New(cookiesPath string, handler Handler) (*Client, error) {
+	return NewWithPlatform(cookiesPath, types.Messenger, handler)
+}
+
+func NewWithPlatform(cookiesPath string, platform types.Platform, handler Handler) (*Client, error) {
+	if err := validatePlatform(platform); err != nil {
+		return nil, err
+	}
 	cookieMap, err := cookies.LoadFromFile(cookiesPath)
 	if err != nil {
 		return nil, fmt.Errorf("load cookies: %w", err)
 	}
 
-	c := cookies.ToMessagix(cookieMap, types.Messenger)
+	c := cookies.ToMessagix(cookieMap, platform)
 	if missing := cookies.GetMissing(c); len(missing) > 0 {
 		return nil, fmt.Errorf("missing required cookies: %v", missing)
 	}
@@ -142,9 +171,27 @@ func New(cookiesPath string, handler Handler) (*Client, error) {
 	logger := zerolog.New(os.Stderr).With().Str("component", "messagix").Timestamp().Logger()
 	client := messagix.NewClient(c, logger, &messagix.Config{})
 
+	cl := newClientShell(client, cookiesPath, platform, handler)
+	cl.startDispatcher()
+	return cl, nil
+}
+
+// NewUnauthenticatedWithPlatform creates a Client ready for ReloadCookies
+// without requiring valid cookies at boot (used so POST /api/cookies/upload
+// can heal an initially unprovisioned or scrubbed bridge without a deploy crash).
+func NewUnauthenticatedWithPlatform(cookiesPath string, platform types.Platform, handler Handler) (*Client, error) {
+	if err := validatePlatform(platform); err != nil {
+		return nil, err
+	}
+	cl := newClientShell(nil, cookiesPath, platform, handler)
+	cl.startDispatcher()
+	return cl, nil
+}
+
+func newClientShell(client *messagix.Client, cookiesPath string, platform types.Platform, handler Handler) *Client {
 	cl := &Client{
 		client:         client,
-		platform:       types.Messenger,
+		platform:       platform,
 		handler:        handler,
 		cookiesPath:    cookiesPath,
 		startTime:      time.Now(),
@@ -154,8 +201,23 @@ func New(cookiesPath string, handler Handler) (*Client, error) {
 		retryDelay:     5 * time.Minute,
 	}
 	cl.reloadFn = cl.ReloadCookies
-	cl.startDispatcher()
-	return cl, nil
+	return cl
+}
+
+func (c *Client) currentClient() *messagix.Client {
+	c.clientMu.RLock()
+	defer c.clientMu.RUnlock()
+	return c.client
+}
+
+func (c *Client) setClient(mc *messagix.Client) {
+	c.clientMu.Lock()
+	c.client = mc
+	c.clientMu.Unlock()
+}
+
+func (c *Client) Platform() types.Platform {
+	return c.platform
 }
 
 func (c *Client) SetHandler(handler Handler) {
@@ -167,22 +229,31 @@ func (c *Client) SetReactionHandler(handler ReactionHandler) {
 }
 
 func (c *Client) UID() int64 {
-	return c.uid
+	return c.uid.Load()
 }
 
 func (c *Client) Login(ctx context.Context) (int64, string, error) {
-	userInfo, _, err := c.client.LoadMessagesPage(ctx)
+	mc := c.currentClient()
+	if mc == nil {
+		return 0, "", fmt.Errorf("messenger cookies not loaded (upload fresh cookies)")
+	}
+	userInfo, _, err := mc.LoadMessagesPage(ctx)
 	if err != nil {
 		return 0, "", fmt.Errorf("load messages page: %w", err)
 	}
-	c.uid = userInfo.GetFBID()
-	return c.uid, userInfo.GetName(), nil
+	uid := userInfo.GetFBID()
+	c.uid.Store(uid)
+	return uid, userInfo.GetName(), nil
 }
 
 func (c *Client) Start(ctx context.Context) error {
-	c.client.SetEventHandler(c.makeEventHandler(ctx))
+	mc := c.currentClient()
+	if mc == nil {
+		return fmt.Errorf("messenger client not initialized (upload fresh cookies)")
+	}
+	mc.SetEventHandler(c.makeEventHandler(ctx, mc))
 	go func() {
-		err := c.client.Connect(ctx)
+		err := mc.Connect(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("messenger: connection error: %v", err)
 		}
@@ -193,6 +264,9 @@ func (c *Client) Start(ctx context.Context) error {
 func (c *Client) ReloadCookies(ctx context.Context) error {
 	c.reloadMu.Lock()
 	defer c.reloadMu.Unlock()
+	if err := validatePlatform(c.platform); err != nil {
+		return err
+	}
 	c.setConnected(false)
 	cookieMap, err := cookies.LoadFromFile(c.cookiesPath)
 	if err != nil {
@@ -204,22 +278,29 @@ func (c *Client) ReloadCookies(ctx context.Context) error {
 		return fmt.Errorf("missing cookies: %v", missing)
 	}
 
-	c.client.Disconnect()
+	if old := c.currentClient(); old != nil {
+		old.Disconnect()
+	}
+	c.uid.Store(0)
 	logger := zerolog.New(os.Stderr).With().Str("component", "messagix").Timestamp().Logger()
-	c.client = messagix.NewClient(cc, logger, &messagix.Config{})
+	newClient := messagix.NewClient(cc, logger, &messagix.Config{})
+	c.setClient(newClient)
 
-	userInfo, _, err := c.client.LoadMessagesPage(ctx)
+	userInfo, _, err := newClient.LoadMessagesPage(ctx)
 	if err != nil {
 		return fmt.Errorf("load messages page: %w", err)
 	}
-	c.uid = userInfo.GetFBID()
-	log.Printf("messenger: cookies reloaded, logged in as %s (%d)", userInfo.GetName(), c.uid)
+	uid := userInfo.GetFBID()
+	c.uid.Store(uid)
+	log.Printf("messenger: cookies reloaded (platform=%s), logged in as %s (%d)", c.platform, userInfo.GetName(), uid)
 
 	return c.Start(ctx)
 }
 
 func (c *Client) Disconnect() {
-	c.client.Disconnect()
+	if mc := c.currentClient(); mc != nil {
+		mc.Disconnect()
+	}
 }
 
 // armReconnect schedules one auto-reconnect attempt unless one is already
@@ -272,7 +353,7 @@ func (c *Client) attemptReconnect() {
 	c.armReconnect("socket still down after relog", c.retryDelay)
 }
 
-func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any) {
+func (c *Client) makeEventHandler(ctx context.Context, mc *messagix.Client) func(context.Context, any) {
 	return func(evtCtx context.Context, evt any) {
 		switch e := evt.(type) {
 		case *messagix.ConnectedEvent:
@@ -287,12 +368,14 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 						case <-ctx.Done():
 							return
 						case <-ticker.C:
-							_, err := c.client.ExecuteTasks(ctx, &socket.ReportAppStateTask{
-								AppState:  table.FOREGROUND,
-								RequestID: fmt.Sprintf("keepalive-%d", time.Now().UnixMilli()),
-							})
-							if err != nil {
-								log.Printf("messenger: foreground keepalive failed: %v", err)
+							if cl := c.currentClient(); cl != nil {
+								_, err := cl.ExecuteTasks(ctx, &socket.ReportAppStateTask{
+									AppState:  table.FOREGROUND,
+									RequestID: fmt.Sprintf("keepalive-%d", time.Now().UnixMilli()),
+								})
+								if err != nil {
+									log.Printf("messenger: foreground keepalive failed: %v", err)
+								}
 							}
 							// safety net: if the socket is still down when the
 							// keepalive fires, arm the full reconnect (covers
@@ -420,7 +503,9 @@ func (c *Client) makeEventHandler(ctx context.Context) func(context.Context, any
 			// Advance sync cursors carried in the table (mirrors upstream
 			// connector); without this, Meta sees a client that never acks
 			// its transactions.
-			c.client.PostHandlePublishResponse(e)
+			if mc != nil {
+				mc.PostHandlePublishResponse(e)
+			}
 
 		case *messagix.TransientDisconnectEvent:
 			c.setConnected(false)
@@ -479,10 +564,11 @@ func (c *Client) Threads() []ThreadInfo {
 // NudgeThreadSync asks the server to push inbox thread metadata (sync group 1
 // = full thread info, matching mautrix-meta's connector).
 func (c *Client) NudgeThreadSync(ctx context.Context) {
-	if c.client == nil {
+	mc := c.currentClient()
+	if mc == nil || (c.UID() == 0 && !c.IsConnected()) {
 		return
 	}
-	_, err := c.client.ExecuteTasks(ctx, &socket.FetchThreadsTask{SyncGroup: 1})
+	_, err := mc.ExecuteTasks(ctx, &socket.FetchThreadsTask{SyncGroup: 1})
 	if err != nil {
 		log.Printf("messenger: thread sync nudge failed: %v", err)
 	}
@@ -493,8 +579,9 @@ func (c *Client) relay(ctx context.Context, msg Incoming) {
 	// was invisible in Render logs unless it triggered a reply, which made
 	// "bot not responding" impossible to diagnose. These three lines make the
 	// path observable: arrival is logged in the bridge handler, drops here.
-	if msg.SenderID == c.uid || msg.SenderID == 0 {
-		log.Printf("messenger: relay drop: self or zero sender (sender=%d uid=%d thread=%d text=%.80q)", msg.SenderID, c.uid, msg.ThreadID, msg.Text)
+	uid := c.UID()
+	if msg.SenderID == uid || msg.SenderID == 0 {
+		log.Printf("messenger: relay drop: self or zero sender (sender=%d uid=%d thread=%d text=%.80q)", msg.SenderID, uid, msg.ThreadID, msg.Text)
 		return
 	}
 	ts := time.UnixMilli(msg.Timestamp)
@@ -652,8 +739,9 @@ func parseMentionInts(raw string) []int {
 }
 
 func (c *Client) MentionsMe(msg Incoming) bool {
+	uid := c.UID()
 	for _, id := range msg.MentionIDs {
-		if id == c.uid {
+		if id == uid {
 			return true
 		}
 	}
@@ -665,10 +753,11 @@ func (c *Client) CleanMentions(msg Incoming) string {
 	if len(msg.MentionIDs) == 0 || len(msg.MentionOffs) == 0 || len(msg.MentionLens) == 0 {
 		return text
 	}
+	uid := c.UID()
 	runes := []rune(text)
 	var toRemove [][2]int
 	for i, id := range msg.MentionIDs {
-		if id != c.uid {
+		if id != uid {
 			continue
 		}
 		if i >= len(msg.MentionOffs) || i >= len(msg.MentionLens) {
@@ -757,17 +846,34 @@ func retryLSTable(
 }
 
 // executeRetry is the messagix-task wrapper around retryLSTable: one task,
-// retried across a forced socket reconnect.
+// retried across a forced socket reconnect. Fails immediately when not logged in
+// or initialized so unauthenticated boots don't spin reconnect waits per attempt.
 func (c *Client) executeRetry(ctx context.Context, what string, task socket.Task) (*table.LSTable, error) {
+	if c == nil || c.currentClient() == nil {
+		return nil, fmt.Errorf("messenger client not initialized (upload fresh cookies)")
+	}
+	if c.UID() == 0 && !c.IsConnected() {
+		return nil, fmt.Errorf("messenger not logged in (upload fresh cookies)")
+	}
 	return retryLSTable(ctx, what,
 		func() (*table.LSTable, error) {
-			return c.client.ExecuteTasks(ctx, task)
+			mc := c.currentClient()
+			if mc == nil {
+				return nil, fmt.Errorf("messenger client not initialized (upload fresh cookies)")
+			}
+			return mc.ExecuteTasks(ctx, task)
 		},
 		func(err error) {
-			c.client.ForceReconnect()
+			if mc := c.currentClient(); mc != nil {
+				mc.ForceReconnect()
+			}
 		},
 		func() error {
-			return c.client.WaitUntilCanSendMessages(ctx, sendReadyTimeout)
+			mc := c.currentClient()
+			if mc == nil {
+				return fmt.Errorf("messenger client not initialized (upload fresh cookies)")
+			}
+			return mc.WaitUntilCanSendMessages(ctx, sendReadyTimeout)
 		})
 }
 
@@ -898,7 +1004,7 @@ func (c *Client) SendReaction(ctx context.Context, threadID int64, messageID str
 		TimestampMs:     time.Now().UnixMilli(),
 		MessageID:       messageID,
 		Reaction:        reaction,
-		ActorID:         c.uid,
+		ActorID:         c.UID(),
 		SyncGroup:       1,
 		SendAttribution: table.MESSENGER_INBOX_IN_THREAD,
 	})
@@ -909,7 +1015,14 @@ func (c *Client) SendReaction(ctx context.Context, threadID int64, messageID str
 }
 
 func (c *Client) SendImage(ctx context.Context, threadID int64, imageData []byte, mimeType string) error {
-	resp, err := c.client.GetHTTP().SendMercuryUploadRequest(ctx, threadID, &httpclient.MercuryUploadMedia{
+	mc := c.currentClient()
+	if mc == nil {
+		return fmt.Errorf("messenger client not initialized (upload fresh cookies)")
+	}
+	if c.UID() == 0 && !c.IsConnected() {
+		return fmt.Errorf("messenger not logged in (upload fresh cookies)")
+	}
+	resp, err := mc.GetHTTP().SendMercuryUploadRequest(ctx, threadID, &httpclient.MercuryUploadMedia{
 		Filename:  "image.png",
 		MimeType:  mimeType,
 		MediaData: imageData,
