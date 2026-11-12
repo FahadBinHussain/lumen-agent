@@ -10,6 +10,11 @@ import (
 	"unicode/utf8"
 
 	"github.com/rs/zerolog"
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/store"
+	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
+	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 func TestSplitTextUnicodeSafeAndLabeled(t *testing.T) {
@@ -96,5 +101,95 @@ func TestScheduleReconnectRetriesUntilConnectSucceeds(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&calls); got < 3 {
 		t.Fatalf("expected at least 3 connect attempts (failures retried), got %d", got)
+	}
+}
+
+// newLoggedInDeadClient builds a client in the 2026-11-12 silent-death
+// state: logged in (device ID set) but the websocket never connected, so
+// the real socket state is down. No database, no network.
+func newLoggedInDeadClient(connectFn func(context.Context) error) *WhatsmeowClient {
+	device := &store.Device{ID: &types.JID{User: "8801911104251", Server: types.DefaultUserServer}}
+	cli := whatsmeow.NewClient(device, waLog.Noop)
+	return &WhatsmeowClient{
+		client:    cli,
+		logger:    zerolog.Nop(),
+		connectFn: connectFn,
+	}
+}
+
+// TestIsConnectedReflectsRealSocketState pins the 2026-11-12 bug: the
+// socket died with no Disconnected event, so the event-driven flag stayed
+// true and /api/health lied for 4+ hours. IsConnected must read the real
+// socket state, not the flag — a Connected event with a dead socket is
+// still disconnected.
+func TestIsConnectedReflectsRealSocketState(t *testing.T) {
+	w := newLoggedInDeadClient(func(context.Context) error { return nil })
+	if !w.IsLoggedIn() {
+		t.Fatal("test setup broken: expected logged in")
+	}
+	w.handleEvent(&events.Connected{})
+	if w.IsConnected() {
+		t.Fatal("IsConnected() is true with a dead socket: it must reflect the real socket state, not the event flag")
+	}
+	if w.SocketConnected() {
+		t.Fatal("SocketConnected() is true with no socket")
+	}
+	// The Threads wart rides along: a dead socket must error, not answer
+	// an empty list that looks like "no chats".
+	if _, err := w.Threads(context.Background()); err == nil {
+		t.Fatal("Threads() with a dead socket returned no error")
+	}
+}
+
+// TestWatchdogForcesReconnectOnDeadSocket pins the supervisor: a logged-in
+// client with a dead socket must get a reconnect attempt within a couple
+// of watchdog ticks, and the watchdog must keep retrying while the socket
+// stays down (the stub connect never actually connects).
+func TestWatchdogForcesReconnectOnDeadSocket(t *testing.T) {
+	oldInterval, oldChecks := watchdogInterval, watchdogDeadChecks
+	watchdogInterval, watchdogDeadChecks = 5*time.Millisecond, 1
+	defer func() { watchdogInterval, watchdogDeadChecks = oldInterval, oldChecks }()
+
+	var calls int32
+	w := newLoggedInDeadClient(func(context.Context) error {
+		atomic.AddInt32(&calls, 1)
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Watchdog(ctx)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for atomic.LoadInt32(&calls) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("watchdog never attempted a reconnect for a dead socket")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestStreamReplacedSchedulesReconnect pins the silent-death event:
+// StreamReplaced arrives with no Disconnected event and whatsmeow does
+// not retry, so the app must drive the reconnect itself — including
+// while still logged in (the old scheduleReconnect loop broke out
+// immediately when logged in).
+func TestStreamReplacedSchedulesReconnect(t *testing.T) {
+	old := reconnectRetryDelay
+	reconnectRetryDelay = time.Millisecond
+	defer func() { reconnectRetryDelay = old }()
+
+	var calls int32
+	w := newLoggedInDeadClient(func(context.Context) error {
+		atomic.AddInt32(&calls, 1)
+		return nil
+	})
+	w.handleEvent(&events.StreamReplaced{})
+
+	deadline := time.Now().Add(3 * time.Second)
+	for atomic.LoadInt32(&calls) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("StreamReplaced did not schedule a reconnect")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

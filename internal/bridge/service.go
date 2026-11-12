@@ -236,9 +236,13 @@ func (s *Service) Run(ctx context.Context) error {
 			// (e.g. tailscaled exit not yet usable at boot — seen 2026-09-07
 			// as a SOCKS general failure 40s after boot) used to kill this
 			// goroutine and leave whatsapp dead until the next deploy, with
-			// no reconnect path (post-connect drops are whatsmeow's own
-			// auto-reconnect domain; a failed INITIAL Connect never gets
-			// there). Steady-state reconnects are unaffected.
+			// no reconnect path (a failed INITIAL Connect never reaches
+			// whatsmeow's auto-reconnect). Post-connect drops are the
+			// watchdog's domain now: whatsmeow's auto-reconnect does NOT
+			// cover every drop (515 / replaced / failed auto-reconnect all
+			// die silently with no Disconnected event — 2026-11-12 the
+			// socket sat dead 4+ hours), so the watchdog below supervises
+			// the real socket state for the life of the process.
 			for {
 				if err := s.whatsapp.Connect(ctx); err != nil {
 					if ctx.Err() != nil {
@@ -271,6 +275,15 @@ func (s *Service) Run(ctx context.Context) error {
 					s.saveWhatsAppSession(ctx)
 				}
 			}
+		}()
+
+		// Watchdog: the backstop for the silent-death modes (see
+		// WhatsmeowClient.Watchdog). Runs for the life of the process,
+		// independent of the boot loop above.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.whatsapp.Watchdog(ctx)
 		}()
 	}
 

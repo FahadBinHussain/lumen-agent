@@ -27,7 +27,13 @@ type WhatsmeowClient struct {
 	deviceStore *sqlstore.Container
 	logger      zerolog.Logger
 	handler     MessageHandler
-	connected   bool
+	// connected is the event-driven flag, flipped by Connected /
+	// Disconnected events only. It is NOT the source of truth anymore:
+	// the socket can die without either event (2026-11-12, dead 4+
+	// hours while health still said connected), so IsConnected reads
+	// the real socket state instead. The flag is still updated here
+	// because it documents the event flow; nothing reads it for status.
+	connected bool
 
 	mu           sync.Mutex
 	qrCode       string
@@ -159,6 +165,41 @@ func (w *WhatsmeowClient) handleEvent(evt interface{}) {
 		w.setQR("")
 		w.logger.Error().Msg("WhatsApp logged out")
 		w.scheduleReconnect()
+	case *events.StreamReplaced:
+		// The server replaced this session (another client connected
+		// with the same device credentials): whatsmeow sets
+		// expectDisconnect and does NOT auto-reconnect, and no
+		// Disconnected event fires — one of the 2026-11-12 silent
+		// deaths. Treat it as a disconnect while logged in.
+		w.markDisconnected()
+		w.logger.Error().Msg("WhatsApp session replaced by another client — scheduling reconnect")
+		w.scheduleReconnect()
+	case *events.ConnectFailure:
+		// A connect attempt was rejected by the server. whatsmeow's
+		// handleConnectFailure sets expectDisconnect for non-503
+		// reasons, which kills its own auto-reconnect loop — so drive
+		// the reconnect from here: our Connect resets
+		// expectDisconnect and dials fresh.
+		w.markDisconnected()
+		w.logger.Error().Int("reason", int(e.Reason)).Str("message", e.Message).Msg("WhatsApp connect failure — scheduling reconnect")
+		w.scheduleReconnect()
+	case *events.TemporaryBan:
+		// Retrying now is pointless (the ban has an expiry); log loudly
+		// and let the watchdog retry once the socket is still down.
+		w.markDisconnected()
+		w.logger.Error().Int("code", int(e.Code)).Dur("expire", e.Expire).Msg("WhatsApp temporarily banned this device — waiting it out, watchdog will retry")
+	case *events.CATRefreshError:
+		w.markDisconnected()
+		w.logger.Error().Err(e.Error).Msg("WhatsApp CAT refresh failed")
+	case *events.StreamError:
+		w.markDisconnected()
+		w.logger.Error().Str("code", e.Code).Msg("WhatsApp stream error (unknown code)")
+	case *events.KeepAliveTimeout:
+		// whatsmeow force-reconnects on its own after 3m of these; just
+		// make the failure visible instead of swallowing the event.
+		w.logger.Warn().Int("errorCount", e.ErrorCount).Time("lastSuccess", e.LastSuccess).Msg("WhatsApp keepalive timed out")
+	case *events.KeepAliveRestored:
+		w.logger.Info().Msg("WhatsApp keepalive restored")
 	case *events.QR:
 		w.setQR("")
 		for _, code := range e.Codes {
@@ -169,6 +210,17 @@ func (w *WhatsmeowClient) handleEvent(evt interface{}) {
 		}
 		w.logger.Info().Msg("WhatsApp QR code received - scan with your phone (GET /api/whatsapp/qr)")
 	}
+}
+
+// markDisconnected clears the event-driven flag for the silent-death
+// events (StreamReplaced, ConnectFailure, ...), which arrive without a
+// Disconnected event. IsConnected reads the real socket state, so this is
+// bookkeeping only — but the flag should never claim "connected" after a
+// fatal event.
+func (w *WhatsmeowClient) markDisconnected() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.connected = false
 }
 
 func (w *WhatsmeowClient) setQR(qr string) {
@@ -219,6 +271,13 @@ func (w *WhatsmeowClient) noteChat(jid types.JID, ts time.Time) {
 func (w *WhatsmeowClient) Threads(ctx context.Context) ([]ThreadInfo, error) {
 	if w.client == nil {
 		return nil, fmt.Errorf("whatsapp client not initialized")
+	}
+	// Fail loudly instead of answering an empty list: with the socket
+	// down, GetJoinedGroups fails and the old code swallowed it, so the
+	// api returned {"threads":[]} for a dead connection — Groups() 500s
+	// in the same state, and the two should agree.
+	if !w.SocketConnected() {
+		return nil, fmt.Errorf("whatsapp not connected")
 	}
 	var out []ThreadInfo
 
@@ -435,12 +494,15 @@ func (w *WhatsmeowClient) scheduleReconnect() {
 		// attempt logs loudly and retries in reconnectRetryDelay; a
 		// successful connect stops the loop (the pairing session's own
 		// QR-channel-close / Disconnected handlers re-arm if it dies later).
+		// The loop also covers logged-in-but-socket-dead (StreamReplaced /
+		// ConnectFailure): it only stops early when logged in AND the
+		// socket is actually up, so a silent death gets retried too.
 		for {
 			time.Sleep(reconnectRetryDelay)
-			if w.IsLoggedIn() {
+			if w.IsLoggedIn() && w.SocketConnected() {
 				break
 			}
-			w.logger.Info().Msg("whatsapp: not logged in, reconnecting for a fresh QR session")
+			w.logger.Info().Msg("whatsapp: reconnecting (socket down or not logged in)")
 			if err := w.connectFn(context.Background()); err != nil {
 				w.logger.Error().Err(err).Msg("whatsapp reconnect failed — retrying (exit-node/egress still down?)")
 				continue
@@ -451,6 +513,62 @@ func (w *WhatsmeowClient) scheduleReconnect() {
 		w.reconnecting = false
 		w.mu.Unlock()
 	}()
+}
+
+// watchdogInterval paces the socket supervisor; watchdogDeadChecks is how
+// many consecutive dead sightings force a reconnect (vars so the test
+// suite can shrink them).
+var watchdogInterval = 30 * time.Second
+var watchdogDeadChecks = 2
+
+// Watchdog supervises the websocket for the silent-death modes whatsmeow
+// never recovers from on its own: a 515 stream error (one reconnect
+// attempt, then nothing), a "replaced" conflict (expectDisconnect, no
+// retry), and a connect failure during auto-reconnect (expectDisconnect
+// kills the loop). In all three no Disconnected event fires, so nothing
+// else in the process notices — 2026-11-12 the socket sat dead 4+ hours
+// while health still said connected. The watchdog reads the REAL socket
+// state (not the event flag) and forces a fresh Connect when the socket
+// is down while logged in. Two consecutive dead checks before acting, so
+// whatsmeow's own auto-reconnect gets the first shot at ordinary drops.
+// It never exits on its own: Connect errors just log and retry next tick.
+func (w *WhatsmeowClient) Watchdog(ctx context.Context) {
+	ticker := time.NewTicker(watchdogInterval)
+	defer ticker.Stop()
+	dead := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if w.client == nil || !w.IsLoggedIn() {
+			// Logged out (or never started): scheduleReconnect owns the
+			// fresh-QR path; the watchdog only covers logged-in drops.
+			dead = 0
+			continue
+		}
+		if w.SocketConnected() {
+			if dead > 0 {
+				w.logger.Info().Msg("whatsapp watchdog: socket back")
+			}
+			dead = 0
+			continue
+		}
+		dead++
+		if dead < watchdogDeadChecks {
+			w.logger.Warn().Msg("whatsapp watchdog: socket down (first sighting)")
+			continue
+		}
+		w.logger.Error().Msg("whatsapp watchdog: socket dead, forcing reconnect")
+		if err := w.connectFn(ctx); err != nil {
+			w.logger.Error().Err(err).Msg("whatsapp watchdog reconnect failed — retrying next tick")
+			continue
+		}
+		// Connect returned: the next tick confirms the socket is
+		// actually up before clearing the dead count, so a connect
+		// that "succeeds" but leaves the socket down keeps retrying.
+	}
 }
 
 func (w *WhatsmeowClient) PairPhone(ctx context.Context, phone string) (string, error) {
@@ -641,10 +759,24 @@ func (w *WhatsmeowClient) isRecentSent(id string) bool {
 	return ok
 }
 
+// IsConnected reports the REAL websocket state straight from whatsmeow.
+// It used to read the event-driven flag, which only flips on
+// Connected/Disconnected events — and the socket can die without either
+// (2026-11-12: dead 4+ hours while /api/health still said connected, so
+// healthwatch never alerted). Every reader (health, healthwatch, the QR
+// paired/stale state, the pending queue, the /threads admin command) gets
+// the truth now.
 func (w *WhatsmeowClient) IsConnected() bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.connected
+	return w.SocketConnected()
+}
+
+// SocketConnected is IsConnected's source of truth: whatsmeow's own
+// socket check (socket object present and its websocket open).
+func (w *WhatsmeowClient) SocketConnected() bool {
+	if w.client == nil {
+		return false
+	}
+	return w.client.IsConnected()
 }
 
 func (w *WhatsmeowClient) StartTyping(ctx context.Context, to string) {
