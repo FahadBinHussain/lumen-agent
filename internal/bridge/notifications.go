@@ -72,6 +72,9 @@ func (s *Service) serveHTTP(ctx context.Context) error {
 	mux.HandleFunc("/api/whatsapp/pair", s.handleWhatsAppPair)
 	mux.HandleFunc("/api/whatsapp/session/upload", s.handleWhatsAppSessionUpload)
 	mux.HandleFunc("/api/whatsapp/groups", s.handleWhatsAppGroups)
+	mux.HandleFunc("/api/whatsapp/send", s.handleWhatsAppSend)
+	mux.HandleFunc("/api/whatsapp/threads", s.handleWhatsAppThreads)
+	mux.HandleFunc("/api/whatsapp/stream", s.handleWhatsAppStream)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		// platform states ride along so external watchers (cookie-health
 		// watchdog, uptime checks) can tell "web process alive" apart from

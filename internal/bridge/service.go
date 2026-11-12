@@ -94,6 +94,13 @@ type Service struct {
 	waLastMtime   time.Time
 	waLastSize    int64
 	waLastSavedAt time.Time
+
+	// waStreamSubs is the set of live /api/whatsapp/stream subscribers, a
+	// buffered channel each, fed by broadcastWhatsAppMessage. A full
+	// buffer drops for that subscriber only, so a dead SSE client can
+	// never stall whatsapp handling.
+	waStreamMu   sync.Mutex
+	waStreamSubs map[chan whatsapp.ParsedMessage]struct{}
 }
 
 // SetPersistenceToucher registers a callback fired after session history is
@@ -433,6 +440,11 @@ func (s *Service) handleWhatsAppMessage(ctx context.Context, msg whatsapp.Parsed
 	if msg.FromMe {
 		return
 	}
+
+	// the live stream is a true feed: broadcast every message the bridge
+	// receives, before the trigger/allowlist gates below. The allowlist
+	// still gates REPLIES; it does not hide messages from the stream.
+	s.broadcastWhatsAppMessage(msg)
 
 	prompt := whatsappTriggerPrompt(msg)
 	if prompt == "" {
