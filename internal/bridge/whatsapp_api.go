@@ -23,6 +23,35 @@ const whatsappStreamBuffer = 32
 // front of them) from timing out: a comment line every 25s.
 const whatsappStreamHeartbeat = 25 * time.Second
 
+// whatsappCallTimeout bounds every whatsapp call behind the api. whatsmeow
+// SendMessage can wait on a dead socket past the context deadline (seen live:
+// two sends hung 30s and 90s with no response at all while the socket was
+// down), so the handler must answer on its own clock, never the client's.
+const whatsappCallTimeout = 30 * time.Second
+
+// withTimeout runs fn on a goroutine and returns its result, or timedOut=true
+// if it did not finish within timeout. The goroutine keeps running past a
+// timeout — there is no way to kill it — so callers must say so in the
+// error: a timed-out send may still land.
+func withTimeout[T any](timeout time.Duration, fn func() (T, error)) (T, error, bool) {
+	type result struct {
+		v   T
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		v, err := fn()
+		done <- result{v, err}
+	}()
+	select {
+	case r := <-done:
+		return r.v, r.err, false
+	case <-time.After(timeout):
+		var zero T
+		return zero, nil, true
+	}
+}
+
 // subscribeWhatsAppStream registers one live-stream subscriber and returns
 // its channel plus an unsubscribe function. The channel is closed on
 // unsubscribe.
@@ -95,9 +124,16 @@ func (s *Service) handleWhatsAppSend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "text is required", http.StatusBadRequest)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), whatsappCallTimeout)
 	defer cancel()
-	id, err := s.SendWhatsApp(ctx, req.JID, req.Text)
+	id, err, timedOut := withTimeout(whatsappCallTimeout, func() (string, error) {
+		return s.SendWhatsApp(ctx, req.JID, req.Text)
+	})
+	if timedOut {
+		log.Printf("bridge: whatsapp api send to %s timed out after %s", req.JID, whatsappCallTimeout)
+		http.Error(w, "send timed out after 30s (the message may still arrive)", http.StatusGatewayTimeout)
+		return
+	}
 	if err != nil {
 		log.Printf("bridge: whatsapp api send to %s failed: %v", req.JID, err)
 		if strings.Contains(err.Error(), "not in whatsapp.allowed_jids") {
@@ -127,9 +163,16 @@ func (s *Service) handleWhatsAppThreads(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "whatsapp not enabled", http.StatusBadRequest)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), whatsappCallTimeout)
 	defer cancel()
-	threads, err := s.whatsapp.Threads(ctx)
+	threads, err, timedOut := withTimeout(whatsappCallTimeout, func() ([]whatsapp.ThreadInfo, error) {
+		return s.whatsapp.Threads(ctx)
+	})
+	if timedOut {
+		log.Printf("bridge: list whatsapp threads timed out after %s", whatsappCallTimeout)
+		http.Error(w, "list threads timed out after 30s", http.StatusGatewayTimeout)
+		return
+	}
 	if err != nil {
 		log.Printf("bridge: list whatsapp threads failed: %v", err)
 		http.Error(w, "list threads failed: "+err.Error(), http.StatusInternalServerError)

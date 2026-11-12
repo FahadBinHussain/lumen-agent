@@ -151,3 +151,25 @@ func TestWhatsAppThreadsRequiresAuth(t *testing.T) {
 		t.Fatalf("expected 400 with whatsapp disabled, got %d: %s", rec.status, rec.body.String())
 	}
 }
+
+func TestWithTimeoutReturnsFastResult(t *testing.T) {
+	v, err, timedOut := withTimeout(5*time.Second, func() (string, error) {
+		return "done", nil
+	})
+	if timedOut || err != nil || v != "done" {
+		t.Fatalf("got (%q, %v, timedOut=%v), want (done, nil, false)", v, err, timedOut)
+	}
+}
+
+func TestWithTimeoutAnswersOnItsOwnClock(t *testing.T) {
+	start := time.Now()
+	_, _, timedOut := withTimeout(100*time.Millisecond, func() (string, error) {
+		select {} // never returns, like a SendMessage on a dead socket
+	})
+	if !timedOut {
+		t.Fatal("expected timeout, got a result")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("timeout took %s, want ~100ms", elapsed)
+	}
+}
