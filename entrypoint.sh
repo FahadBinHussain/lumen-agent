@@ -23,6 +23,12 @@ if [ -n "$TS_AUTHKEY" ]; then
   /app/tailscaled --tun=userspace-networking --socks5-server=127.0.0.1:1055 --state=mem: 2>&1 | grep --line-buffered -vE "$LOG_FILTER" &
   /app/tailscale up --authkey="$TS_AUTHKEY" --hostname=lumen-render --accept-dns=false --exit-node=100.76.10.50 --timeout=40s
   echo "entrypoint: tailscale userspace node up ($(/app/tailscale ip -4)), exit node 100.76.10.50"
+  if [ -z "$WHATSAPP_PROXY_URL" ]; then
+    export WHATSAPP_PROXY_URL="socks5://127.0.0.1:1055"
+  fi
+  if [ -z "$MESSENGER_PROXY_URL" ]; then
+    export MESSENGER_PROXY_URL="socks5://127.0.0.1:1055"
+  fi
 else
   echo "entrypoint: TS_AUTHKEY unset, skipping tailscale mesh join"
 fi

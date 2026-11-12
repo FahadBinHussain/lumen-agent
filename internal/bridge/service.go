@@ -142,10 +142,10 @@ func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
 		if err != nil {
 			return nil, err
 		}
-		client, err := messenger.NewWithPlatform(cfg.Messenger.CookiesPath, platform, s.handleMessengerMessage)
+		client, err := messenger.NewWithPlatformAndProxy(cfg.Messenger.CookiesPath, platform, cfg.Messenger.Proxy, s.handleMessengerMessage)
 		if err != nil {
-			log.Printf("bridge: initial messenger cookie load failed (platform=%s): %v — starting unauthenticated; upload fresh cookies via POST /api/cookies/upload", platform, err)
-			client, err = messenger.NewUnauthenticatedWithPlatform(cfg.Messenger.CookiesPath, platform, s.handleMessengerMessage)
+			log.Printf("bridge: initial messenger cookie load failed (platform=%s, proxy=%s): %v — starting unauthenticated; upload fresh cookies via POST /api/cookies/upload", platform, cfg.Messenger.Proxy, err)
+			client, err = messenger.NewUnauthenticatedWithPlatformAndProxy(cfg.Messenger.CookiesPath, platform, cfg.Messenger.Proxy, s.handleMessengerMessage)
 			if err != nil {
 				return nil, err
 			}
@@ -155,7 +155,7 @@ func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
 		if runner != nil && runner.Registry() != nil {
 			runner.Registry().SetMessengerReactionSender(client)
 		}
-		log.Printf("bridge: messenger enabled (platform=%s) with uid %d", client.Platform(), client.UID())
+		log.Printf("bridge: messenger enabled (platform=%s, proxy=%s) with uid %d", client.Platform(), client.Proxy(), client.UID())
 	}
 
 	if cfg.WhatsApp.Enabled {
@@ -212,11 +212,11 @@ func (s *Service) Run(ctx context.Context) error {
 		if err != nil {
 			// Non-fatal on boot: keep HTTP (/api/health, /api/cookies/upload), Discord,
 			// WhatsApp, and BNP alive so fresh cookies can heal Messenger without a deploy crash.
-			log.Printf("bridge: MESSENGER LOGIN FAILED (platform=%s): %v — continuing boot with messenger disconnected; upload fresh cookies via POST /api/cookies/upload", s.messenger.Platform(), err)
+			log.Printf("bridge: MESSENGER LOGIN FAILED (platform=%s, proxy=%s): %v — continuing boot with messenger disconnected; upload fresh cookies via POST /api/cookies/upload", s.messenger.Platform(), s.messenger.Proxy(), err)
 		} else {
-			log.Printf("bridge: messenger logged in (platform=%s) as %s (%d)", s.messenger.Platform(), name, uid)
+			log.Printf("bridge: messenger logged in (platform=%s, proxy=%s) as %s (%d)", s.messenger.Platform(), s.messenger.Proxy(), name, uid)
 			if err := s.messenger.Start(ctx); err != nil {
-				log.Printf("bridge: MESSENGER START FAILED (platform=%s): %v — continuing boot with messenger disconnected", s.messenger.Platform(), err)
+				log.Printf("bridge: MESSENGER START FAILED (platform=%s, proxy=%s): %v — continuing boot with messenger disconnected", s.messenger.Platform(), s.messenger.Proxy(), err)
 			}
 		}
 	}

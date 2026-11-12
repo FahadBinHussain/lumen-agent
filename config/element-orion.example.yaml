@@ -128,6 +128,8 @@ discord:
 messenger:
   enabled: false
   platform: messenger
+  proxy: ""
+  proxy_env: MESSENGER_PROXY_URL
   cookies_path: ./config/messenger-cookies.json
   allowed_thread_ids: []
 

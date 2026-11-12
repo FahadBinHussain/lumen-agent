@@ -1683,6 +1683,18 @@ fake outbox pairs through the real bnp route:
   - Hardened `executeRetry` with `connectedEpoch` tracking (`connEpoch` incremented on `ConnectedEvent`/`ReconnectedEvent`), at most one `ForceReconnect()` per `executeRetry` call subject to `minForceReconnectGap` (30s) and never when the socket is already closed (`isAlreadyClosedConnErr`), forcing `sendRetryBackoffs` (`2/5/10/15s`) whenever reconnect is throttled or skipped.
   - Surfaced `AuthError()` loudly in `healthwatch.go` (`logged out / halted — auto-reconnect stopped`), `/api/health` (`messenger_error`), and `/status` (`halted (...)`).
 
+## Messenger SOCKS5 residential proxy routing (2026-11-12)
+
+- **Problem (Meta Cybersecurity / Account Takeover Detection)**:
+  - Previously, WhatsApp routed egress through Tailscale exit node `laptop-main 100.76.10.50` (`socks5://127.0.0.1:1055`), matching the user's home residential IP in Dhaka, Bangladesh.
+  - Messenger had no proxy support: when cookies were exported from a Dhaka residential IP and uploaded to Render in Singapore, Messenger connected directly from a Render datacenter IP. Meta's anti-fraud/cybersecurity systems flagged the immediate geographic jump and cloud ASN as session hijacking / account takeover.
+- **Implementation**:
+  - `config.MessengerConfig`: Added `Proxy` and `ProxyEnv` fields (default `MESSENGER_PROXY_URL`), parsed and validated against `socks5://`, `socks5h://`, `http://`, `https://`.
+  - `internal/messenger`: Added `NewWithPlatformAndProxy`, `NewUnauthenticatedWithPlatformAndProxy`, `Proxy()` getter, and `buildMessagixConfig`. Configures `exhttp.SensibleClientSettings.WithProxy(proxyAddr)` so both HTTP (`reqClient`) and WebSocket (`wsClient`) dial via the proxy.
+  - `config/production.yaml`: Configured `messenger.proxy_env: MESSENGER_PROXY_URL`.
+  - `entrypoint.sh`: Auto-exports `MESSENGER_PROXY_URL="socks5://127.0.0.1:1055"` and `WHATSAPP_PROXY_URL="socks5://127.0.0.1:1055"` when `TS_AUTHKEY` is present and Tailscale starts.
+  - Render env vars: Added `MESSENGER_PROXY_URL` and `WHATSAPP_PROXY_URL` to `srv-db8o8qgn74is73c7kk60`.
+
 Upstream is `PUT-Request/Element-Orion` (canonical as of 2026-09-04; the old
 path `eli32-vlc/lumen-agent` redirects — the author moved all their projects
 into the new `PUT Request` org that day and restored the original

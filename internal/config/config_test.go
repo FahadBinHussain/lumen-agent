@@ -1002,6 +1002,40 @@ func TestMessengerPlatformDefaultNormalizeAndValidation(t *testing.T) {
 	}
 }
 
+func TestMessengerProxyConfig(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.sourcePath = filepath.Join(t.TempDir(), "lumen.yaml")
+	cfg.App.WorkspaceRoot = "."
+	cfg.App.SessionDir = ".element-orion"
+	cfg.Discord.BotToken = "token"
+	cfg.Discord.TokenMode = "bot"
+	cfg.Discord.AllowDirectMessages = true
+	cfg.Discord.GuildSessionScope = "user"
+	cfg.Messenger.Enabled = true
+	cfg.Messenger.CookiesPath = "./cookies.json"
+	cfg.Messenger.Platform = "facebook"
+	cfg.Messenger.Proxy = "socks5://127.0.0.1:1055"
+
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate failed with valid socks5 proxy: %v", err)
+	}
+
+	cfg.Messenger.Proxy = "ftp://127.0.0.1:21"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "messenger.proxy must be a socks5:// or http(s):// URL") {
+		t.Fatalf("expected proxy scheme error, got: %v", err)
+	}
+
+	t.Setenv("TEST_MESSENGER_PROXY", "socks5://127.0.0.1:1055")
+	cfg.Messenger.Proxy = ""
+	cfg.Messenger.ProxyEnv = "TEST_MESSENGER_PROXY"
+	if err := cfg.resolvePaths(); err != nil {
+		t.Fatalf("resolvePaths returned error: %v", err)
+	}
+	if cfg.Messenger.Proxy != "socks5://127.0.0.1:1055" {
+		t.Fatalf("resolved messenger.proxy = %q, want socks5://127.0.0.1:1055", cfg.Messenger.Proxy)
+	}
+}
+
 
 
 

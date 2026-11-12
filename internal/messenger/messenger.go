@@ -19,6 +19,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/rs/zerolog"
+	"go.mau.fi/util/exhttp"
 
 	"go.mau.fi/mautrix-meta/pkg/messagix"
 	"go.mau.fi/mautrix-meta/pkg/messagix/dgw"
@@ -81,6 +82,7 @@ type Client struct {
 	client          *messagix.Client
 	uid             atomic.Int64
 	platform        types.Platform
+	proxyAddr       string
 	handler         Handler
 	reactionHandler ReactionHandler
 	cookiesPath     string
@@ -261,11 +263,30 @@ func validatePlatform(platform types.Platform) error {
 	return nil
 }
 
+func buildMessagixConfig(proxyAddr string) (*messagix.Config, error) {
+	cfg := &messagix.Config{
+		ClientSettings: exhttp.SensibleClientSettings,
+	}
+	proxyAddr = strings.TrimSpace(proxyAddr)
+	if proxyAddr != "" {
+		var err error
+		cfg.ClientSettings, err = cfg.ClientSettings.WithProxy(proxyAddr)
+		if err != nil {
+			return nil, fmt.Errorf("configure messenger proxy %q: %w", proxyAddr, err)
+		}
+	}
+	return cfg, nil
+}
+
 func New(cookiesPath string, handler Handler) (*Client, error) {
-	return NewWithPlatform(cookiesPath, types.Messenger, handler)
+	return NewWithPlatformAndProxy(cookiesPath, types.Messenger, "", handler)
 }
 
 func NewWithPlatform(cookiesPath string, platform types.Platform, handler Handler) (*Client, error) {
+	return NewWithPlatformAndProxy(cookiesPath, platform, "", handler)
+}
+
+func NewWithPlatformAndProxy(cookiesPath string, platform types.Platform, proxyAddr string, handler Handler) (*Client, error) {
 	if err := validatePlatform(platform); err != nil {
 		return nil, err
 	}
@@ -280,9 +301,14 @@ func NewWithPlatform(cookiesPath string, platform types.Platform, handler Handle
 	}
 
 	logger := zerolog.New(os.Stderr).With().Str("component", "messagix").Timestamp().Logger()
-	client := messagix.NewClient(c, logger, &messagix.Config{})
+	mCfg, err := buildMessagixConfig(proxyAddr)
+	if err != nil {
+		return nil, err
+	}
+	client := messagix.NewClient(c, logger, mCfg)
 
 	cl := newClientShell(client, cookiesPath, platform, handler)
+	cl.proxyAddr = strings.TrimSpace(proxyAddr)
 	cl.startDispatcher()
 	return cl, nil
 }
@@ -291,10 +317,15 @@ func NewWithPlatform(cookiesPath string, platform types.Platform, handler Handle
 // without requiring valid cookies at boot (used so POST /api/cookies/upload
 // can heal an initially unprovisioned or scrubbed bridge without a deploy crash).
 func NewUnauthenticatedWithPlatform(cookiesPath string, platform types.Platform, handler Handler) (*Client, error) {
+	return NewUnauthenticatedWithPlatformAndProxy(cookiesPath, platform, "", handler)
+}
+
+func NewUnauthenticatedWithPlatformAndProxy(cookiesPath string, platform types.Platform, proxyAddr string, handler Handler) (*Client, error) {
 	if err := validatePlatform(platform); err != nil {
 		return nil, err
 	}
 	cl := newClientShell(nil, cookiesPath, platform, handler)
+	cl.proxyAddr = strings.TrimSpace(proxyAddr)
 	cl.startDispatcher()
 	return cl, nil
 }
@@ -331,6 +362,13 @@ func (c *Client) Platform() types.Platform {
 	return c.platform
 }
 
+func (c *Client) Proxy() string {
+	if c == nil {
+		return ""
+	}
+	return c.proxyAddr
+}
+
 func (c *Client) SetHandler(handler Handler) {
 	c.handler = handler
 }
@@ -352,7 +390,7 @@ func (c *Client) Login(ctx context.Context) (int64, string, error) {
 	if err != nil {
 		if isTerminalAuthError(err) {
 			c.haltAuth(err.Error())
-			log.Printf("messenger: AUTH HALTED on login (platform=%s): %v — auto-reconnect disabled until fresh cookies are uploaded", c.platform, err)
+			log.Printf("messenger: AUTH HALTED on login (platform=%s, proxy=%s): %v — auto-reconnect disabled until fresh cookies are uploaded", c.platform, c.proxyAddr, err)
 		}
 		return 0, "", fmt.Errorf("load messages page: %w", err)
 	}
@@ -414,13 +452,19 @@ func (c *Client) ReloadCookies(ctx context.Context) error {
 	c.uid.Store(0)
 	c.setClient(nil)
 	logger := zerolog.New(os.Stderr).With().Str("component", "messagix").Timestamp().Logger()
-	newClient := messagix.NewClient(cc, logger, &messagix.Config{})
+	mCfg, err := buildMessagixConfig(c.proxyAddr)
+	if err != nil {
+		c.haltAuth(err.Error())
+		c.setClient(nil)
+		return err
+	}
+	newClient := messagix.NewClient(cc, logger, mCfg)
 
 	userInfo, _, err := newClient.LoadMessagesPage(ctx)
 	if err != nil {
 		if isTerminalAuthError(err) {
 			c.haltAuth(err.Error())
-			log.Printf("messenger: AUTH HALTED during reload (platform=%s): %v — auto-reconnect disabled until fresh cookies are uploaded", c.platform, err)
+			log.Printf("messenger: AUTH HALTED during reload (platform=%s, proxy=%s): %v — auto-reconnect disabled until fresh cookies are uploaded", c.platform, c.proxyAddr, err)
 		}
 		return fmt.Errorf("load messages page: %w", err)
 	}
@@ -432,7 +476,7 @@ func (c *Client) ReloadCookies(ctx context.Context) error {
 	}
 	c.setClient(newClient)
 	c.uid.Store(uid)
-	log.Printf("messenger: cookies reloaded (platform=%s), logged in as %s (%d)", c.platform, userInfo.GetName(), uid)
+	log.Printf("messenger: cookies reloaded (platform=%s, proxy=%s), logged in as %s (%d)", c.platform, c.proxyAddr, userInfo.GetName(), uid)
 
 	return c.Start(ctx)
 }

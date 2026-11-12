@@ -163,6 +163,8 @@ type MessengerConfig struct {
 	Platform         string   `yaml:"platform"`
 	CookiesPath      string   `yaml:"cookies_path"`
 	AllowedThreadIDs []string `yaml:"allowed_thread_ids"`
+	Proxy            string   `yaml:"proxy"`
+	ProxyEnv         string   `yaml:"proxy_env"`
 }
 
 type WhatsAppConfig struct {
@@ -845,6 +847,11 @@ func (c *Config) resolvePaths() error {
 		c.Messenger.CookiesPath = resolvedCookiesPath
 	}
 	c.Messenger.AllowedThreadIDs = uniqueTrimmedStrings(c.Messenger.AllowedThreadIDs)
+	c.Messenger.Proxy = strings.TrimSpace(c.Messenger.Proxy)
+	c.Messenger.ProxyEnv = strings.TrimSpace(c.Messenger.ProxyEnv)
+	if c.Messenger.Proxy == "" && c.Messenger.ProxyEnv != "" {
+		c.Messenger.Proxy = strings.TrimSpace(os.Getenv(c.Messenger.ProxyEnv))
+	}
 	c.WhatsApp.AllowedJIDsEnv = strings.TrimSpace(c.WhatsApp.AllowedJIDsEnv)
 	if c.WhatsApp.AllowedJIDsEnv != "" {
 		ids, err := resolveCSVEnv(c.WhatsApp.AllowedJIDsEnv, "whatsapp.allowed_jids_env")
@@ -1439,6 +1446,12 @@ func (c Config) validate() error {
 		}
 		if strings.TrimSpace(c.Messenger.CookiesPath) == "" {
 			return fmt.Errorf("messenger.cookies_path must be set when messenger.enabled is true")
+		}
+		if proxy := strings.TrimSpace(c.Messenger.Proxy); proxy != "" {
+			parsed, err := url.Parse(proxy)
+			if err != nil || parsed.Host == "" || !slices.Contains([]string{"socks5", "socks5h", "http", "https"}, parsed.Scheme) {
+				return fmt.Errorf("messenger.proxy must be a socks5:// or http(s):// URL, got %q", proxy)
+			}
 		}
 	}
 

@@ -143,3 +143,32 @@ func TestNewWithPlatformAndUnauthenticated(t *testing.T) {
 	}
 	unauth.Disconnect()
 }
+
+func TestNewWithPlatformAndProxy(t *testing.T) {
+	cookiesPath := filepath.Join(t.TempDir(), "cookies.json")
+	if err := os.WriteFile(cookiesPath, []byte(`{"c_user":"1","xs":"x","datr":"d"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fbClient, err := NewWithPlatformAndProxy(cookiesPath, types.Facebook, "socks5://127.0.0.1:1055", nil)
+	if err != nil {
+		t.Fatalf("NewWithPlatformAndProxy failed: %v", err)
+	}
+	if fbClient.Proxy() != "socks5://127.0.0.1:1055" {
+		t.Fatalf("Proxy() = %q, want socks5://127.0.0.1:1055", fbClient.Proxy())
+	}
+	fbClient.Disconnect()
+
+	if _, err := NewWithPlatformAndProxy(cookiesPath, types.Facebook, "ftp://127.0.0.1:21", nil); err == nil {
+		t.Fatal("expected error for unsupported proxy scheme")
+	}
+
+	unauth, err := NewUnauthenticatedWithPlatformAndProxy(filepath.Join(t.TempDir(), "missing.json"), types.Facebook, "socks5://127.0.0.1:1055", nil)
+	if err != nil {
+		t.Fatalf("NewUnauthenticatedWithPlatformAndProxy failed: %v", err)
+	}
+	if unauth.Proxy() != "socks5://127.0.0.1:1055" {
+		t.Fatalf("unauth.Proxy() = %q, want socks5://127.0.0.1:1055", unauth.Proxy())
+	}
+	unauth.Disconnect()
+}
