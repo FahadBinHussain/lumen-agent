@@ -1695,6 +1695,46 @@ fake outbox pairs through the real bnp route:
   - `entrypoint.sh`: Auto-exports `MESSENGER_PROXY_URL="socks5://127.0.0.1:1055"` and `WHATSAPP_PROXY_URL="socks5://127.0.0.1:1055"` when `TS_AUTHKEY` is present and Tailscale starts.
   - Render env vars: Added `MESSENGER_PROXY_URL` and `WHATSAPP_PROXY_URL` to `srv-db8o8qgn74is73c7kk60`.
 
+## Messenger session keepalive (2026-11-14)
+
+- **Incident (2026-11-13 23:29 Dhaka)**: the live DGW socket EOF-dropped and
+  the immediate reconnect got Meta `4003 Unauthorized`, halting Messenger.
+  The session had lived 6 days on the cookie set uploaded 2026-11-07. No
+  deploy/restart since the 11:36 restart that day, no proxy outage at the
+  time (WhatsApp delivered the health-watch alert 45s later), no
+  checkpoint/consent signals in the logs, and the user confirmed he did not
+  touch the account — Meta invalidated the session server-side on its own
+  (flagging from exit-node IP churn + reconnect storms, or plain expiry;
+  the logs cannot tell those apart).
+- **Two structural gaps made it fatal**:
+  1. Nothing ever refreshed the session: messagix rotates cookies in memory
+     from Set-Cookie responses, but the live client makes almost no HTTP
+     requests (traffic rides the DGW socket), so the session went hours
+     without refresh traffic.
+  2. Refreshed cookies were never persisted: `GetAll()` had zero callers,
+     so the cookies file (and its Neon snapshot) always held the stale
+     upload-time set and every restart reloaded 6-day-old cookies.
+- **Fix (`internal/messenger/keeper.go`, `session_keepalive_interval: 1h`)**:
+  once an hour the keeper performs a real GET of the messages page — the
+  same request a browser tab makes — applies Meta's Set-Cookie rotation
+  explicitly (`MakeRequestOnce` does not apply it; only the unexported
+  `fetchPageData` does), then writes the refreshed cookies back to the
+  cookies file when they changed (atomic temp+rename, 0600). The 1m
+  persist loop snapshots the file to Neon.
+- **Deliberately NOT `LoadMessagesPage` for the refresh**: it rebuilds the
+  messagix sync manager (`c.syncManager = c.newSyncManager()`), which is
+  unsafe on a live connected socket. A plain authenticated GET refreshes
+  cookies with no sync-manager side effects.
+- **Keeper rules**: skips silently while unauthenticated or auth-halted
+  (dead cookies must never be hammered); a terminal auth error from the
+  refresh halts like every other terminal error; one log line per cycle.
+  Started once from `Start()` (guarded — `ReloadCookies` re-enters
+  `Start`), stopped from `Disconnect()`. Config: empty = 1h default,
+  `"0s"` = disabled, minimum 5m when enabled.
+- **What the keeper does NOT do**: it cannot resurrect a dead session. The
+  2026-11-13 halt still needed one fresh-cookie upload; the keeper only
+  stops the NEXT death from the same staleness cause.
+
 Upstream is `PUT-Request/Element-Orion` (canonical as of 2026-09-04; the old
 path `eli32-vlc/lumen-agent` redirects — the author moved all their projects
 into the new `PUT Request` org that day and restored the original

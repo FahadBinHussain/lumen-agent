@@ -165,6 +165,23 @@ type MessengerConfig struct {
 	AllowedThreadIDs []string `yaml:"allowed_thread_ids"`
 	Proxy            string   `yaml:"proxy"`
 	ProxyEnv         string   `yaml:"proxy_env"`
+	// KeepaliveInterval is the session keeper cadence ("1h", "30m"). Empty
+	// means the 1h default; explicit "0s" disables the keeper. See
+	// internal/messenger/keeper.go.
+	KeepaliveInterval string `yaml:"session_keepalive_interval"`
+}
+
+// SessionKeepaliveInterval returns the parsed session keeper cadence,
+// defaulting to 1h. Explicit "0s" disables the keeper (returns 0).
+func (c MessengerConfig) SessionKeepaliveInterval() time.Duration {
+	if strings.TrimSpace(c.KeepaliveInterval) == "" {
+		return time.Hour
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(c.KeepaliveInterval))
+	if err != nil || d < 0 {
+		return time.Hour
+	}
+	return d
 }
 
 type WhatsAppConfig struct {
@@ -847,6 +864,7 @@ func (c *Config) resolvePaths() error {
 		c.Messenger.CookiesPath = resolvedCookiesPath
 	}
 	c.Messenger.AllowedThreadIDs = uniqueTrimmedStrings(c.Messenger.AllowedThreadIDs)
+	c.Messenger.KeepaliveInterval = strings.TrimSpace(c.Messenger.KeepaliveInterval)
 	c.Messenger.Proxy = strings.TrimSpace(c.Messenger.Proxy)
 	c.Messenger.ProxyEnv = strings.TrimSpace(c.Messenger.ProxyEnv)
 	if c.Messenger.Proxy == "" && c.Messenger.ProxyEnv != "" {
@@ -1451,6 +1469,18 @@ func (c Config) validate() error {
 			parsed, err := url.Parse(proxy)
 			if err != nil || parsed.Host == "" || !slices.Contains([]string{"socks5", "socks5h", "http", "https"}, parsed.Scheme) {
 				return fmt.Errorf("messenger.proxy must be a socks5:// or http(s):// URL, got %q", proxy)
+			}
+		}
+		if raw := strings.TrimSpace(c.Messenger.KeepaliveInterval); raw != "" {
+			d, err := time.ParseDuration(raw)
+			if err != nil {
+				return fmt.Errorf("messenger.session_keepalive_interval must be a duration like \"1h\" or \"0s\" (disabled), got %q", raw)
+			}
+			// Floor mirrors minSessionKeepaliveInterval in
+			// internal/messenger/keeper.go: anything faster looks
+			// automated to Meta and buys nothing.
+			if d < 0 || (d > 0 && d < 5*time.Minute) {
+				return fmt.Errorf("messenger.session_keepalive_interval must be \"0s\" (disabled) or >= 5m, got %q", raw)
 			}
 		}
 	}

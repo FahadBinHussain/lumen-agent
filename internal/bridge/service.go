@@ -158,6 +158,10 @@ func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
 			}
 		}
 		s.messenger = client
+		// Session keeper (2026-11-14): hourly /messages refresh + persist
+		// of the messagix-refreshed cookies, so a restart never reloads
+		// the stale upload-time cookie set. See keeper.go.
+		client.SetSessionKeepaliveInterval(cfg.Messenger.SessionKeepaliveInterval())
 		client.SetReactionHandler(s.handleMessengerReaction)
 		if runner != nil && runner.Registry() != nil {
 			runner.Registry().SetMessengerReactionSender(client)

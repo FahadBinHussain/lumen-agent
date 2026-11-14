@@ -129,6 +129,14 @@ type Client struct {
 	retryDelay      time.Duration // base backoff between non-terminal failed attempts
 	reloadFn        func(context.Context) error
 	reloadMu        sync.Mutex // serializes ReloadCookies (external upload vs auto-reconnect)
+
+	// session keepalive (2026-11-14): periodic /messages refresh + persist
+	// of the messagix-refreshed cookies, so a restart never reloads the
+	// stale upload-time cookie set. See keeper.go.
+	keeperMu       sync.Mutex
+	keeperInterval time.Duration // 0 = disabled; set from config in bridge.New
+	keeperStop     chan struct{}
+	keeperRunning  bool
 }
 
 var (
@@ -417,6 +425,7 @@ func (c *Client) Start(ctx context.Context) error {
 			log.Printf("messenger: connection error: %v", err)
 		}
 	}()
+	c.startSessionKeeper()
 	return nil
 }
 
@@ -482,6 +491,7 @@ func (c *Client) ReloadCookies(ctx context.Context) error {
 }
 
 func (c *Client) Disconnect() {
+	c.stopSessionKeeper()
 	c.cancelPendingReconnect()
 	if mc := c.currentClient(); mc != nil {
 		mc.Disconnect()

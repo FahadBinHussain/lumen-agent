@@ -131,6 +131,10 @@ messenger:
   proxy: ""
   proxy_env: MESSENGER_PROXY_URL
   cookies_path: ./config/messenger-cookies.json
+  # session keepalive: how often the live session is refreshed with a real
+  # /messages request and the refreshed cookies persisted (empty = 1h
+  # default, "0s" = disabled, minimum 5m when enabled).
+  session_keepalive_interval: 1h
   allowed_thread_ids: []
 
 # WhatsApp channel via embedded whatsmeow (session persisted to Neon).

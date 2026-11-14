@@ -1036,6 +1036,57 @@ func TestMessengerProxyConfig(t *testing.T) {
 	}
 }
 
+func TestMessengerSessionKeepaliveInterval(t *testing.T) {
+	cfg := defaultConfig()
+	if got := cfg.Messenger.SessionKeepaliveInterval(); got != time.Hour {
+		t.Fatalf("empty keepalive interval = %s, want 1h default", got)
+	}
+	cfg.Messenger.KeepaliveInterval = "0s"
+	if got := cfg.Messenger.SessionKeepaliveInterval(); got != 0 {
+		t.Fatalf("\"0s\" keepalive interval = %s, want 0 (disabled)", got)
+	}
+	cfg.Messenger.KeepaliveInterval = "30m"
+	if got := cfg.Messenger.SessionKeepaliveInterval(); got != 30*time.Minute {
+		t.Fatalf("\"30m\" keepalive interval = %s, want 30m", got)
+	}
+	cfg.Messenger.KeepaliveInterval = "bogus"
+	if got := cfg.Messenger.SessionKeepaliveInterval(); got != time.Hour {
+		t.Fatalf("unparseable keepalive interval = %s, want 1h default", got)
+	}
+}
+
+func TestMessengerSessionKeepaliveValidation(t *testing.T) {
+	valid := func() Config {
+		cfg := defaultConfig()
+		cfg.sourcePath = filepath.Join(t.TempDir(), "lumen.yaml")
+		cfg.App.WorkspaceRoot = "."
+		cfg.App.SessionDir = ".element-orion"
+		cfg.Discord.BotToken = "token"
+		cfg.Discord.TokenMode = "bot"
+		cfg.Discord.AllowDirectMessages = true
+		cfg.Discord.GuildSessionScope = "user"
+		cfg.Messenger.Enabled = true
+		cfg.Messenger.CookiesPath = "./cookies.json"
+		cfg.Messenger.Platform = "facebook"
+		return cfg
+	}
+
+	for _, ok := range []string{"", "0s", "5m", "1h"} {
+		cfg := valid()
+		cfg.Messenger.KeepaliveInterval = ok
+		if err := cfg.validate(); err != nil {
+			t.Fatalf("validate rejected keepalive %q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"bogus", "1m", "4m59s", "-1h"} {
+		cfg := valid()
+		cfg.Messenger.KeepaliveInterval = bad
+		if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "messenger.session_keepalive_interval") {
+			t.Fatalf("expected keepalive error for %q, got: %v", bad, err)
+		}
+	}
+}
+
 
 
 
