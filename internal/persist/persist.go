@@ -24,11 +24,16 @@ import (
 // rows whose content actually changed.
 //
 // Besides the session dir, the store also backs up the workspace-root
-// identity files (IDENTITY.md / USER.md / SOUL.md): the prompt loader reads
-// them from the workspace root, not the session dir, and they are gitignored,
-// so Neon is their only durable copy. They are stored under the
-// "@workspace/" path prefix so they can never collide with session-dir
-// paths.
+// .md files the prompt loader reads (IDENTITY.md / USER.md / SOUL.md /
+// CODEBASE.md / TASKS.md / HEARTBEAT.md): they live in the workspace root,
+// not the session dir, and they are gitignored, so the snapshot table is
+// their only durable copy. They are stored under the "@workspace/" path
+// prefix so they can never collide with session-dir paths.
+//
+// BOOTSTRAP.md is deliberately NOT backed up: deleting it is the signal
+// that setup is complete, and @workspace/ rows are never deleted by sync,
+// so backing it up would resurrect a finished ritual on the next fresh
+// container.
 type Store struct {
 	pool    *pgxpool.Pool
 	dir     string
@@ -40,10 +45,10 @@ type Store struct {
 
 const minSyncInterval = 2 * time.Second
 
-// workspaceIdentityFiles are the gitignored workspace-root files the prompt
+// workspaceRootFiles are the gitignored workspace-root files the prompt
 // loader reads (internal/agent/prompt_context.go). Backed up alongside the
 // session dir and restored on a fresh container.
-var workspaceIdentityFiles = []string{"IDENTITY.md", "USER.md", "SOUL.md"}
+var workspaceRootFiles = []string{"IDENTITY.md", "USER.md", "SOUL.md", "CODEBASE.md", "TASKS.md", "HEARTBEAT.md"}
 
 // wsPathPrefix separates workspace-root rows from session-dir rows in the
 // snapshot table.
@@ -135,7 +140,7 @@ func (s *Store) Restore(ctx context.Context) error {
 		var abs string
 		if strings.HasPrefix(rel, wsPathPrefix) {
 			name := strings.TrimPrefix(rel, wsPathPrefix)
-			if !containsString(workspaceIdentityFiles, name) {
+			if !containsString(workspaceRootFiles, name) {
 				log.Printf("persist: skipping unknown workspace file %q", rel)
 				continue
 			}
@@ -204,7 +209,7 @@ func (s *Store) Sync(ctx context.Context) error {
 
 	liveWs := map[string]string{} // identity file name -> sha256
 	if s.ws != "" && s.ws != s.dir {
-		for _, name := range workspaceIdentityFiles {
+		for _, name := range workspaceRootFiles {
 			abs := filepath.Join(s.ws, name)
 			fi, err := os.Stat(abs)
 			if err != nil || fi.IsDir() {
@@ -289,7 +294,7 @@ func (s *Store) Sync(ctx context.Context) error {
 			// missing local file just means the row is seed data for the next
 			// fresh container (deleting it here would wipe it before the next
 			// restore ever sees it — a real race seen on 2026-08-17). To
-			// remove an identity file for good, delete its @workspace/ row in
+			// remove a workspace file for good, delete its @workspace/ row in
 			// the snapshot table manually.
 			continue
 		}
