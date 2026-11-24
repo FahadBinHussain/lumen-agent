@@ -582,6 +582,20 @@ on discord; heartbeat/dream/background prompts skip the animation entirely.
   (dailybnp must not emit bare `scrape.do` in message text — rewrite as
   `scrapedo`); do NOT sanitize silently on the send side. Diagnostic filter:
   `text=insertMessageSendError` on the Render logs API.
+- **Messenger reaction misattribution (fixed 2026-11-24, commit 4d1795d)**:
+  `handleMessengerReaction` used to run the agent for EVERY reaction in an
+  allowed thread — it never checked whether the reacted-to message was the
+  bot's own, and Facebook's `LSUpsertReaction` event carries no target
+  author, so the model couldn't tell either (symptom: a friend reacted to
+  the user's message and the bot replied "appreciate it!"). Now the bridge
+  records every sent messenger message ID (`recordOwnMessage`, same shape
+  as whatsmeow's `recordSent`/`isRecentSent`, 24h TTL, persisted to
+  `bridge-own-messages.json` in the session dir so deploys don't forget)
+  and the reaction handler drops anything not in that set. Both send
+  paths record: `Service.send` (agent replies) and `Service.SendMessage`
+  (route fanout/BNP). Synthetic `otid_...` IDs are never recorded (a
+  reaction always carries the real server ID). Reactions to messages sent
+  before this deploy are ignored — the set only knows sends since boot.
 - **Meta send without optimistic replace table (fixed 2026-10-26)**:
   When Meta delivers messages with complex URLs or sync transactions (e.g. `LSExecuteFirstBlockForSyncTransactionV4`),
   `resp.LSReplaceOptimsiticMessage` may be omitted in the immediate RPC reply even though `ExecuteTasks` succeeded (`err == nil`)
