@@ -29,6 +29,16 @@ import (
 const bridgeHistoryFile = "bridge-sessions.json"
 const bridgeAllowlistFile = "bridge-allowlist.json"
 const bridgeDisabledNotifsFile = "bridge-disabled-notifs.json"
+const bridgeOwnMessagesFile = "bridge-own-messages.json"
+
+// ownMessageTTL bounds how long a sent message ID is remembered for
+// reaction matching. Mirrors whatsmeow's 24h sent-ID retention: a
+// reaction almost always targets a recent message.
+const ownMessageTTL = 24 * time.Hour
+
+// ownMessageMaxIDs is the size trigger for the TTL prune (same shape as
+// whatsmeow's sentIDs cap).
+const ownMessageMaxIDs = 500
 
 // mirrorEdit is one "primary messenger message -> mirrored chat message"
 // (whatsapp/discord) mapping entry with the time the mirror was sent, so the
@@ -69,6 +79,19 @@ type Service struct {
 	// Persisted to bridge-disabled-notifs.json and synced via persist toucher.
 	disabledNotifs     map[string][]string
 	disabledNotifsPath string
+
+	// ownMsgIDs is the set of messenger message IDs this bot sent, with
+	// the time each was sent. A reaction only starts an agent run when
+	// its target is one of these: without this, the bot answers reactions
+	// meant for other people's messages (seen 2026-11-24 — a friend
+	// reacted to the user's message and the bot replied "appreciate
+	// it!"). Same shape as whatsmeow's sentIDs, but persisted to
+	// bridge-own-messages.json in the session dir (Neon-backed via
+	// persist) so a deploy/restart does not forget which messages are
+	// ours.
+	ownMsgMu        sync.Mutex
+	ownMsgIDs       map[string]time.Time
+	ownMessagesPath string
 
 	// waEdits maps a route fanout's primary (messenger) message ID to the
 	// whatsapp message that mirrored it, keyed "messengerID|jid", so EVERY
@@ -128,13 +151,15 @@ func (s *Service) SetDiscord(d DiscordHealthClient) {
 
 func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
 	s := &Service{
-		cfg:         cfg,
-		runner:      runner,
-		sessions:    make(map[string][]llm.Message),
+		cfg:                cfg,
+		runner:             runner,
+		sessions:           make(map[string][]llm.Message),
 		allowlist:          make(map[string][]string),
 		allowPath:          filepath.Join(cfg.App.SessionDir, bridgeAllowlistFile),
 		disabledNotifs:     make(map[string][]string),
 		disabledNotifsPath: filepath.Join(cfg.App.SessionDir, bridgeDisabledNotifsFile),
+		ownMsgIDs:          make(map[string]time.Time),
+		ownMessagesPath:    filepath.Join(cfg.App.SessionDir, bridgeOwnMessagesFile),
 		waEdits:            make(map[string]mirrorEdit),
 		dcEdits:            make(map[string]mirrorEdit),
 		runCancels:         make(map[string]runCancel),
@@ -143,6 +168,7 @@ func New(cfg config.Config, runner *agent.Runner) (*Service, error) {
 	s.loadHistory()
 	s.loadAllowlist()
 	s.loadDisabledNotifs()
+	s.loadOwnMessages()
 
 	if cfg.Messenger.Enabled {
 		platform, err := messenger.ParsePlatform(cfg.Messenger.Platform)
@@ -434,6 +460,10 @@ func (s *Service) handleMessengerReaction(ctx context.Context, react messenger.R
 		return
 	}
 	if s.messenger != nil && react.ActorID == s.messenger.UID() {
+		return
+	}
+	if !s.isOwnMessage(react.MessageID) {
+		log.Printf("bridge: messenger reaction from %d in thread %s ignored (message %s is not ours)", react.ActorID, threadID, react.MessageID)
 		return
 	}
 
@@ -742,6 +772,92 @@ func (s *Service) saveAllowlist() {
 	}
 }
 
+// loadOwnMessages restores the sent-message-ID set from the session dir
+// (same pattern as loadAllowlist), dropping entries older than
+// ownMessageTTL.
+func (s *Service) loadOwnMessages() {
+	data, err := os.ReadFile(s.ownMessagesPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("bridge: failed to read own-messages file %s: %v", s.ownMessagesPath, err)
+		}
+		return
+	}
+
+	s.ownMsgMu.Lock()
+	defer s.ownMsgMu.Unlock()
+	if err := json.Unmarshal(data, &s.ownMsgIDs); err != nil {
+		log.Printf("bridge: failed to parse own-messages file %s: %v (starting empty)", s.ownMessagesPath, err)
+		s.ownMsgIDs = make(map[string]time.Time)
+		return
+	}
+	s.pruneOwnMessagesLocked()
+	log.Printf("bridge: restored %d own messenger message ids from %s", len(s.ownMsgIDs), s.ownMessagesPath)
+}
+
+// saveOwnMessages persists the sent-message-ID set (best-effort, same
+// pattern as saveAllowlist; the persist toucher syncs it to Neon).
+func (s *Service) saveOwnMessages() {
+	s.ownMsgMu.Lock()
+	data, err := json.Marshal(s.ownMsgIDs)
+	s.ownMsgMu.Unlock()
+	if err != nil {
+		log.Printf("bridge: marshal own-messages failed: %v", err)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(s.ownMessagesPath), 0o755); err != nil {
+		log.Printf("bridge: mkdir for own-messages file failed: %v", err)
+		return
+	}
+	if err := os.WriteFile(s.ownMessagesPath, data, 0o644); err != nil {
+		log.Printf("bridge: write own-messages file failed: %v", err)
+		return
+	}
+	if s.toucher != nil {
+		s.toucher()
+	}
+}
+
+// pruneOwnMessagesLocked drops entries older than ownMessageTTL. The
+// caller must hold ownMsgMu.
+func (s *Service) pruneOwnMessagesLocked() {
+	cutoff := time.Now().Add(-ownMessageTTL)
+	for id, at := range s.ownMsgIDs {
+		if at.Before(cutoff) {
+			delete(s.ownMsgIDs, id)
+		}
+	}
+}
+
+// recordOwnMessage remembers a message ID the bot just sent, so a later
+// reaction to it can be recognised as ours. Synthetic "otid_..." IDs
+// (SendText's fallback when Facebook returns no real ID) are skipped: a
+// reaction event always carries the real server ID, so a synthetic ID
+// can never match one.
+func (s *Service) recordOwnMessage(messageID string) {
+	if messageID == "" || strings.HasPrefix(messageID, "otid_") {
+		return
+	}
+	s.ownMsgMu.Lock()
+	if s.ownMsgIDs == nil {
+		s.ownMsgIDs = make(map[string]time.Time)
+	}
+	s.ownMsgIDs[messageID] = time.Now()
+	if len(s.ownMsgIDs) > ownMessageMaxIDs {
+		s.pruneOwnMessagesLocked()
+	}
+	s.ownMsgMu.Unlock()
+	s.saveOwnMessages()
+}
+
+// isOwnMessage reports whether messageID is one the bot sent recently.
+func (s *Service) isOwnMessage(messageID string) bool {
+	s.ownMsgMu.Lock()
+	defer s.ownMsgMu.Unlock()
+	_, ok := s.ownMsgIDs[messageID]
+	return ok
+}
+
 // loadDisabledNotifs restores the runtime disabled notifications overlay from the session dir.
 func (s *Service) loadDisabledNotifs() {
 	data, err := os.ReadFile(s.disabledNotifsPath)
@@ -985,7 +1101,9 @@ func (s *Service) send(platform string, threadID string, jid string, text string
 			log.Printf("bridge: invalid messenger thread id %q", threadID)
 			return ""
 		}
-		return s.messenger.SendText(context.Background(), id, text)
+		msgID := s.messenger.SendText(context.Background(), id, text)
+		s.recordOwnMessage(msgID)
+		return msgID
 	case "whatsapp":
 		if s.whatsapp == nil {
 			log.Printf("bridge: whatsapp not enabled, cannot send to %s", jid)
@@ -1080,6 +1198,7 @@ func (s *Service) SendMessage(ctx context.Context, threadID int64, text string) 
 	if id == "" {
 		return "", fmt.Errorf("messenger send returned no message id")
 	}
+	s.recordOwnMessage(id)
 	s.recordNotificationInSession("messenger", tidStr, text)
 	return id, nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -624,7 +625,6 @@ func TestFormatWithQuoted(t *testing.T) {
 	}
 }
 
-
 func TestHandleMessengerReactionAllowlistGate(t *testing.T) {
 	s := &Service{
 		cfg: config.Config{
@@ -656,6 +656,104 @@ func TestHandleMessengerReactionAllowlistGate(t *testing.T) {
 		ActorID:   789,
 		Reaction:  "",
 	})
+}
+
+func TestHandleMessengerReactionOwnMessageGate(t *testing.T) {
+	s := &Service{
+		cfg: config.Config{
+			Messenger: config.MessengerConfig{
+				AllowedThreadIDs: []string{"123"},
+			},
+		},
+		ownMsgIDs: map[string]time.Time{"mid.own": time.Now()},
+	}
+
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(old)
+
+	// reaction to someone else's message: dropped with a log line
+	s.handleMessengerReaction(context.Background(), messenger.ReactionEvent{
+		ThreadID:  123,
+		MessageID: "mid.other",
+		ActorID:   789,
+		Reaction:  "👍",
+	})
+	if !strings.Contains(buf.String(), "is not ours") {
+		t.Fatalf("reaction to another message should be ignored, log was: %s", buf.String())
+	}
+
+	// reaction to our own message: passes the gate (no runner, so the run
+	// stops at the nil-runner check — but no "not ours" line)
+	buf.Reset()
+	s.handleMessengerReaction(context.Background(), messenger.ReactionEvent{
+		ThreadID:  123,
+		MessageID: "mid.own",
+		ActorID:   789,
+		Reaction:  "👍",
+	})
+	if strings.Contains(buf.String(), "is not ours") {
+		t.Fatalf("reaction to our own message should pass the gate, log was: %s", buf.String())
+	}
+}
+
+func TestRecordOwnMessage(t *testing.T) {
+	s := &Service{
+		ownMsgIDs:       make(map[string]time.Time),
+		ownMessagesPath: filepath.Join(t.TempDir(), bridgeOwnMessagesFile),
+	}
+
+	s.recordOwnMessage("mid.1")
+	if !s.isOwnMessage("mid.1") {
+		t.Fatal("recorded message should be recognised as ours")
+	}
+	if s.isOwnMessage("mid.2") {
+		t.Fatal("unrecorded message must not be recognised as ours")
+	}
+
+	// empty and synthetic ids are never recorded
+	s.recordOwnMessage("")
+	s.recordOwnMessage("otid_12345")
+	if s.isOwnMessage("otid_12345") {
+		t.Fatal("synthetic otid_ id must not be recorded")
+	}
+
+	// a duplicate record does not grow the set
+	s.recordOwnMessage("mid.1")
+	if n := len(s.ownMsgIDs); n != 1 {
+		t.Fatalf("duplicate record grew the set: %d entries", n)
+	}
+
+	// the TTL prune drops stale entries and keeps fresh ones
+	s.ownMsgIDs["mid.old"] = time.Now().Add(-25 * time.Hour)
+	s.ownMsgMu.Lock()
+	s.pruneOwnMessagesLocked()
+	s.ownMsgMu.Unlock()
+	if s.isOwnMessage("mid.old") {
+		t.Fatal("stale id should have been pruned")
+	}
+	if !s.isOwnMessage("mid.1") {
+		t.Fatal("fresh id should survive the prune")
+	}
+}
+
+func TestOwnMessagesRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s := &Service{
+		ownMsgIDs:       make(map[string]time.Time),
+		ownMessagesPath: filepath.Join(dir, bridgeOwnMessagesFile),
+	}
+	s.recordOwnMessage("mid.1")
+
+	loaded := &Service{
+		ownMsgIDs:       make(map[string]time.Time),
+		ownMessagesPath: s.ownMessagesPath,
+	}
+	loaded.loadOwnMessages()
+	if !loaded.isOwnMessage("mid.1") {
+		t.Fatalf("own messages did not survive round trip: %+v", loaded.ownMsgIDs)
+	}
 }
 
 func TestBridgeRunSurvivesUnauthenticatedMessengerAndServesHealth(t *testing.T) {
